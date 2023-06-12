@@ -1,0 +1,8 @@
+name: 'baseline_rn34'
+output_dir: 'output'
+dataset:
+  train:
+    root_dir: '/mnt/localssd/VideoMatte240K'
+    bg_dir: '/mnt/localssd/bg'
+  test:
+    root_dir: '/mnt/localssd/VideoMatte240K'

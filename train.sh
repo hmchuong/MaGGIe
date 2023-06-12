@@ -1,0 +1,1 @@
+python -m tools.train --config configs/vm2m_baseline.yaml --dist name baseline_rn34_0610_new model.weights output/baseline_rn34_0610/best_model.pth
