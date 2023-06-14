@@ -14,8 +14,9 @@ CONFIG.train.num_workers = 16
 CONFIG.train.resume = ''
 CONFIG.train.max_iter = 100000
 CONFIG.train.log_iter = 50
-CONFIG.train.vis_iter = 100
-CONFIG.train.val_iter = 1000
+CONFIG.train.vis_iter = 500
+CONFIG.train.val_iter = 2000
+
 
 optimizer = CN({})
 optimizer.name = 'sgd' # sgd
@@ -43,6 +44,9 @@ CONFIG.wandb.id = ''
 CONFIG.test = CN({})
 CONFIG.test.batch_size = 1
 CONFIG.test.num_workers = 16
+CONFIG.test.save_results = True
+CONFIG.test.save_dir = 'logs'
+CONFIG.test.log_iter = 50
 
 # ------------------------ Model ------------------------
 CONFIG.model = CN({})
@@ -60,7 +64,7 @@ dynamic_kernel.dec_layers = 5
 dynamic_kernel.pre_norm = False
 dynamic_kernel.enforce_input_project = True
 dynamic_kernel.in_channels = 256
-dynamic_kernel.out_incoherence = 479
+dynamic_kernel.out_incoherence = 479 # 99
 dynamic_kernel.out_pixeldecoder = 305
 CONFIG.model.dynamic_kernel = dynamic_kernel
 
@@ -71,7 +75,7 @@ breakdown.in_features = ['os8', 'os4', 'os1']
 CONFIG.model.breakdown = breakdown
 
 refinement = CN({})
-refinement.n_train_points = 6144 # number of training points for each instance
+refinement.n_train_points = 2048 # number of training points for each instance
 refinement.n_test_points = 16000 # maximum number of testing points for each instance
 CONFIG.model.refinement = refinement
 

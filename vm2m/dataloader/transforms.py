@@ -6,15 +6,17 @@ from PIL import Image
 class Compose(object):
     def __init__(self, transforms):
         self.transforms = transforms
+
     def __call__(self, frames, alphas, masks=None):
+        transform_info = []
         for t in self.transforms:
-            frames, alphas, masks = t(frames, alphas, masks)
-        return frames, alphas, masks
+            frames, alphas, masks = t(frames, alphas, masks, transform_info)
+        return frames, alphas, masks, transform_info
 
 class Load(object):
     def __init__(self, is_rgb=True):
         self.is_rgb = is_rgb
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         frames = [np.array(Image.open(frame_path).convert("RGB" if self.is_rgb else "BGR")) for frame_path in frames]
         if masks is not None:
             masks = [np.array(Image.open(mask_path)) for mask_path in masks]
@@ -25,7 +27,7 @@ class ResizeShort(object):
     def __init__(self, short_size):
         self.short_size = short_size
     
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         h, w = frames[0].shape[:2]
         ratio = self.short_size * 1.0 / min(w, h) 
         if ratio != 1:
@@ -34,12 +36,13 @@ class ResizeShort(object):
                 masks = [cv2.resize(mask, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_NEAREST) for mask in masks]
             # import pdb; pdb.set_trace()
             alphas = [cv2.resize(alpha, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_LINEAR) for alpha in alphas]
+        transform_info.append({'name': 'resize', 'ori_size': (h, w), 'ratio': ratio})
         return frames, alphas, masks
 
 class PaddingMultiplyBy(object):
     def __init__(self, divisor=32):
         self.divisor = divisor
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         h, w = frames[0].shape[:2]
         h_pad = (self.divisor - h % self.divisor) % self.divisor
         w_pad = (self.divisor - w % self.divisor) % self.divisor
@@ -47,12 +50,13 @@ class PaddingMultiplyBy(object):
         if masks is not None:
             masks = [cv2.copyMakeBorder(mask, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for mask in masks]
         alphas = [cv2.copyMakeBorder(alpha, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for alpha in alphas]
+        transform_info.append({'name': 'padding', 'pad_size': (h_pad, w_pad)})
         return frames, alphas, masks
 
 class Stack(object):
     def __init__(self):
         pass
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         frames = np.stack(frames, axis=0)
         alphas = np.stack(alphas, axis=0)
         if masks is not None:
@@ -64,7 +68,7 @@ class RandomCropByAlpha(object):
         self.crop_size = crop_size
         self.random = random
     
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         '''
         frames: (T, H, W, C)
         alphas: (T, H, W)
@@ -109,7 +113,7 @@ class RandomHorizontalFlip(object):
         self.random = random
         self.p = p
 
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         '''
         frames: (T, H, W, C)
         alphas: (T, H, W)
@@ -131,7 +135,7 @@ class RandomComposeBackground(object):
         self.blur_kernel_size = blur_kernel_size
         self.blur_sigma = blur_sigma
     
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         '''
         frames: (T, H, W, C)
         alphas: (T, H, W)
@@ -202,7 +206,7 @@ class RandomBinarizeAlpha(object):
             img_final = cv2.erode(img_binarized, kernel_erode, iterations=1)
         return img_final * 255
 
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         '''
         Args:
         frames: (T, H, W, C)
@@ -222,7 +226,7 @@ class RandomBinarizeAlpha(object):
 class ToTensor(object):
     def __init__(self):
         pass
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         '''
         Args:
         frames: (T, H, W, C)
@@ -246,7 +250,7 @@ class Normalize(object):
         self.mean = mean
         self.std = std
     
-    def __call__(self, frames, alphas, masks):
+    def __call__(self, frames, alphas, masks, transform_info):
         mean = torch.tensor(self.mean).view(1, 3, 1, 1).float()
         std = torch.tensor(self.std).view(1, 3, 1, 1).float()
         frames = frames / 255.0

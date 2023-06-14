@@ -5,11 +5,13 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 from kornia.losses import binary_focal_loss_with_logits
+import spconv.pytorch as spconv
 
 from .module.fpn import FPN
 from .module.mask_attention import MaskAttentionDynamicKernel
 from .module.position_encoding import TemporalPositionEmbeddingSine
 from .module.pixel_encoder import TransformerEncoder, TransformerEncoderLayer
+from .loss import GradientLoss
 
 def conv1x1bnrelu(in_channels, out_channels):
     return nn.Sequential(
@@ -37,12 +39,12 @@ class VM2M(nn.Module):
         #     self.conv_atten.append(conv1x1bnrelu(out_channel, attention_channel))
 
         # Breakdown incoherence
-        self.breakdown_channels = cfg.breakdown.in_channels
-        self.breakdown_features = cfg.breakdown.in_features
-        self.conv_breakdown = nn.ModuleList([])
-        for i, feat_idx in enumerate(cfg.breakdown.in_features):
-            out_channel = self.backbone.out_channels[feat_idx]
-            self.conv_breakdown.append(conv1x1bnrelu(out_channel, self.breakdown_channels[i]))
+        # self.breakdown_channels = cfg.breakdown.in_channels
+        # self.breakdown_features = cfg.breakdown.in_features
+        # self.conv_breakdown = nn.ModuleList([])
+        # for i, feat_idx in enumerate(cfg.breakdown.in_features):
+        #     out_channel = self.backbone.out_channels[feat_idx]
+        #     self.conv_breakdown.append(conv1x1bnrelu(out_channel, self.breakdown_channels[i]))
 
         # Attention module to build dynamic kernels
         self.dynamic_kernels_generator = MaskAttentionDynamicKernel(cfg.dynamic_kernel)
@@ -53,61 +55,51 @@ class VM2M(nn.Module):
                 dtype=torch.float32).reshape(1, 1, 3, 3).requires_grad_(False)
 
         # Positional encoding
-        self.pe_layers = []
-        for scale_idx, n_channels in enumerate(cfg.breakdown.in_channels):
-            self.pe_layers.append(TemporalPositionEmbeddingSine(n_channels, normalize=True, scale=scale_idx * 2 * math.pi))
+        # self.pe_layers = []
+        # for scale_idx, n_channels in enumerate(cfg.breakdown.in_channels):
+        #     self.pe_layers.append(TemporalPositionEmbeddingSine(n_channels, normalize=True, scale=scale_idx * 2 * math.pi))
 
         self.refinement_train_points = cfg.refinement.n_train_points
         self.refinement_test_points = cfg.refinement.n_test_points
         
-        self.combine_feats = nn.Sequential(
-            nn.Conv2d(sum(self.breakdown_channels), sum(self.breakdown_channels), kernel_size=3, stride=1, padding=1, bias=False, groups=sum(self.breakdown_channels)), # Spatial conv
-            nn.Conv2d(sum(self.breakdown_channels), 32, kernel_size=1, stride=1, padding=0, bias=False), # Channel conv
-            nn.BatchNorm2d(32),
-            nn.ReLU(),
-        )
+        # self.combine_feats = nn.Sequential(
+        #     nn.Conv2d(sum(self.breakdown_channels), sum(self.breakdown_channels), kernel_size=3, stride=1, padding=1, bias=False, groups=sum(self.breakdown_channels)), # Spatial conv
+        #     nn.Conv2d(sum(self.breakdown_channels), 32, kernel_size=1, stride=1, padding=0, bias=False), # Channel conv
+        #     nn.BatchNorm2d(32),
+        #     nn.ReLU(),
+        # )
 
-        self.trans_pred_conv = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(33, 16, kernel_size=1, stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(16),
+        self.trans_pred_conv = nn.Sequential(
+                nn.Conv2d(257, 128, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(128),
                 nn.ReLU(),
-                nn.Conv2d(16, 16, kernel_size=3, stride=1, padding=1, bias=False, groups=16),
-                nn.BatchNorm2d(16),
+                nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1, bias=False, groups=128),
+                nn.BatchNorm2d(128),
                 nn.ReLU(),
-                nn.Conv2d(16, 8, kernel_size=1, stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(8),
-                nn.ReLU()
-            ),
-            nn.Sequential(
-                nn.Conv2d(33, 16, kernel_size=1, stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(16),
-                nn.ReLU(),
-                nn.Conv2d(16, 16, kernel_size=3, stride=1, padding=1, bias=False, groups=16),
-                nn.BatchNorm2d(16),
-                nn.ReLU(),
-                nn.Conv2d(16, 8, kernel_size=1, stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(8),
-                nn.ReLU()
-            ),
-            nn.Sequential(
-                nn.Conv2d(33, 16, kernel_size=1, stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(16),
-                nn.ReLU(),
-                nn.Conv2d(16, 16, kernel_size=3, stride=1, padding=1, bias=False, groups=16),
-                nn.BatchNorm2d(16),
-                nn.ReLU(),
-                nn.Conv2d(16, 8, kernel_size=1, stride=1, padding=0, bias=False),
-                nn.BatchNorm2d(8),
+                nn.Conv2d(128, 32, kernel_size=1, stride=1, padding=0, bias=False),
+                nn.BatchNorm2d(32),
                 nn.ReLU()
             )
-        ])
+
+        self.pixel_decoder = spconv.SparseSequential(
+            spconv.SubMConv2d(65, 32, kernel_size=3, padding=1, bias=True, indice_key='subm1'),
+            nn.LeakyReLU(),
+            spconv.SubMConv2d(32, 16, kernel_size=3, padding=1, bias=True, indice_key='subm1'),
+            nn.LeakyReLU(),
+            spconv.SubMConv2d(16, 1, kernel_size=1, padding=0, bias=False, indice_key='subm1'),
+            nn.Sigmoid()
+        )
 
         # Pixel encoder
-        encoder_layer = TransformerEncoderLayer(d_model=32, nhead=2)
-        self.pixel_encoder = TransformerEncoder(encoder_layer, num_layers=3)
+        # encoder_layer = TransformerEncoderLayer(d_model=32, nhead=2)
+        # self.pixel_encoder = TransformerEncoder(encoder_layer, num_layers=3)
+        
+        self.hr_conv = nn.Conv2d(backbone.out_channels['os4'] + backbone.out_channels['os1'], 64, kernel_size=1, stride=1, padding=0, bias=False)
 
-        need_init_weights = [self.conv_breakdown, self.dynamic_kernels_generator, self.combine_feats, self.pixel_encoder, self.trans_pred_conv]
+        self.gradient_loss = GradientLoss()
+        
+        need_init_weights = [self.dynamic_kernels_generator, self.trans_pred_conv, self.pixel_decoder, self.hr_conv, self.fpn]
+
         # Init weights
         for module in need_init_weights:
             for p in module.parameters():
@@ -235,75 +227,35 @@ class VM2M(nn.Module):
         bin_map = bin_map.reshape((*bin_shape, h // scale, w // scale))
         return bin_map
     
-    def forward_trans_pred(self, breakdown_feats, inc_kernels, gt_trans=None):
+    def forward_trans_pred(self, breakdown_feats, inc_kernels, input_masks=None):
 
         # Splits weights and biases from incocerence_kernels
-        weight_nums = []
-        bias_nums = []
-        for i, x in enumerate(self.breakdown_channels):
-            # if i > 0:
-            #     x += 1
-            x = 8
-            weight_nums.append([(x, 4), (4,4), (4, 1)])
-            bias_nums.append([4, 4, 1])
-        inc_weights, inc_biases = self.parse_inc_dynamic_params(inc_kernels, weight_nums, bias_nums)
+        inc_weights, inc_biases = self.parse_inc_dynamic_params(inc_kernels, [[(32, 4), (4,4), (4, 1)]], [[4, 4, 1]])
 
         # Predict transition regions with dynamic kernels and features
-        transition_preds = []
         bs, n_f = breakdown_feats[0].shape[:2]
         n_inst = inc_kernels.shape[1]
-        for feat, inc_weight, inc_bias in zip(breakdown_feats, inc_weights, inc_biases):
-            # feat: b, n_f, 1, c, h, w
-            # inc_weight: [b, n_inst, c, 4], [b, n_inst, 4, 4], [b, n_inst, 4, 1]
-            # inc_bias: [b, n_inst, 1, 4], [b, n_inst, 1, 4], [b, n_inst, 1, 1]
-            
-            # Expand feats to (b, n_f, n_ints, c, h, w)
-            x = feat.expand(-1, -1, n_inst, -1, -1, -1)
-            
-            # Get previous prediction
-            previous_pred = gt_trans
-            if len(transition_preds) > 0:
-                # TODO: using GT can make model overfitting
-                # if self.training and gt_trans is not None:
-                #     # Using GT to mask out regions: downsample to previous scale
-                #     scale = gt_trans.shape[-2] // transition_preds[-1].shape[-2]
-                #     previous_pred = self.downsample_bin_map(gt_trans, scale=scale)
-                # else:
-                # Using transition_preds to mask out regions
-                previous_pred = transition_preds[-1].sigmoid()
+        h, w = breakdown_feats[0].shape[-2:]
+        x = breakdown_feats[0].expand(-1, -1, n_inst, -1, -1, -1)
+        x = torch.cat([x, input_masks.unsqueeze(3).float()], dim=3)
 
-                scale = feat.shape[-1] // previous_pred.shape[-1]
-                previous_pred = self.upsample_bin_map(previous_pred > 0.5, scale=scale)
-            x = torch.cat([x, previous_pred.unsqueeze(3).float()], dim=3)
-            
-            # Convert feat to b * n_f * n_inst, h * w, c
-            # x = x.reshape(bs * n_f * n_inst, -1, feat.shape[-2] * feat.shape[-1]).permute(0, 2, 1)
-            # import pdb; pdb.set_trace()
-            x = x.reshape(bs * n_f * n_inst, -1, *feat.shape[-2:])
-            x = self.trans_pred_conv[len(transition_preds)](x)
-            x = x.reshape(bs * n_f * n_inst, -1, feat.shape[-2] * feat.shape[-1]).permute(0, 2, 1)
-            for i, (w, b) in enumerate(zip(inc_weight, inc_bias)):
-                # Convert w,b to b * n_f * n_inst, c1, c2
-                w = w.unsqueeze(1).expand(-1, n_f, -1, -1, -1).reshape((bs * n_f * n_inst, w.shape[-2], w.shape[-1]))
-                b = b.unsqueeze(1).expand(-1, n_f, -1, -1, -1).reshape((bs * n_f * n_inst, b.shape[-2], b.shape[-1]))
-                x = torch.bmm(x, w) + b
-                if i < len(inc_weight) - 1:
-                    x = F.relu(x)
-            
-            # Convert back to (b, n_f, n_inst, h, w)
-            x = x.permute(0, 2, 1) #.reshape((bs, n_f, n_inst, feat.shape[-2], feat.shape[-1]))
-            x = x.reshape((bs, n_f, n_inst, feat.shape[-2], feat.shape[-1]))
-            
-            
+        x = x.reshape(bs * n_f * n_inst, -1, h, w)
+        x = self.trans_pred_conv(x)
+        x = x.reshape(bs * n_f * n_inst, -1, h * w).permute(0, 2, 1)
 
-            # maskout regions predicted from previous layer during inference
-            # TODO: Masking can reduce the Recall
-            # if len(transition_preds) > 0 and not self.training:
-            #     x = x + (previous_pred < 0.5) * -9999
-
-            transition_preds += [x]
+        for i, (wi, b) in enumerate(zip(inc_weights[0], inc_biases[0])):
+            # Convert w,b to b * n_f * n_inst, c1, c2
+            wi = wi.unsqueeze(1).expand(-1, n_f, -1, -1, -1).reshape((bs * n_f * n_inst, wi.shape[-2], wi.shape[-1]))
+            b = b.unsqueeze(1).expand(-1, n_f, -1, -1, -1).reshape((bs * n_f * n_inst, b.shape[-2], b.shape[-1]))
+            x = torch.bmm(x, wi) + b
+            if i < len(inc_weights[0]) - 1:
+                x = F.relu(x)
+            
+        # Convert back to (b, n_f, n_inst, h, w)
+        x = x.permute(0, 2, 1) #.reshape((bs, n_f, n_inst, feat.shape[-2], feat.shape[-1]))
+        x = x.reshape((bs, n_f, n_inst, h, w))
         
-        return transition_preds
+        return x
 
     def combine_breakdown_feats(self, breakdown_features):
         shapes = [x.shape[-2:] for x in breakdown_features]
@@ -323,83 +275,9 @@ class VM2M(nn.Module):
                 breakdown_features[i] = xs
             
             breakdown_features[i] = breakdown_features[i].reshape(bs, n_f, n_inst, *breakdown_features[i].shape[-3:])
+
     
-    # def inc_prediction(self, inc_kernels, masks, breakdown_feats, gt_trans=None):
-    #     '''
-    #     Args:
-    #     incoherence_kernels: b, n_instances, kernel_size
-    #     masks: (b, n_frames, n_instances, h//8, w//8), coarse masks
-    #     breakdown_feats: (b, c, h//s, w//s), s = 8, 4, 1
-
-    #     Returns:
-    #     transition_preds: (b, n_frames, n_instances, h//s, w//s) for being supervised during training
-    #     inc_feats: points to refine (b, n_instances, c, n_points)
-    #     inc_pe: positional encoding of points to refine (b, n_instances, c, n_points)
-    #     inc_indices: index of points in masks (b, n_instances, n_points)
-    #     '''
-    #     bs, n_f, n_ints, h, w = masks.shape
-    #     # Compute spatial incoherence
-    #     spat_inc = self.detect_spatial_sparsity(masks)
-
-    #     # Compute temporal incoherence
-    #     temp_inc = self.detect_temporal_sparsity(masks)
-        
-    #     # Splits breakdown features
-    #     breakdown_feats = [x.reshape(bs, n_f, 1, -1, x.shape[-2], x.shape[-1]) for x in breakdown_feats]
-
-    #     # Aggregate features from all levels in breakdown_feats to build point features
-    #     self.combine_breakdown_feats(breakdown_feats)
-        
-    #     # Predict transition regions with dynamic kernels and features
-    #     transition_preds = self.forward_trans_pred(breakdown_feats, inc_kernels, masks)
-
-    #     # Combine sparsity regions and build quadtree
-    #     inc_bin_map = []
-    #     # inc_bin_map += [spat_inc.bool() | temp_inc.bool() | (transition_preds[0].sigmoid() > 0.5)]
-    #     inc_bin_map += [(transition_preds[0].sigmoid() > 0.5)]
-    #     inc_bin_map += [(transition_preds[1].sigmoid() > 0.5) & self.upsample_bin_map(inc_bin_map[0], scale=2)] # repeat interleave
-    #     inc_bin_map += [(transition_preds[2].sigmoid() > 0.5) & self.upsample_bin_map(inc_bin_map[1], scale=4)] # repeat interleave
-
-    #     # mask out confidence map with bin map and build confidence scores for each point
-    #     # TODO: In training?
-    #     point_conf = []
-    #     for i in range(len(transition_preds)):            
-    #         point_conf += [(transition_preds[i].sigmoid() * inc_bin_map[i].float()) \
-    #                                                 .permute(0, 2, 1, 3, 4).flatten(2)]
-    #     point_conf = torch.cat(point_conf, dim=2)
-
-    #     # Do we need? Mask out high-level layer if values is the same as low-level layer: from os8 to os1
-        
-    #     # Generate position emebddings and add to features to have point features to refine
-    #     point_feats = []
-    #     point_pe = []
-        
-        
-
-    #     for i, feat in enumerate(breakdown_feats):
-    #         pe_emb = self.pe_layers[i](bs, n_f, feat.shape[-2], feat.shape[-1], feat.device)
-    #         point_pe += [pe_emb.flatten(2)]
-    #         point_feats += [feat.squeeze(2).permute(0, 2, 1, 3, 4).flatten(2)]
-
-    #     point_feats = torch.cat(point_feats, dim=2)
-    #     point_pe = torch.cat(point_pe, dim=2)
-        
-    #     # Select incoherent among all levels (select top-k)
-    #     n_ref_points = self.refinement_train_points if self.training else self.refinement_test_points
-    #     _, inc_indices = torch.topk(point_conf, k=n_ref_points, dim=2, largest=True, sorted=True)
-        
-    #     inc_feats = torch.gather(point_feats.unsqueeze(1) \
-    #                                         .expand(-1, n_ints, -1, -1), dim=3, \
-    #                              index=inc_indices.unsqueeze(2) \
-    #                                               .expand(-1, -1, point_feats.shape[1], -1))
-    #     inc_pe = torch.gather(point_pe.unsqueeze(1) \
-    #                                   .expand(-1, n_ints, -1, -1), dim=3, \
-    #                           index=inc_indices.unsqueeze(2)\
-    #                                            .expand(-1, -1, point_pe.shape[1], -1))
-
-    #     return transition_preds, inc_bin_map, inc_feats, inc_pe, inc_indices
-    
-    def inc_prediction(self, inc_kernels, masks, breakdown_feats, gt_trans=None):
+    def inc_prediction(self, inc_kernels, masks, breakdown_feats):
         '''
         Args:
         incoherence_kernels: b, n_instances, kernel_size
@@ -419,33 +297,23 @@ class VM2M(nn.Module):
         # Compute temporal incoherence
         temp_inc = self.detect_temporal_sparsity(masks)
         
-        
-        
+        breakdown_feats = [x.reshape(bs, n_f, 1, -1, x.shape[-2], x.shape[-1]) for x in breakdown_feats]
+
         # Predict transition regions with dynamic kernels and features
         transition_preds = self.forward_trans_pred(breakdown_feats, inc_kernels, masks)
+        inc_bin_map = [transition_preds.sigmoid() > 0.5]
 
-        # Combine sparsity regions and build quadtree
-        inc_bin_map = []
-        # inc_bin_map += [spat_inc.bool() | temp_inc.bool() | (transition_preds[0].sigmoid() > 0.5)]
-        inc_bin_map += [(transition_preds[0].sigmoid() > 0.5)]
-        inc_bin_map += [(transition_preds[1].sigmoid() > 0.5) & self.upsample_bin_map(inc_bin_map[0], scale=2)] # repeat interleave
-        inc_bin_map += [(transition_preds[2].sigmoid() > 0.5) & self.upsample_bin_map(inc_bin_map[1], scale=4)] # repeat interleave
+        return [transition_preds], inc_bin_map
+    
+        # Select points based on gt_trans during training
+        
+        # and transition_preds during testing
 
-        # mask out confidence map with bin map and build confidence scores for each point
-        # TODO: In training?
-        point_conf = []
-        for i in range(len(transition_preds)):            
-            point_conf += [(transition_preds[i].sigmoid() * inc_bin_map[i].float()) \
-                                                    .permute(0, 2, 1, 3, 4).flatten(2)]
-        point_conf = torch.cat(point_conf, dim=2)
-
-        # Do we need? Mask out high-level layer if values is the same as low-level layer: from os8 to os1
+        import pdb; pdb.set_trace()
         
         # Generate position emebddings and add to features to have point features to refine
         point_feats = []
         point_pe = []
-        
-        
 
         for i, feat in enumerate(breakdown_feats):
             pe_emb = self.pe_layers[i](bs, n_f, feat.shape[-2], feat.shape[-1], feat.device)
@@ -454,10 +322,6 @@ class VM2M(nn.Module):
 
         point_feats = torch.cat(point_feats, dim=2)
         point_pe = torch.cat(point_pe, dim=2)
-        
-        # Select incoherent among all levels (select top-k)
-        n_ref_points = self.refinement_train_points if self.training else self.refinement_test_points
-        _, inc_indices = torch.topk(point_conf, k=n_ref_points, dim=2, largest=True, sorted=True)
         
         inc_feats = torch.gather(point_feats.unsqueeze(1) \
                                             .expand(-1, n_ints, -1, -1), dim=3, \
@@ -468,7 +332,7 @@ class VM2M(nn.Module):
                               index=inc_indices.unsqueeze(2)\
                                                .expand(-1, -1, point_pe.shape[1], -1))
 
-        return transition_preds, inc_bin_map, inc_feats, inc_pe, inc_indices
+        return [transition_preds], inc_bin_map, inc_feats, inc_pe, inc_indices
 
     def pixel_decoder_forward(self, features, weights, biases):
         '''
@@ -571,6 +435,7 @@ class VM2M(nn.Module):
 
         # Forward image to get features
         b, n_f, _, h, w = x.shape
+        n_instances = alphas.shape[2]
         
         # Reshape x and masks
         x = x.reshape(b * n_f, 3, h, w)
@@ -579,7 +444,6 @@ class VM2M(nn.Module):
 
         # TODO: Running FPN to have attention features (1/16, 1/8, 1/4) and breakdown features (1/8, 1/4, 1)
         attention_feats, breakdown_feats = self.fpn(feats)
-        import pdb; pdb.set_trace()
 
         # attention_feats = self.extract_features(feats, self.atten_features, self.conv_atten)
         # breakdown_feats = self.extract_features(feats, self.breakdown_features, self.conv_breakdown)
@@ -592,42 +456,59 @@ class VM2M(nn.Module):
         output = {}
 
         # Detect incoherent regions
-        trans_preds, inc_bin_map, inc_feats, inc_pe, inc_ids = self.inc_prediction(incoherence_kernels, masks, breakdown_feats, trans_gt)
+        trans_preds, inc_bin_map = self.inc_prediction(incoherence_kernels, masks, breakdown_feats)
         output['trans_preds'] = trans_preds
         output['inc_bin_maps'] = inc_bin_map
 
-        # Refine points
-        refined_logit_inc = self.refine_pixel(inc_feats, inc_pe, decoder_kernels)
-        output['refined_logit_inc'] = refined_logit_inc
-        output['inc_ids'] = inc_ids
-        
-        # Update masks
-        masks = self.refine_masks(masks, refined_logit_inc, inc_ids)
-        output['refined_masks'] = masks
+        # high-res features for instances
+        os_4up = F.interpolate(feats['os4'], size=(h, w), mode='bilinear', align_corners=True)
+        hr_feat = self.hr_conv(torch.cat([os_4up, feats['os1']], dim=1))
+        hr_feat = hr_feat.unsqueeze(1).expand(-1, n_instances, -1, -1, -1).flatten(3).reshape(b * n_f * n_instances, 64, -1).permute(0, 2, 1)
+        decoder_kernels = decoder_kernels.unsqueeze(1).expand(-1, n_f, -1, -1).reshape(b * n_f * n_instances, -1).unsqueeze(-1)
+        atten_map = torch.bmm(hr_feat, decoder_kernels).reshape(b, n_f, n_instances, h, w).unsqueeze(3).sigmoid()
+        hr_feat = hr_feat.reshape(b, n_f, n_instances, h, w, -1).permute(0, 1, 2, 5, 3, 4)
+        hr_feat = hr_feat * (1 + atten_map)
 
-        # In training, compute loss
+        # Finding poinst to refine
+        interested_pt = None
+        if self.training and trans_gt is not None:
+            interested_pt = trans_gt
+        else:
+            interested_pt = inc_bin_map[0].float()
+            interested_pt = self.upsample_bin_map(interested_pt, 8)
+        l_masks = self.upsample_bin_map(masks, 8)
+        hr_feat = torch.cat([hr_feat, l_masks.unsqueeze(3)], dim=3)
+        hr_feat = hr_feat.reshape(b * n_f * n_instances, -1, h, w)
+        indices = interested_pt.reshape(b * n_f * n_instances, -1, h, w)
+        
+        indices = torch.where(indices.squeeze(1) > 0)
+        hr_feat = hr_feat.permute(0,2,3,1)
+        hr_feat = hr_feat[indices]
+        indices = torch.stack(indices, dim=1)
+        if len(indices) == 0:
+            return output, None
+        x = spconv.SparseConvTensor(hr_feat, indices.int(), (h, w), b * n_f * n_instances)
+        x = self.pixel_decoder(x)
+        x = x.dense()
+        x = x.reshape(b, n_f, n_instances, h, w)
+        x = x * interested_pt + (1.0 - interested_pt) * l_masks
+        
+        output['refined_masks'] = x
+        
         if self.training:
             return output, self.compute_loss(output, alphas, trans_gt)
         return output
+        
 
     def _compute_trans_loss(self, trans_preds, trans_gt):
-        preds = []
+        trans_loss = 0
         for trans_pred in trans_preds:
             b, n_f, n_i, h, w = trans_pred.shape
             trans_pred = trans_pred.reshape(b * n_f * n_i, 1, h, w)
-            trans_pred = F.interpolate(trans_pred, size=(trans_gt.shape[-2], trans_gt.shape[-1]), mode='bilinear', align_corners=True)
-            preds += [trans_pred]
-        preds = torch.cat(preds, dim=1)
-        # preds = torch.clamp(preds, min=0, max=1)
-        
-        if torch.isnan(preds).any():
-            import pdb; pdb.set_trace()
-
-        trans_gt = trans_gt.reshape(b * n_f * n_i, 1, h, w).expand(-1, 3, -1, -1)
-        # import pdb; pdb.set_trace()
-        pos_weight = torch.Tensor([3.0, 3.0, 3.0]).to(preds.device).unsqueeze(-1).unsqueeze(-1)
-        trans_loss = binary_focal_loss_with_logits(preds, trans_gt, reduction='mean', pos_weight=pos_weight)
-        # trans_loss = F.binary_cross_entropy(preds, trans_gt, reduction='mean')
+            gt = self.downsample_bin_map(trans_gt, trans_gt.shape[-1] // w)
+            pos_weight = torch.Tensor([3.0]).to(trans_pred.device).unsqueeze(-1).unsqueeze(-1)
+            gt = gt.reshape(b * n_f * n_i, 1, h, w)
+            trans_loss = trans_loss + binary_focal_loss_with_logits(trans_pred, gt, reduction='mean', pos_weight=pos_weight)
 
         return trans_loss
 
@@ -682,13 +563,24 @@ class VM2M(nn.Module):
         trans_loss = self._compute_trans_loss(output_dict['trans_preds'], trans_gt)
         losses['loss_trans'] = trans_loss
         
+        ref_loss = F.l1_loss(output_dict['refined_masks'], alphas, reduction='none')
+        ref_loss = (ref_loss * trans_gt).sum() / trans_gt.sum()
+        losses['loss_ref_alpha'] = ref_loss
+
+        # import pdb; pdb.set_trace()
+        h, w = alphas.shape[-2:]
+        alpha_pred = output_dict['refined_masks'].reshape(-1, 1, h, w)
+        alpha_gt = alphas.reshape(-1, 1, h, w)
+        mask = trans_gt.reshape(-1, 1, h, w)
+        grad_loss = self.gradient_loss(alpha_pred, alpha_gt, mask)
+        losses['loss_ref_grad'] = grad_loss
 
         # Compute refinement loss (L1 loss): refined_logit_inc, alphas, inc_ids
-        ref_loss = self._compute_refinement_loss(output_dict['refined_logit_inc'], alphas, output_dict['inc_ids'])
-        losses['loss_ref'] = ref_loss
+        # ref_loss = self._compute_refinement_loss(output_dict['refined_logit_inc'], alphas, output_dict['inc_ids'])
+        # 
         
         # TODO: Compute gradient loss (Grad loss) at incoherent regions: refined_masks, inc_bin_map
 
-        losses['total'] = 0.5 * trans_loss + ref_loss
+        losses['total'] = trans_loss + ref_loss + grad_loss
         return losses
         

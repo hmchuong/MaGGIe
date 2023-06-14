@@ -21,14 +21,16 @@ def val(model, val_loader, device, log_iter=30):
 
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
+            del batch['image_names']
+            del batch['transform_info']
             batch = {k: v.to(device) for k, v in batch.items()}
             outputs = model(batch)
             alpha = outputs['refined_masks']
             b, n_f, n_i = alpha.shape[:3]
-            sad = torch.abs(alpha - batch['alpha']).sum() / (b * n_f * n_i)
+            sad = torch.abs(alpha - batch['alpha']).sum() / (b * n_f * n_i) 
             mse = torch.pow(alpha - batch['alpha'], 2).sum() / (b * n_f * n_i)
-            val_error_dict['sad'].update(sad.item())
-            val_error_dict['mse'].update(mse.item())
+            val_error_dict['sad'].update(sad.item() / 1000)
+            val_error_dict['mse'].update(mse.item() / 1000)
 
             if i % log_iter == 0:
                 logging.info("Validation: Iter {}/{}: SAD: {:.4f}, MSE: {:.4f}".format(
@@ -127,7 +129,7 @@ def train(cfg, rank, is_dist=False):
     # Start training
     logging.info("Start training...")
     model.train()
-    epoch = iter // len(train_loader)
+    epoch = len(train_loader) // iter
     while iter < cfg.train.max_iter:
         
         for _, batch in enumerate(train_loader):
@@ -144,6 +146,8 @@ def train(cfg, rank, is_dist=False):
 
             optimizer.zero_grad()
             output, loss = model(batch)
+            if loss is None:
+                continue
             loss_reduced = reduce_dict(loss)
 
             loss['total'].backward()
@@ -173,10 +177,10 @@ def train(cfg, rank, is_dist=False):
                 # TODO: log to wandb
                 if cfg.wandb.use:
                     for k, v in log_metrics.items():
-                        wandb.log({"train/" + k: v.avg}, commit=False)
+                        wandb.log({"train/" + k: v.val}, commit=False)
                     wandb.log({"train/lr": lr_scheduler.get_last_lr()[0]}, commit=False)
-                    wandb.log({"train/batch_time": batch_time.avg}, commit=False)
-                    wandb.log({"train/data_time": data_time.avg}, commit=False)
+                    wandb.log({"train/batch_time": batch_time.val}, commit=False)
+                    wandb.log({"train/data_time": data_time.val}, commit=False)
                     wandb.log({"train/epoch": epoch}, commit=False)
                     wandb.log({"train/iter": iter}, commit=True)
             
@@ -201,7 +205,7 @@ def train(cfg, rank, is_dist=False):
                 log_images.append(wandb.Image(mask_gt, caption="mask_gt"))
                 
                 for i, trans_pred in enumerate(output['trans_preds']):
-                    trans_pred = (trans_pred[0,0,0] * 255).detach().cpu().numpy().astype('uint8')
+                    trans_pred = (trans_pred[0,0,0].sigmoid() * 255).detach().cpu().numpy().astype('uint8')
                     log_images.append(wandb.Image(trans_pred, caption='transition_pred_' + str(i)))
                 
                 trans_gt = (batch['transition'][0,0,0] * 255).cpu().numpy().astype('uint8')

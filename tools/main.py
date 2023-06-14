@@ -9,12 +9,12 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 
 from vm2m.utils import CONFIG
-from vm2m.engine import train
+from vm2m.engine import train, test
 
-def test(cfg):
-    pass
+rootLogger = logging.getLogger()
+rootLogger.setLevel('DEBUG')
 
-def main(rank, cfg, dist_url=None, world_size=8, eval_only=False):
+def main(rank, cfg, dist_url=None, world_size=8):
 
     # Set up logger
     logFormatter = logging.Formatter("%(asctime)s [rank " + str(rank) + "] [%(levelname)-5.5s]  %(message)s")
@@ -46,16 +46,9 @@ def main(rank, cfg, dist_url=None, world_size=8, eval_only=False):
             else:
                 wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, 
                            name=cfg.name, id=cfg.wandb.id, resume='must')
-            wandb.config.update(cfg)
+            wandb.config.update(cfg, allow_val_change=True)
     
-    if eval_only and rank == 0:
-        # TODO: Implement testing
-        # val(cfg, rank)
-        pass
-    
-    if not eval_only:
-        train(cfg, rank, dist_url is not None)
-
+    train(cfg, rank, dist_url is not None)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Video Mask To Matte")
@@ -85,9 +78,10 @@ if __name__ == "__main__":
         raise ValueError("Output directory ({}) already exists and is not empty.".format(CONFIG.output_dir))
     
     # Dump config to the file
-    os.makedirs(CONFIG.output_dir, exist_ok=True)
-    with open(os.path.join(CONFIG.output_dir, "config.yaml"), 'w') as f:
-        f.write(CONFIG.dump())
+    if not args.eval_only:
+        os.makedirs(CONFIG.output_dir, exist_ok=True)
+        with open(os.path.join(CONFIG.output_dir, "config.yaml"), 'w') as f:
+            f.write(CONFIG.dump())
 
     # Set random seed
     torch.manual_seed(seed)
@@ -99,7 +93,10 @@ if __name__ == "__main__":
 
     os.environ["WANDB_START_METHOD"] = "thread"
 
-    if args.dist:
-        mp.spawn(main, nprocs=args.dist_world_size, args=(CONFIG, args.dist_url, args.dist_world_size, args.eval_only))
+    if not args.eval_only:
+        if args.dist:
+            mp.spawn(main, nprocs=args.dist_world_size, args=(CONFIG, args.dist_url, args.dist_world_size))
+        else:
+            main(0, CONFIG, None, 1)
     else:
-        main(0, CONFIG, None, 1, args.eval_only)
+        test(CONFIG)

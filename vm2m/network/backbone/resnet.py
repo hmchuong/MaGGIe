@@ -1,4 +1,5 @@
 import logging
+import torch
 import torch.nn as nn
 from   vm2m.network.ops import SpectralNorm
 
@@ -56,7 +57,7 @@ class ResNet_D(nn.Module):
     without the mix-up part.
     """
 
-    def __init__(self, block, layers, norm_layer=None, late_downsample=True, is_additional_branch=False):
+    def __init__(self, block, layers, norm_layer=None, late_downsample=False, is_additional_branch=False):
         super(ResNet_D, self).__init__()
         mask_channel = 0
         self.logger = logging.getLogger("Logger")
@@ -143,7 +144,7 @@ class ResNet_D(nn.Module):
         x = self.conv1(x)
         x = self.bn1(x)
         x0 = self.activation(x) # N x 32 x 512 x 512
-        out['os1'] = x0
+        out['os1'] = nn.functional.interpolate(x0, scale_factor=2, mode='bilinear', align_corners=True)
         x = self.conv2(x0)
         x = self.bn2(x)
         x1 = self.activation(x) # N x 32 x 256 x 256
@@ -163,7 +164,11 @@ class ResNet_D(nn.Module):
         return out # 1, 1/2, 1/4, 1/8, 1/16, 1/32
 
 def res_encoder_29(**kwargs):
-    return ResNet_D(BasicBlock, [3, 4, 4, 2], **kwargs)
+    model = ResNet_D(BasicBlock, [3, 4, 4, 2], **kwargs)
+    state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
+    state_dict = {k[7:]: v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict, strict=False)
+    return model
 
 if __name__ == "__main__":
     m = ResNet_D(BasicBlock, [3, 4, 4, 2])

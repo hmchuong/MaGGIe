@@ -1,7 +1,10 @@
 import math
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from kornia.losses import binary_focal_loss_with_logits
 
 from .module.fpn import FPN
 from .module.mask_attention import MaskAttentionDynamicKernel
@@ -23,7 +26,7 @@ class VM2M(nn.Module):
         self.backbone = backbone
 
         # FPN decoder
-        # self.fpn = FPN(self.backbone.out_channels[::-1])
+        # self.fpn = FPN(self.backbone.out_channels)
 
         # Convolutions to convert to attention layers inputs
         attention_channel = cfg.dynamic_kernel.in_channels
@@ -57,14 +60,23 @@ class VM2M(nn.Module):
         self.refinement_train_points = cfg.refinement.n_train_points
         self.refinement_test_points = cfg.refinement.n_test_points
         
+        self.combine_feats = nn.Sequential(
+            nn.Conv2d(sum(self.breakdown_channels), sum(self.breakdown_channels), kernel_size=3, stride=1, padding=1, bias=False, groups=sum(self.breakdown_channels)), # Spatial conv
+            nn.Conv2d(sum(self.breakdown_channels), 32, kernel_size=1, stride=1, padding=0, bias=False), # Channel conv
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+        )
+
         # Pixel encoder
         encoder_layer = TransformerEncoderLayer(d_model=32, nhead=2)
         self.pixel_encoder = TransformerEncoder(encoder_layer, num_layers=3)
 
+        need_init_weights = [self.conv_atten, self.conv_breakdown, self.dynamic_kernels_generator, self.combine_feats, self.pixel_encoder]
         # Init weights
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
+        for module in need_init_weights:
+            for p in module.parameters():
+                if p.dim() > 1:
+                    nn.init.xavier_uniform_(p)
 
     def extract_features(self, feats, feature_lists, conv_lists):
         results = []
@@ -99,29 +111,29 @@ class VM2M(nn.Module):
 
         return temporal_sparsity
 
-    def parse_inc_dynamic_params(self, params, weight_nums, bias_nums):
-        '''
-        params: b, n_instances, n_params
-        weight_nums: list of weight numbers for each layer
-        bias_nums: list of bias numbers for each layer 
-        '''
+    # def parse_inc_dynamic_params(self, params, weight_nums, bias_nums):
+    #     '''
+    #     params: b, n_instances, n_params
+    #     weight_nums: list of weight numbers for each layer
+    #     bias_nums: list of bias numbers for each layer 
+    #     '''
 
-        assert params.dim() == 3
-        assert len(weight_nums) == len(bias_nums)
-        assert params.size(2) == sum(weight_nums) + sum(bias_nums)
+    #     assert params.dim() == 3
+    #     assert len(weight_nums) == len(bias_nums)
+    #     assert params.size(2) == sum(weight_nums) + sum(bias_nums)
         
 
-        num_layers = len(weight_nums)
-        bs, num_insts = params.shape[:2]
-        params_splits = list(torch.split_with_sizes(params, weight_nums + bias_nums, dim=2))
-        weight_splits = params_splits[:len(weight_nums)]
-        bias_splits = params_splits[len(weight_nums):]
+    #     num_layers = len(weight_nums)
+    #     bs, num_insts = params.shape[:2]
+    #     params_splits = list(torch.split_with_sizes(params, weight_nums + bias_nums, dim=2))
+    #     weight_splits = params_splits[:len(weight_nums)]
+    #     bias_splits = params_splits[len(weight_nums):]
         
-        for l in range(num_layers):
-            weight_splits[l] = weight_splits[l].reshape(bs, 1, num_insts, -1, 1, 1)
-            bias_splits[l] = bias_splits[l].reshape(bs, 1, num_insts, -1, 1, 1)
+    #     for l in range(num_layers):
+    #         weight_splits[l] = weight_splits[l].reshape(bs, 1, num_insts, -1, 1, 1)
+    #         bias_splits[l] = bias_splits[l].reshape(bs, 1, num_insts, -1, 1, 1)
 
-        return weight_splits, bias_splits
+    #     return weight_splits, bias_splits
 
     def parse_pixdec_dynamic_params(self, params, weight_nums, bias_nums):
         '''
@@ -148,12 +160,129 @@ class VM2M(nn.Module):
 
         return weight_splits, bias_splits
 
+    def parse_inc_dynamic_params(self, params, weight_nums, bias_nums):
+        '''
+        params: b, n_instances, n_params (479)
+        weight_nums: list of weight numbers for each layer, e.g. [[(32, 4), (4, 4), (4, 1)], [(33, 4), (4, 4), (4, 1)], [(33, 4), (4, 4), (4, 1)]
+        bias_nums: list of bias numbers for each layer, e.g. [[4, 4, 1], [4, 4, 1], [4, 4, 1]]
+
+        returns:
+        weight_splits: list of weights for each layer, e.g. [[[b * n_instances, 32, 4]]]
+        bias_splits: list of biases for each layer e.g. [[[b * n_instances, 4]]]
+        '''
+        start = 0
+        weight_splits = []
+        bias_splits = []
+        bs, n_ins = params.shape[:2]
+        for layer in range(len(weight_nums)):
+            layer_weight_splits = []
+            layer_bias_splits = []
+            for weight_info, bias_info in zip(weight_nums[layer], bias_nums[layer]):
+                in_w = weight_info[0]
+                out_w = weight_info[1]
+                layer_weight_splits.append(params[:, :, start:start + in_w * out_w].reshape(bs, n_ins, in_w, out_w))
+                layer_bias_splits.append(params[:, :, start + in_w * out_w:start + in_w * out_w + bias_info].unsqueeze(-2))
+                start += in_w * out_w + bias_info
+            weight_splits.append(layer_weight_splits)
+            bias_splits.append(layer_bias_splits)
+        return weight_splits, bias_splits
+
     def upsample_bin_map(self, bin_map, scale=2):
         bin_map = torch.repeat_interleave(bin_map, scale, dim=-1)
         bin_map = torch.repeat_interleave(bin_map, scale, dim=-2)
         return bin_map
+
+    def downsample_bin_map(self, bin_map, scale=2):
+        bin_shape = bin_map.shape[:-2]
+        h, w = bin_map.shape[-2:]
+        bin_map = F.max_pool2d(bin_map.reshape(np.prod(bin_shape), 1, h, w), kernel_size=scale, stride=scale)
+        bin_map = bin_map.reshape((*bin_shape, h // scale, w // scale))
+        return bin_map
     
-    def transition_prediction(self, incoherence_kernels, masks, breakdown_feats):
+    def forward_trans_pred(self, breakdown_feats, inc_kernels, gt_trans=None):
+
+        # Splits weights and biases from incocerence_kernels
+        weight_nums = []
+        bias_nums = []
+        for i, x in enumerate(self.breakdown_channels):
+            if i > 0:
+                x += 1
+            weight_nums.append([(x, 4), (4,4), (4, 1)])
+            bias_nums.append([4, 4, 1])
+        inc_weights, inc_biases = self.parse_inc_dynamic_params(inc_kernels, weight_nums, bias_nums)
+
+        # Predict transition regions with dynamic kernels and features
+        transition_preds = []
+        bs, n_f = breakdown_feats[0].shape[:2]
+        n_inst = inc_kernels.shape[1]
+        for feat, inc_weight, inc_bias in zip(breakdown_feats, inc_weights, inc_biases):
+            # feat: b, n_f, 1, c, h, w
+            # inc_weight: [b, n_inst, c, 4], [b, n_inst, 4, 4], [b, n_inst, 4, 1]
+            # inc_bias: [b, n_inst, 1, 4], [b, n_inst, 1, 4], [b, n_inst, 1, 1]
+            
+            # Expand feats to (b, n_f, n_ints, c, h, w)
+            x = feat.expand(-1, -1, n_inst, -1, -1, -1)
+            
+            # Get previous prediction
+            if len(transition_preds) > 0:
+                previous_pred = None
+                if self.training and gt_trans is not None:
+                    # Using GT to mask out regions: downsample to previous scale
+                    scale = gt_trans.shape[-2] // transition_preds[-1].shape[-2]
+                    previous_pred = self.downsample_bin_map(gt_trans, scale=scale)
+                else:
+                    # Using transition_preds to mask out regions
+                    previous_pred = transition_preds[-1].sigmoid()
+
+                scale = feat.shape[-1] // previous_pred.shape[-1]
+                previous_pred = self.upsample_bin_map(previous_pred > 0.5, scale=scale)
+                
+                x = torch.cat([x, previous_pred.unsqueeze(3).float()], dim=3)
+            
+            # Convert feat to b * n_f * n_inst, h * w, c
+            x = x.reshape(bs * n_f * n_inst, -1, feat.shape[-2] * feat.shape[-1]).permute(0, 2, 1)
+            
+            for i, (w, b) in enumerate(zip(inc_weight, inc_bias)):
+                # Convert w,b to b * n_f * n_inst, c1, c2
+                w = w.unsqueeze(1).expand(-1, n_f, -1, -1, -1).reshape((bs * n_f * n_inst, w.shape[-2], w.shape[-1]))
+                b = b.unsqueeze(1).expand(-1, n_f, -1, -1, -1).reshape((bs * n_f * n_inst, b.shape[-2], b.shape[-1]))
+                x = torch.bmm(x, w) + b
+                if i < len(inc_weight) - 1:
+                    x = F.relu(x)
+            
+            # Convert back to (b, n_f, n_inst, h, w)
+            x = x.permute(0, 2, 1).reshape((bs, n_f, n_inst, feat.shape[-2], feat.shape[-1]))
+            
+            
+
+            # maskout regions predicted from previous layer during inference
+            if len(transition_preds) > 0 and not self.training:
+                x = x + (previous_pred < 0.5) * -9999
+
+            transition_preds += [x]
+        
+        return transition_preds
+
+    def combine_breakdown_feats(self, breakdown_features):
+        shapes = [x.shape[-2:] for x in breakdown_features]
+        bs, n_f, n_inst = breakdown_features[0].shape[:3]
+        xs = []
+        for feat in breakdown_features:
+            x = feat.reshape(bs * n_f * n_inst, -1, feat.shape[-2], feat.shape[-1])
+            x = F.interpolate(x, size=max(shapes), mode='bilinear', align_corners=False)
+            xs += [x]
+        xs = torch.cat(xs, dim=1)
+        xs = self.combine_feats(xs)
+        for i in range(len(breakdown_features)):
+            kernel_size = max(shapes)[0] // shapes[i][0]
+            if kernel_size > 1:
+                breakdown_features[i] = F.avg_pool2d(xs, kernel_size=kernel_size, stride=kernel_size)
+            else:
+                breakdown_features[i] = xs
+            
+            breakdown_features[i] = breakdown_features[i].reshape(bs, n_f, n_inst, *breakdown_features[i].shape[-3:])
+
+    def inc_prediction(self, inc_kernels, masks, breakdown_feats, gt_trans=None):
         '''
         Args:
         incoherence_kernels: b, n_instances, kernel_size
@@ -172,30 +301,27 @@ class VM2M(nn.Module):
 
         # Compute temporal incoherence
         temp_inc = self.detect_temporal_sparsity(masks)
-
-        # Splits weights and biases from incocerence_kernels
-        inc_weights, inc_biases = self.parse_inc_dynamic_params(incoherence_kernels, self.breakdown_channels, [1, 1, 1])
         
         # Splits breakdown features
         breakdown_feats = [x.reshape(bs, n_f, 1, -1, x.shape[-2], x.shape[-1]) for x in breakdown_feats]
 
+        # Aggregate features from all levels in breakdown_feats to build point features
+        self.combine_breakdown_feats(breakdown_feats)
+        
         # Predict transition regions with dynamic kernels and features
-        transition_preds = []
-        for feat, inc_weight, inc_bias in zip(breakdown_feats, inc_weights, inc_biases):
-            transition_preds += [((inc_weight * feat).sum(3, keepdims=True) + inc_bias).squeeze(3).sigmoid()]
-            if torch.isnan(transition_preds[-1]).any():
-                import pdb; pdb.set_trace()
+        transition_preds = self.forward_trans_pred(breakdown_feats, inc_kernels, gt_trans)
 
         # Combine sparsity regions and build quadtree
         inc_bin_map = []
-        inc_bin_map += [spat_inc.bool() | temp_inc.bool() | (transition_preds[0] > 0.5)]
-        inc_bin_map += [(transition_preds[1] > 0.5) & self.upsample_bin_map(inc_bin_map[0], scale=2)] # repeat interleave
-        inc_bin_map += [(transition_preds[2] > 0.5) & self.upsample_bin_map(inc_bin_map[1], scale=4)] # repeat interleave
+        inc_bin_map += [spat_inc.bool() | temp_inc.bool() | (transition_preds[0].sigmoid() > 0.5)]
+        inc_bin_map += [(transition_preds[1].sigmoid() > 0.5) & self.upsample_bin_map(inc_bin_map[0], scale=2)] # repeat interleave
+        inc_bin_map += [(transition_preds[2].sigmoid() > 0.5) & self.upsample_bin_map(inc_bin_map[1], scale=4)] # repeat interleave
 
         # mask out confidence map with bin map and build confidence scores for each point
+        # TODO: In training?
         point_conf = []
         for i in range(len(transition_preds)):            
-            point_conf += [(transition_preds[i] * inc_bin_map[i].float()) \
+            point_conf += [(transition_preds[i].sigmoid() * inc_bin_map[i].float()) \
                                                     .permute(0, 2, 1, 3, 4).flatten(2)]
         point_conf = torch.cat(point_conf, dim=2)
 
@@ -204,6 +330,9 @@ class VM2M(nn.Module):
         # Generate position emebddings and add to features to have point features to refine
         point_feats = []
         point_pe = []
+        
+        
+
         for i, feat in enumerate(breakdown_feats):
             pe_emb = self.pe_layers[i](bs, n_f, feat.shape[-2], feat.shape[-1], feat.device)
             point_pe += [pe_emb.flatten(2)]
@@ -294,7 +423,7 @@ class VM2M(nn.Module):
         _, n_f, _, h, w = masks.shape
 
         # Update masks
-        masks = masks.float()
+        masks = masks.float().clone()
         
         # Change masks shape to (b, n_instances, n_f, h, w) for refinement
         masks = masks.permute(0, 2, 1, 3, 4)
@@ -319,7 +448,7 @@ class VM2M(nn.Module):
         x: b, n_f, 3, h, w, image tensors
         masks: b, n_frames, n_instances, h//8, w//8, coarse masks
         alphas: b, n_frames, n_instances, h, w, alpha matte
-        inc_gt: b, n_frames, n_instances, h, w, incoherence mask ground truth
+        trans_gt: b, n_frames, n_instances, h, w, incoherence mask ground truth
         '''
         x = batch['image']
         masks = batch['mask']
@@ -334,8 +463,9 @@ class VM2M(nn.Module):
         # masks = masks.reshape(b,n_f, n_instances, h//8, w//8)
         feats = self.backbone(x) # os1 to os32
 
-        # Running FPN to have attention features (1/16, 1/8, 1/4) and breakdown features (1/8, 1/4, 1)
+        # TODO: Running FPN to have attention features (1/16, 1/8, 1/4) and breakdown features (1/8, 1/4, 1)
         # attention_feats, breakdown_feats = self.fpn(feats)
+
         attention_feats = self.extract_features(feats, self.atten_features, self.conv_atten)
         breakdown_feats = self.extract_features(feats, self.breakdown_features, self.conv_breakdown)
 
@@ -347,7 +477,7 @@ class VM2M(nn.Module):
         output = {}
 
         # Detect incoherent regions
-        trans_preds, inc_bin_map, inc_feats, inc_pe, inc_ids = self.transition_prediction(incoherence_kernels, masks, breakdown_feats)
+        trans_preds, inc_bin_map, inc_feats, inc_pe, inc_ids = self.inc_prediction(incoherence_kernels, masks, breakdown_feats, trans_gt)
         output['trans_preds'] = trans_preds
         output['inc_bin_maps'] = inc_bin_map
 
@@ -373,13 +503,15 @@ class VM2M(nn.Module):
             trans_pred = F.interpolate(trans_pred, size=(trans_gt.shape[-2], trans_gt.shape[-1]), mode='bilinear', align_corners=True)
             preds += [trans_pred]
         preds = torch.cat(preds, dim=1)
-        preds = torch.clamp(preds, min=0, max=1)
+        # preds = torch.clamp(preds, min=0, max=1)
         
         if torch.isnan(preds).any():
             import pdb; pdb.set_trace()
 
         trans_gt = trans_gt.reshape(b * n_f * n_i, 1, h, w).expand(-1, 3, -1, -1)
-        trans_loss = F.binary_cross_entropy(preds, trans_gt, reduction='mean')
+        # import pdb; pdb.set_trace()
+        trans_loss = binary_focal_loss_with_logits(preds, trans_gt, reduction='mean')
+        # trans_loss = F.binary_cross_entropy(preds, trans_gt, reduction='mean')
 
         return trans_loss
 

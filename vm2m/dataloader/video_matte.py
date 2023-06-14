@@ -79,7 +79,7 @@ class SingleInstComposedVidDataset(Dataset):
             bg_images.append(image_path)
         return bg_images
 
-    def gen_transition_gt(self, alphas):
+    def gen_transition_gt(self, alphas, masks):
         k_size = self.random.choice(range(2, 5))
         iterations = np.random.randint(5, 15)
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
@@ -94,6 +94,10 @@ class SingleInstComposedVidDataset(Dataset):
             # trans_map[dilated < 0.5] = 0
             all_trans_map.append(torch.from_numpy(trans_map))
         all_trans_map = torch.stack(all_trans_map).unsqueeze(1)
+        upmasks = torch.repeat_interleave(masks, 8, dim=-1)
+        upmasks = torch.repeat_interleave(upmasks, 8, dim=-2)
+        diff = (alphas > 127) != (upmasks == 255)
+        all_trans_map[diff > 0] = 1.0
         return all_trans_map
     
     def __getitem__(self, idx):
@@ -123,23 +127,27 @@ class SingleInstComposedVidDataset(Dataset):
         alpha_paths = [os.path.join(self.root_dir, "pha", video_name, frame_name) for frame_name in frame_names]
         
         # Transforms
-        frames, alphas, masks = self.transforms(frame_paths, alpha_paths, mask_paths)
+        frames, alphas, masks, transform_info = self.transforms(frame_paths, alpha_paths, mask_paths)
+
+        masks = F.interpolate(masks, size=(masks.shape[2] // 8, masks.shape[3] // 8), mode="nearest")
 
         # Transition GT
         transition_gt = torch.zeros_like(alphas)
         if self.is_train:
-            transition_gt = self.gen_transition_gt(alphas)
+            transition_gt = self.gen_transition_gt(alphas, masks)
 
         alphas = alphas * 1.0 / 255
         masks = masks * 1.0 / 255
         # Resize masks to 1/8
-        masks = F.interpolate(masks, size=(masks.shape[2] // 8, masks.shape[3] // 8), mode="nearest")
+        
+
         
         if masks.sum() == 0:
             # import pdb; pdb.set_trace()
             logging.error("Get another sample, alphas are incorrect: {} - {}".format(alpha_paths[0], alpha_paths[-1]))
             return self.__getitem__(self.random.randint(0, len(self.frame_ids)))
-        
+        if not self.is_train:
+            return {'image':frames, 'mask': masks.float(), 'alpha': alphas.float(), 'transition': transition_gt.float(), 'image_names': frame_paths, 'transform_info': transform_info}
         return {'image':frames, 'mask': masks.float(), 'alpha': alphas.float(), 'transition': transition_gt.float()}
 
 if __name__ == "__main__":
