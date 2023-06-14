@@ -127,11 +127,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-<<<<<<< HEAD
-=======
-
-# Debugging files
->>>>>>> 7cac9b6 (Initial commit)
 *.png
 *.jpg
 
