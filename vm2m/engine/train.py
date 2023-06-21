@@ -129,7 +129,8 @@ def train(cfg, rank, is_dist=False):
     # Start training
     logging.info("Start training...")
     model.train()
-    epoch = len(train_loader) // iter
+    logging.debug("Iter: {}, len dataloader: {}".format(iter, len(train_loader)))
+    epoch =  iter // len(train_loader)
     while iter < cfg.train.max_iter:
         
         for _, batch in enumerate(train_loader):

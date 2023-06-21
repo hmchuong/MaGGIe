@@ -12,6 +12,8 @@ model:
       - os4
       - os1
 train:
+  batch_size: 3
+  num_workers: 12
   optimizer:
     lr: 0.0002
     name: adamw

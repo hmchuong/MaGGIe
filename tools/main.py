@@ -40,7 +40,10 @@ def main(rank, cfg, dist_url=None, world_size=8):
     # Set up wandb
     if rank == 0:
         if cfg.wandb.use:
-            wandb.login(host="https://adobesensei.wandb.io/")
+            # try:
+            #     wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"))
+            # except:
+            wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"), force=True)
             if cfg.wandb.id == '':
                 wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, name=cfg.name)
             else:

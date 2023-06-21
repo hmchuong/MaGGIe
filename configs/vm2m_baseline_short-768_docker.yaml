@@ -18,9 +18,9 @@ train:
 output_dir: 'output'
 dataset:
   train:
-    root_dir: '/mnt/localssd/VideoMatte240K'
-    bg_dir: '/mnt/localssd/bg'
+    root_dir: '/workspace/data/VideoMatte240K'
+    bg_dir: '/workspace/data/bg'
     short_size: 768
   test:
-    root_dir: '/mnt/localssd/VideoMatte240K'
+    root_dir: '/workspace/data/VideoMatte240K'
     short_size: 768
