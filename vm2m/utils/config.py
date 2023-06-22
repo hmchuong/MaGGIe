@@ -16,7 +16,8 @@ CONFIG.train.max_iter = 100000
 CONFIG.train.log_iter = 50
 CONFIG.train.vis_iter = 500
 CONFIG.train.val_iter = 2000
-
+CONFIG.train.val_metrics = ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'MSE']
+CONFIG.train.val_best_metric = 'MAD'
 
 optimizer = CN({})
 optimizer.name = 'sgd' # sgd
@@ -42,10 +43,13 @@ CONFIG.wandb.id = ''
 
 # ------------------------ Testing ------------------------
 CONFIG.test = CN({})
-CONFIG.test.batch_size = 1
+CONFIG.test.batch_size = 1 # Only support 1 for now
 CONFIG.test.num_workers = 16
 CONFIG.test.save_results = True
 CONFIG.test.save_dir = 'logs'
+CONFIG.test.postprocessing = True
+# CONFIG.test.metrics = ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'SAD', 'MSE', 'Conn', 'Grad']
+CONFIG.test.metrics = ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'MSE']
 CONFIG.test.log_iter = 50
 
 # ------------------------ Model ------------------------

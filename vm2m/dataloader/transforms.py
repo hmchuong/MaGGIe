@@ -24,8 +24,9 @@ class Load(object):
         return frames, alphas, masks
         
 class ResizeShort(object):
-    def __init__(self, short_size):
+    def __init__(self, short_size, transform_alphas=True):
         self.short_size = short_size
+        self.transform_alphas = transform_alphas
     
     def __call__(self, frames, alphas, masks, transform_info):
         h, w = frames[0].shape[:2]
@@ -35,13 +36,16 @@ class ResizeShort(object):
             if masks is not None:
                 masks = [cv2.resize(mask, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_NEAREST) for mask in masks]
             # import pdb; pdb.set_trace()
-            alphas = [cv2.resize(alpha, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_LINEAR) for alpha in alphas]
+            if self.transform_alphas:
+                alphas = [cv2.resize(alpha, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_LINEAR) for alpha in alphas]
         transform_info.append({'name': 'resize', 'ori_size': (h, w), 'ratio': ratio})
         return frames, alphas, masks
 
 class PaddingMultiplyBy(object):
-    def __init__(self, divisor=32):
+    def __init__(self, divisor=32, transform_alphas=True):
         self.divisor = divisor
+        self.transform_alphas = transform_alphas
+
     def __call__(self, frames, alphas, masks, transform_info):
         h, w = frames[0].shape[:2]
         h_pad = (self.divisor - h % self.divisor) % self.divisor
@@ -49,7 +53,8 @@ class PaddingMultiplyBy(object):
         frames = [cv2.copyMakeBorder(frame, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for frame in frames]
         if masks is not None:
             masks = [cv2.copyMakeBorder(mask, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for mask in masks]
-        alphas = [cv2.copyMakeBorder(alpha, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for alpha in alphas]
+        if self.transform_alphas:
+            alphas = [cv2.copyMakeBorder(alpha, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for alpha in alphas]
         transform_info.append({'name': 'padding', 'pad_size': (h_pad, w_pad)})
         return frames, alphas, masks
 

@@ -10,32 +10,39 @@ from torch.utils import data as torch_data
 from vm2m.dataloader import build_dataset
 from vm2m.network import build_model
 from vm2m.utils.dist import AverageMeter, reduce_dict
+from vm2m.utils.metric import build_metric
+
 from .optim import build_optim_lr_scheduler
+from .test import val
 
-def val(model, val_loader, device, log_iter=30):
-    model.eval()
-    val_error_dict = {
-        'sad': AverageMeter(),
-        'mse': AverageMeter()
-    }
+def wandb_log_image(batch, output, iter):
+    # Log transition_preds
+    log_images = []
+    image = batch['image'][0,0].cpu()
+    image = image * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    image = (image * 255).permute(1, 2, 0).numpy().astype(np.uint8)
+    log_images.append(wandb.Image(image, caption="image"))
 
-    with torch.no_grad():
-        for i, batch in enumerate(val_loader):
-            del batch['image_names']
-            del batch['transform_info']
-            batch = {k: v.to(device) for k, v in batch.items()}
-            outputs = model(batch)
-            alpha = outputs['refined_masks']
-            b, n_f, n_i = alpha.shape[:3]
-            sad = torch.abs(alpha - batch['alpha']).sum() / (b * n_f * n_i) 
-            mse = torch.pow(alpha - batch['alpha'], 2).sum() / (b * n_f * n_i)
-            val_error_dict['sad'].update(sad.item() / 1000)
-            val_error_dict['mse'].update(mse.item() / 1000)
+    alpha_gt = (batch['alpha'][0,0,0] * 255).cpu().numpy().astype('uint8')
+    log_images.append(wandb.Image(alpha_gt, caption="alpha_gt"))
 
-            if i % log_iter == 0:
-                logging.info("Validation: Iter {}/{}: SAD: {:.4f}, MSE: {:.4f}".format(
-                    i, len(val_loader), val_error_dict['sad'].avg, val_error_dict['mse'].avg))
-    return val_error_dict
+    alpha_pred = (output['refined_masks'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
+    log_images.append(wandb.Image(alpha_pred, caption="alpha_pred"))
+
+    mask_gt = (batch['mask'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
+    log_images.append(wandb.Image(mask_gt, caption="mask_gt"))
+    
+    for i, trans_pred in enumerate(output['trans_preds']):
+        trans_pred = (trans_pred[0,0,0].sigmoid() * 255).detach().cpu().numpy().astype('uint8')
+        log_images.append(wandb.Image(trans_pred, caption='transition_pred_' + str(i)))
+    
+    trans_gt = (batch['transition'][0,0,0] * 255).cpu().numpy().astype('uint8')
+    log_images.append(wandb.Image(trans_gt, caption="transition_gt"))
+    
+    for i, inc_bin_map in enumerate(output['inc_bin_maps']):
+        inc_bin_map = (inc_bin_map[0,0,0] * 255).detach().cpu().numpy().astype('uint8')
+        log_images.append(wandb.Image(inc_bin_map, caption='inc_bin_map_' + str(i)))
+    wandb.log({"examples/all": log_images}, step=iter, commit=True)
 
 def train(cfg, rank, is_dist=False):
     
@@ -96,8 +103,10 @@ def train(cfg, rank, is_dist=False):
             missing_keys, unexpected_keys = model.module.load_state_dict(state_dict, strict=False)
         else:
             missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-        logging.warn("Missing keys: {}".format(missing_keys))
-        logging.warn("Unexpected keys: {}".format(unexpected_keys))
+        if len(missing_keys) > 0:
+            logging.warn("Missing keys: {}".format(missing_keys))
+        if len(unexpected_keys) > 0:
+            logging.warn("Unexpected keys: {}".format(unexpected_keys))
 
     # Resume model from last checkpoint
     if cfg.train.resume != '':
@@ -123,8 +132,14 @@ def train(cfg, rank, is_dist=False):
     
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
+    
     log_metrics = {}
     end_time = time.time()
+
+    # Build validation metrics
+    val_error_dict = build_metric(cfg.train.val_metrics)
+    assert len(val_error_dict) > 0, "No validation metrics found!"
+    assert cfg.train.val_best_metric in val_error_dict, "Best validation metric not found!"
 
     # Start training
     logging.info("Start training...")
@@ -187,52 +202,28 @@ def train(cfg, rank, is_dist=False):
             
             # Visualization
             if iter % cfg.train.vis_iter == 0 and rank == 0 and cfg.wandb.use:
-                # TODO: Visualize to wandb
-                
-                # Log transition_preds
-                log_images = []
-                image = batch['image'][0,0].cpu()
-                image = image * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-                image = (image * 255).permute(1, 2, 0).numpy().astype(np.uint8)
-                log_images.append(wandb.Image(image, caption="image"))
-
-                alpha_gt = (batch['alpha'][0,0,0] * 255).cpu().numpy().astype('uint8')
-                log_images.append(wandb.Image(alpha_gt, caption="alpha_gt"))
-
-                alpha_pred = (output['refined_masks'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
-                log_images.append(wandb.Image(alpha_pred, caption="alpha_pred"))
-
-                mask_gt = (batch['mask'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
-                log_images.append(wandb.Image(mask_gt, caption="mask_gt"))
-                
-                for i, trans_pred in enumerate(output['trans_preds']):
-                    trans_pred = (trans_pred[0,0,0].sigmoid() * 255).detach().cpu().numpy().astype('uint8')
-                    log_images.append(wandb.Image(trans_pred, caption='transition_pred_' + str(i)))
-                
-                trans_gt = (batch['transition'][0,0,0] * 255).cpu().numpy().astype('uint8')
-                log_images.append(wandb.Image(trans_gt, caption="transition_gt"))
-                
-                for i, inc_bin_map in enumerate(output['inc_bin_maps']):
-                    inc_bin_map = (inc_bin_map[0,0,0] * 255).detach().cpu().numpy().astype('uint8')
-                    log_images.append(wandb.Image(inc_bin_map, caption='inc_bin_map_' + str(i)))
-                wandb.log({"examples/all": log_images}, step=iter, commit=True)
+                # Visualize to wandb
+                wandb_log_image(batch, output, iter)  
             
             # Validation
             if iter % cfg.train.val_iter == 0 and rank == 0:
                 logging.info("Start validation...")
                 model.eval()
                 val_model = model.module if is_dist else model
-                val_metrics = val(val_model, val_loader, device)
-                
-                logging.info("Validation: SAD: {:.4f}, MSE: {:.4f}".format(val_metrics['sad'].avg, val_metrics['mse'].avg))
+                _ = [v.reset() for v in val_error_dict.values()]
+                _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, False, None)
+
+                log_str = "Validation:"
+                for k, v in val_error_dict.items():
+                    log_str += "{}: {:.4f}, ".format(k, v.average())
                 if cfg.wandb.use:
-                    for k, v in val_metrics.items():
-                        wandb.log({"val/" + k: v.avg}, commit=False)
+                    for k, v in val_error_dict.items():
+                        wandb.log({"val/" + k: v.average()}, commit=False)
                     wandb.log({"val/epoch": epoch}, commit=False)
                     wandb.log({"val/iter": iter}, commit=True)
                 
                 # Save best model
-                total_error = val_metrics['sad'].avg + val_metrics['mse'].avg
+                total_error = val_error_dict[cfg.train.val_best_metric].average()
                 if total_error < best_score:
                     logging.info("Best score changed from {:.4f} to {:.4f}".format(best_score, total_error))
                     best_score = total_error
@@ -240,8 +231,8 @@ def train(cfg, rank, is_dist=False):
                     save_path = os.path.join(cfg.output_dir, 'best_model.pth')
                     with open(os.path.join(cfg.output_dir,"best_metrics.txt"), 'w') as f:
                         f.write("iter: {}\n".format(iter))
-                        f.write("sad: {:.4f}\n".format(val_metrics['sad'].avg))
-                        f.write("mse: {:.4f}\n".format(val_metrics['mse'].avg))
+                        for k, v in val_error_dict.items():
+                            f.write("{}: {:.4f}\n".format(k, v.average()))
                     torch.save(val_model.state_dict(), save_path)
                 
                 logging.info("Saving last model...")

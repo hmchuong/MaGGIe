@@ -435,7 +435,7 @@ class VM2M(nn.Module):
 
         # Forward image to get features
         b, n_f, _, h, w = x.shape
-        n_instances = alphas.shape[2]
+        n_instances = masks.shape[2]
         
         # Reshape x and masks
         x = x.reshape(b * n_f, 3, h, w)
