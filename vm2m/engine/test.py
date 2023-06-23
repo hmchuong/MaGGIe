@@ -107,6 +107,13 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 @torch.no_grad()
 def test(cfg):
 
+    logFormatter = logging.Formatter("%(asctime)s [%(levelname)-5.5s]  %(message)s")
+    rootLogger = logging.getLogger()
+    consoleHandler = logging.StreamHandler()
+    consoleHandler.setFormatter(logFormatter)
+    rootLogger.addHandler(consoleHandler)
+    rootLogger.setLevel('DEBUG')
+
     # Create dataset
     logging.info("Creating testing dataset...")
     val_dataset = build_dataset(cfg.dataset.test, is_train=False)

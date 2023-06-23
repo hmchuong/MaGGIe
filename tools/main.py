@@ -58,7 +58,7 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="configs/config.toml", help="Path to config file")
     parser.add_argument("--override", action="store_true", help="Override the experiment")
     parser.add_argument("--dist", action="store_true", help="Use distributed training")
-    parser.add_argument("--dist-world-size", type=int, default=8, help="Number of GPUs for distributed training")
+    parser.add_argument("--gpus", type=int, default=8, help="Number of GPUs for distributed training")
     parser.add_argument("--dist-url", type=str, default="tcp://127.0.0.1:23456", help="Distributed training URL")
     parser.add_argument("--eval-only", action="store_true", help="Only evaluate the model")
     parser.add_argument('opts', default=None, nargs=argparse.REMAINDER,
@@ -98,7 +98,7 @@ if __name__ == "__main__":
 
     if not args.eval_only:
         if args.dist:
-            mp.spawn(main, nprocs=args.dist_world_size, args=(CONFIG, args.dist_url, args.dist_world_size))
+            mp.spawn(main, nprocs=args.gpus, args=(CONFIG, args.dist_url, args.gpus))
         else:
             main(0, CONFIG, None, 1)
     else:

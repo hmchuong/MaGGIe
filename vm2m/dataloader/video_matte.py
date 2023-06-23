@@ -62,7 +62,8 @@ class SingleInstComposedVidDataset(Dataset):
 
         # Load frame ids
         start_idx = 0
-        while start_idx < len(frame_names) - overlap + 1:
+        upperbound = len(frame_names) - self.clip_length + 1 if self.is_train else len(frame_names) - overlap + 1
+        while start_idx < upperbound:
             self.frame_ids.append((video_name, start_idx))
             start_idx += self.clip_length - overlap
 

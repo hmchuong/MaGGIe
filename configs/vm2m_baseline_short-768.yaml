@@ -15,6 +15,9 @@ train:
   optimizer:
     lr: 0.0002
     name: adamw
+  val_iter: 100
+  vis_iter: 50
+  log_iter: 10
 output_dir: 'output'
 dataset:
   train:
