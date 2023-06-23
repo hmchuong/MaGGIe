@@ -9,9 +9,10 @@ rm HHM2K.zip
 
 mv images train
 mv HHM2K val
+mv alphas train/alphas
 
 cd train
 cat images.zip.* > images.zip
-unzip images.zip
+unzip -q images.zip
 rm images.zip.*
 rm images.zip
