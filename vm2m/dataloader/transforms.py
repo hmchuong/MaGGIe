@@ -12,6 +12,7 @@ class Compose(object):
         transform_info = []
         for t in self.transforms:
             frames, alphas, masks = t(frames, alphas, masks, transform_info)
+            # import pdb; pdb.set_trace()
         return frames, alphas, masks, transform_info
 
 class Load(object):
@@ -110,7 +111,7 @@ class RandomCropByAlpha(object):
 
         crop_masks = masks
         if masks is not None:
-            crop_masks = masks[:,y:y+self.crop_size, x:x+self.crop_size]
+            crop_masks = masks[:,y:y+self.crop_size[0], x:x+self.crop_size[1]]
         
         return crop_frames, crop_alphas, crop_masks
 
@@ -180,7 +181,7 @@ class MasksFromBinarizedAlpha(object):
     
     def __call__(self, frames, alphas, masks, transform_info):
         if masks is None:
-            masks = ((alphas > self.threshold) * 255).astype(np.uint8)
+            masks = [(a > self.threshold * 255).astype(np.uint8) * 255 for a in alphas]
         return frames, alphas, masks
     
 class RandomBinarizeAlpha(object):

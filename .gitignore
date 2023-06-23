@@ -134,3 +134,4 @@ dmypy.json
 output/*
 wandb/*
 pretrain/*
+core.*

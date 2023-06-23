@@ -74,6 +74,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             skip = batch.pop('skip').numpy()[0]
 
             batch = {k: v.to(device) for k, v in batch.items()}
+
             output = model(batch)
 
             batch_time.update(time.time() - end_time)

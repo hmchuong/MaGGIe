@@ -11,7 +11,7 @@ from .module.fpn import FPN
 from .module.mask_attention import MaskAttentionDynamicKernel
 from .module.position_encoding import TemporalPositionEmbeddingSine
 from .module.pixel_encoder import TransformerEncoder, TransformerEncoderLayer
-from .loss import GradientLoss
+from .loss import GradientLoss, LapLoss, RMSELoss
 
 def conv1x1bnrelu(in_channels, out_channels):
     return nn.Sequential(
@@ -96,7 +96,13 @@ class VM2M(nn.Module):
         
         self.hr_conv = nn.Conv2d(backbone.out_channels['os4'] + backbone.out_channels['os1'], 64, kernel_size=1, stride=1, padding=0, bias=False)
 
+        # Losses
         self.gradient_loss = GradientLoss()
+        self.lap_loss = LapLoss()
+        self.alpha_loss = nn.L1Loss(reduction='none') if cfg.loss_alpha_type == 'l1' else RMSELoss()
+        self.loss_alpha_w = cfg.loss_alpha_w
+        self.loss_alpha_grad_w = cfg.loss_alpha_grad_w
+        self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
         
         need_init_weights = [self.dynamic_kernels_generator, self.trans_pred_conv, self.pixel_decoder, self.hr_conv, self.fpn]
 
@@ -486,7 +492,10 @@ class VM2M(nn.Module):
         hr_feat = hr_feat[indices]
         indices = torch.stack(indices, dim=1)
         if len(indices) == 0:
-            return output, None
+            output['refined_masks'] = l_masks
+            if self.training:
+                return output, None
+            return output
         x = spconv.SparseConvTensor(hr_feat, indices.int(), (h, w), b * n_f * n_instances)
         x = self.pixel_decoder(x)
         x = x.dense()
@@ -554,33 +563,43 @@ class VM2M(nn.Module):
                 ref_loss = ref_loss + F.l1_loss(pred.flatten(), gt.flatten(), reduction='sum')
         
         return ref_loss / inc_ids.numel()
-        
+    
     
     def compute_loss(self, output_dict, alphas, trans_gt):
         losses = {}
         
+        total_loss = 0
         # Compute transition loss (binary cross entropy): trans_preds, trans_gt
         trans_loss = self._compute_trans_loss(output_dict['trans_preds'], trans_gt)
         losses['loss_trans'] = trans_loss
+        total_loss = total_loss + trans_loss
         
-        ref_loss = F.l1_loss(output_dict['refined_masks'], alphas, reduction='none')
-        ref_loss = (ref_loss * trans_gt).sum() / trans_gt.sum()
-        losses['loss_ref_alpha'] = ref_loss
+        # Alpha loss: L1 loss
+        if self.loss_alpha_w > 0:
+            ref_loss = self.alpha_loss(output_dict['refined_masks'], alphas)
+            ref_loss = (ref_loss * trans_gt).sum() / trans_gt.sum()
+            losses['loss_ref_alpha'] = ref_loss
+            total_loss = total_loss + ref_loss * self.loss_alpha_w
 
-        # import pdb; pdb.set_trace()
-        h, w = alphas.shape[-2:]
-        alpha_pred = output_dict['refined_masks'].reshape(-1, 1, h, w)
-        alpha_gt = alphas.reshape(-1, 1, h, w)
-        mask = trans_gt.reshape(-1, 1, h, w)
-        grad_loss = self.gradient_loss(alpha_pred, alpha_gt, mask)
-        losses['loss_ref_grad'] = grad_loss
-
-        # Compute refinement loss (L1 loss): refined_logit_inc, alphas, inc_ids
-        # ref_loss = self._compute_refinement_loss(output_dict['refined_logit_inc'], alphas, output_dict['inc_ids'])
-        # 
+        # Alpha loss: gradient loss
+        if self.loss_alpha_grad_w > 0:
+            h, w = alphas.shape[-2:]
+            alpha_pred = output_dict['refined_masks'].reshape(-1, 1, h, w)
+            alpha_gt = alphas.reshape(-1, 1, h, w)
+            mask = trans_gt.reshape(-1, 1, h, w)
+            grad_loss = self.gradient_loss(alpha_pred, alpha_gt, mask)
+            losses['loss_ref_grad'] = grad_loss
+            total_loss = total_loss + grad_loss * self.loss_alpha_grad_w
         
-        # TODO: Compute gradient loss (Grad loss) at incoherent regions: refined_masks, inc_bin_map
+        # Alpha loss: laplacian loss
+        if self.loss_alpha_lap_w > 0:
+            h, w = alphas.shape[-2:]
+            pred_alpha = output_dict['refined_masks'].reshape(-1, 1, h, w)
+            gt_alpha = alphas.reshape(-1, 1, h, w)
+            lap_loss = self.lap_loss(pred_alpha, gt_alpha)
+            losses['loss_ref_lap'] = lap_loss
+            total_loss = total_loss + lap_loss * self.loss_alpha_lap_w
 
-        losses['total'] = trans_loss + ref_loss + grad_loss
+        losses['total'] = total_loss
         return losses
         

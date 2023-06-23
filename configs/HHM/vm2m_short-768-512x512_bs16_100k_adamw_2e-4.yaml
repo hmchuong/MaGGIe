@@ -1,15 +1,17 @@
 name: 'vm2m_hmm_short-768-512x512_bs16_100k_adamw_2e-4'
+output_dir: 'output/HHM'
 train:
-  batch_size: 16
+  batch_size: 32
   num_workers: 12
   max_iter: 100000
   optimizer:
     lr: 0.0002
     name: adamw
+  val_metrics: ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'MSE']
+  val_best_metric: 'MAD'
   val_iter: 1000
   vis_iter: 200
   log_iter: 50
-output_dir: 'output'
 dataset:
   train:
     name: 'HHM'

@@ -57,6 +57,10 @@ CONFIG.model = CN({})
 CONFIG.model.weights = ''
 CONFIG.model.arch = 'VM2M'
 CONFIG.model.backbone = 'res_encoder_29' # resnet34
+CONFIG.model.loss_alpha_w = 1.0
+CONFIG.model.loss_alpha_type = 'l1'
+CONFIG.model.loss_alpha_grad_w = 1.0
+CONFIG.model.loss_alpha_lap_w = 1.0
 
 # Dynamic kernel
 dynamic_kernel = CN({})
@@ -113,6 +117,6 @@ dataset.test.split = 'valid'
 # For video augmentation
 dataset.test.clip_length = 8
 dataset.test.clip_overlap = 2
-dataset.test.short_size = 1024
+dataset.test.short_size = 768
 
 CONFIG.dataset = dataset

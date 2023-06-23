@@ -22,13 +22,13 @@ class ImageMatteDataset(Dataset):
         # Augementation
         self.random = np.random.RandomState(random_seed)
 
-        self.transforms = [T.Load(), T.ResizeShort(short_size, transform_alphas=is_train), T.PaddingMultiplyBy(32, transform_alphas=is_train), T.Stack()]
+        self.transforms = [T.Load(), T.MasksFromBinarizedAlpha(), T.ResizeShort(short_size, transform_alphas=is_train), T.PaddingMultiplyBy(32, transform_alphas=is_train), T.Stack()]
         if self.is_train:
             self.transforms.extend([
                 T.RandomCropByAlpha(crop, self.random),
                 T.RandomHorizontalFlip(self.random, flip_p),
             ])
-        self.transforms += [T.MasksFromBinarizedAlpha(), T.ToTensor(), T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]
+        self.transforms += [T.ToTensor(), T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]
         self.transforms = T.Compose(self.transforms)
     
     def load_image_alphas(self):
