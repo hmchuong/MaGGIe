@@ -60,7 +60,7 @@ CONFIG.model.backbone = 'res_encoder_29' # resnet34
 
 # Dynamic kernel
 dynamic_kernel = CN({})
-dynamic_kernel.in_features = ['os32', 'os16', 'os8', 'os4']
+dynamic_kernel.in_features = ['os32', 'os16', 'os8']
 dynamic_kernel.hidden_dim = 256
 dynamic_kernel.nheads = 4
 dynamic_kernel.dim_feedforward = 256
@@ -68,14 +68,14 @@ dynamic_kernel.dec_layers = 5
 dynamic_kernel.pre_norm = False
 dynamic_kernel.enforce_input_project = True
 dynamic_kernel.in_channels = 256
-dynamic_kernel.out_incoherence = 479 # 99
-dynamic_kernel.out_pixeldecoder = 305
+dynamic_kernel.out_incoherence = 157 # 99
+dynamic_kernel.out_pixeldecoder = 64
 CONFIG.model.dynamic_kernel = dynamic_kernel
 
 # Breakdown incoherence
 breakdown = CN({})
 breakdown.in_channels = [32, 32, 32]
-breakdown.in_features = ['os8', 'os4', 'os1']
+breakdown.in_features = ['os4', 'os1']
 CONFIG.model.breakdown = breakdown
 
 refinement = CN({})
@@ -91,13 +91,15 @@ dataset.train.name = 'VideoMatte240K'
 dataset.train.root_dir = ''
 dataset.train.split = 'train'
 dataset.train.clip_length = 8
-dataset.train.short_size = 1024
+dataset.train.short_size = 768
 # For augmentation
 dataset.train.random_state = 2023
-dataset.train.max_step_size = 2
-dataset.train.bg_dir = ''
 dataset.train.crop = [512, 512] # (h, w)
 dataset.train.flip_prob = 0.5
+
+# For video augmentation
+dataset.train.max_step_size = 2
+dataset.train.bg_dir = ''
 dataset.train.blur_prob = 0.5
 dataset.train.blur_kernel_size = [5, 15, 25]
 dataset.train.blur_sigma = [1.0, 1.5, 3.0, 5.0]
@@ -107,6 +109,8 @@ dataset.test = CN({})
 dataset.test.name = 'VideoMatte240K'
 dataset.test.root_dir = ''
 dataset.test.split = 'valid'
+
+# For video augmentation
 dataset.test.clip_length = 8
 dataset.test.clip_overlap = 2
 dataset.test.short_size = 1024

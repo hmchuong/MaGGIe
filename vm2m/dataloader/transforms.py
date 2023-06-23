@@ -1,3 +1,4 @@
+from typing import Any
 import numpy as np
 import cv2
 import torch
@@ -19,8 +20,8 @@ class Load(object):
     def __call__(self, frames, alphas, masks, transform_info):
         frames = [np.array(Image.open(frame_path).convert("RGB" if self.is_rgb else "BGR")) for frame_path in frames]
         if masks is not None:
-            masks = [np.array(Image.open(mask_path)) for mask_path in masks]
-        alphas = [np.array(Image.open(alpha_path)) for alpha_path in alphas]
+            masks = [np.array(Image.open(mask_path).convert("L")) for mask_path in masks]
+        alphas = [np.array(Image.open(alpha_path).convert("L")) for alpha_path in alphas]
         return frames, alphas, masks
         
 class ResizeShort(object):
@@ -84,8 +85,8 @@ class RandomCropByAlpha(object):
             raise ValueError("Crop size {} is larger than image size {}".format(self.crop_size, (h, w)))
         
         # Find alpha region
-        ys, xs = np.where(alphas.mean(0) > 127)
         try:
+            ys, xs = np.where(alphas.mean(0) > 127)
             min_x, max_x = xs.min(), xs.max()
             min_y, max_y = ys.min(), ys.max()
         except:
@@ -173,6 +174,15 @@ class RandomComposeBackground(object):
 
         return compose_frames, alphas, masks
 
+class MasksFromBinarizedAlpha(object):
+    def __init__(self, threshold=0.5):
+        self.threshold = threshold
+    
+    def __call__(self, frames, alphas, masks, transform_info):
+        if masks is None:
+            masks = ((alphas > self.threshold) * 255).astype(np.uint8)
+        return frames, alphas, masks
+    
 class RandomBinarizeAlpha(object):
     def __init__(self, random, binarize_max_k=30):
         self.random = random

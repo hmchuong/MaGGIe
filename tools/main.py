@@ -11,9 +11,6 @@ import torch.multiprocessing as mp
 from vm2m.utils import CONFIG
 from vm2m.engine import train, test
 
-rootLogger = logging.getLogger()
-rootLogger.setLevel('DEBUG')
-
 def main(rank, cfg, dist_url=None, world_size=8):
 
     # Set up logger
@@ -23,7 +20,10 @@ def main(rank, cfg, dist_url=None, world_size=8):
     fileHandler = logging.FileHandler("{0}/log_rank{1}.log".format(cfg.output_dir, str(rank)))
     fileHandler.setFormatter(logFormatter)
     rootLogger.addHandler(fileHandler)
-    rootLogger.setLevel('DEBUG')
+    if os.getenv("DEBUG", False):
+        rootLogger.setLevel('DEBUG')
+    else:
+        rootLogger.setLevel('INFO')
 
     if rank == 0:
         consoleHandler = logging.StreamHandler()

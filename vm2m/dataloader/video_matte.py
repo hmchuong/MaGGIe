@@ -7,17 +7,18 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 try:
     from . import transforms as T
+    from .utils import gen_transition_gt
 except:
     import transforms as T
-
+    from utils import gen_transition_gt
 
 class SingleInstComposedVidDataset(Dataset):
     def __init__(self, root_dir, split, clip_length, overlap=0, short_size=1024, 
                  is_train=False, 
                  crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
                  blur_p=0.5, blur_kernel_size=[5, 15, 25], blur_sigma=[1.0, 1.5, 3.0, 5.0],
-                 bg_dir=None, max_step_size=5, random_seed=2023):
-        
+                 bg_dir=None, max_step_size=5, random_seed=2023, **kwargs):
+        super().__init__()
         self.root_dir = os.path.join(root_dir, split)
         self.is_train = is_train
         self.clip_length = clip_length
@@ -85,7 +86,7 @@ class SingleInstComposedVidDataset(Dataset):
             bg_images.append(image_path)
         return bg_images
 
-    def gen_transition_gt(self, alphas, masks=None):
+    def gen_transition_gt(alphas, masks=None):
         if self.is_train:
             k_size = self.random.choice(range(2, 5))
             iterations = np.random.randint(5, 15)
@@ -142,9 +143,11 @@ class SingleInstComposedVidDataset(Dataset):
         masks = F.interpolate(masks, size=(masks.shape[2] // 8, masks.shape[3] // 8), mode="nearest")
 
         # Transition GT
-        transition_gt = torch.zeros_like(alphas)
+        transition_gt = None
         if self.is_train:
-            transition_gt = self.gen_transition_gt(alphas, masks)
+            k_size = self.random.choice(range(2, 5))
+            iterations = np.random.randint(5, 15)
+            transition_gt = gen_transition_gt(alphas, masks, k_size, iterations)
 
         alphas = alphas * 1.0 / 255
         masks = masks * 1.0 / 255
@@ -153,15 +156,17 @@ class SingleInstComposedVidDataset(Dataset):
             logging.error("Get another sample, alphas are incorrect: {} - {}".format(alpha_paths[0], alpha_paths[-1]))
             return self.__getitem__(self.random.randint(0, len(self.frame_ids)))
         
+        out =  {'image':frames, 'mask': masks.float(), 'alpha': alphas.float()}
         if not self.is_train:
             # Generate trimap for evaluation
-            trans = self.gen_transition_gt(alphas)
+            trans = gen_transition_gt(alphas)
             trimap = torch.zeros_like(alphas)
             trimap[alphas > 0.5] = 2.0 # FG
             trimap[trans > 0] = 1.0 # Transition
-            return {'image':frames, 'mask': masks.float(), 'trimap': trimap, 'alpha': alphas.float(), 'image_names': frame_paths, 'transform_info': transform_info, "skip": 0 if start_frame_id == 0 else self.overlap}
-        
-        return {'image':frames, 'mask': masks.float(), 'alpha': alphas.float(), 'transition': transition_gt.float()}
+            out.update({'trimap': trimap, 'image_names': frame_paths, 'transform_info': transform_info, "skip": 0 if start_frame_id == 0 else self.overlap})
+        else:
+            out.update({'transition': transition_gt.float()})
+        return out
 
 if __name__ == "__main__":
     train_dataset = SingleInstComposedVidDataset(root_dir="/home/chuongh/mask2matte/data/VideoMatte240K", split="train", clip_length=8, bg_dir="/mnt/localssd/bg", max_step_size=5, is_train=True)
