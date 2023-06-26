@@ -161,8 +161,15 @@ def train(cfg, rank, is_dist=False):
             batch = {k: v.to(device) for k, v in batch.items()}
 
             optimizer.zero_grad()
-            output, loss = model(batch)
-            if loss is None:
+            try:
+                # if iter == 85 and rank == 0:
+                #     from pudb.remote import set_trace
+                #     set_trace()
+                output, loss = model(batch)
+                if loss is None:
+                    continue
+            except ValueError as e:
+                logging.error("ValueError: {}".format(e))
                 continue
             loss_reduced = reduce_dict(loss)
 

@@ -57,10 +57,15 @@ CONFIG.model = CN({})
 CONFIG.model.weights = ''
 CONFIG.model.arch = 'VM2M'
 CONFIG.model.backbone = 'res_encoder_29' # resnet34
+
+# For loss
 CONFIG.model.loss_alpha_w = 1.0
 CONFIG.model.loss_alpha_type = 'l1'
 CONFIG.model.loss_alpha_grad_w = 1.0
 CONFIG.model.loss_alpha_lap_w = 1.0
+
+CONFIG.model.loss_comp_w = 0.25
+CONFIG.model.loss_dtSSD_w = 1.0
 
 # Dynamic kernel
 dynamic_kernel = CN({})

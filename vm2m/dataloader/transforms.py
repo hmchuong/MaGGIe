@@ -1,4 +1,3 @@
-from typing import Any
 import numpy as np
 import cv2
 import torch
@@ -8,29 +7,40 @@ class Compose(object):
     def __init__(self, transforms):
         self.transforms = transforms
 
-    def __call__(self, frames, alphas, masks=None):
+    def __call__(self, input_dict: dict):
         transform_info = []
+        input_dict["transform_info"] = transform_info
         for t in self.transforms:
-            frames, alphas, masks = t(frames, alphas, masks, transform_info)
+            input_dict = t(input_dict)
             # import pdb; pdb.set_trace()
-        return frames, alphas, masks, transform_info
+        return input_dict
 
 class Load(object):
     def __init__(self, is_rgb=True):
         self.is_rgb = is_rgb
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
         frames = [np.array(Image.open(frame_path).convert("RGB" if self.is_rgb else "BGR")) for frame_path in frames]
         if masks is not None:
             masks = [np.array(Image.open(mask_path).convert("L")) for mask_path in masks]
         alphas = [np.array(Image.open(alpha_path).convert("L")) for alpha_path in alphas]
-        return frames, alphas, masks
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        input_dict["masks"] = masks
+        return input_dict
         
 class ResizeShort(object):
     def __init__(self, short_size, transform_alphas=True):
         self.short_size = short_size
         self.transform_alphas = transform_alphas
     
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+        transform_info = input_dict["transform_info"]
         h, w = frames[0].shape[:2]
         ratio = self.short_size * 1.0 / min(w, h) 
         if ratio != 1:
@@ -41,14 +51,25 @@ class ResizeShort(object):
             if self.transform_alphas:
                 alphas = [cv2.resize(alpha, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_LINEAR) for alpha in alphas]
         transform_info.append({'name': 'resize', 'ori_size': (h, w), 'ratio': ratio})
-        return frames, alphas, masks
+        
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        input_dict["masks"] = masks
+        input_dict["transform_info"] = transform_info
+        
+        return input_dict
 
 class PaddingMultiplyBy(object):
     def __init__(self, divisor=32, transform_alphas=True):
         self.divisor = divisor
         self.transform_alphas = transform_alphas
 
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+        transform_info = input_dict["transform_info"]
+
         h, w = frames[0].shape[:2]
         h_pad = (self.divisor - h % self.divisor) % self.divisor
         w_pad = (self.divisor - w % self.divisor) % self.divisor
@@ -58,29 +79,49 @@ class PaddingMultiplyBy(object):
         if self.transform_alphas:
             alphas = [cv2.copyMakeBorder(alpha, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for alpha in alphas]
         transform_info.append({'name': 'padding', 'pad_size': (h_pad, w_pad)})
-        return frames, alphas, masks
+        
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        input_dict["masks"] = masks
+        input_dict["transform_info"] = transform_info
+
+        return input_dict
 
 class Stack(object):
     def __init__(self):
         pass
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+
         frames = np.stack(frames, axis=0)
         alphas = np.stack(alphas, axis=0)
         if masks is not None:
             masks = np.stack(masks, axis=0)
-        return frames, alphas, masks
+        
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        input_dict["masks"] = masks
+
+        return input_dict
 
 class RandomCropByAlpha(object):
     def __init__(self, crop_size, random):
         self.crop_size = crop_size
         self.random = random
     
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
         '''
         frames: (T, H, W, C)
         alphas: (T, H, W)
         masks: (T, H, W) or None
         '''
+
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+
         h, w = frames[0].shape[:2]
         if h < self.crop_size[0] or w < self.crop_size[1]:
             raise ValueError("Crop size {} is larger than image size {}".format(self.crop_size, (h, w)))
@@ -113,25 +154,38 @@ class RandomCropByAlpha(object):
         if masks is not None:
             crop_masks = masks[:,y:y+self.crop_size[0], x:x+self.crop_size[1]]
         
-        return crop_frames, crop_alphas, crop_masks
+        input_dict["frames"] = crop_frames
+        input_dict["alphas"] = crop_alphas
+        input_dict["masks"] = crop_masks
+
+        return input_dict
 
 class RandomHorizontalFlip(object):
     def __init__(self, random, p=0.5):
         self.random = random
         self.p = p
 
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
         '''
         frames: (T, H, W, C)
         alphas: (T, H, W)
         masks: (T, H, W) or None
         '''
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+
         if self.random.rand() < self.p:
             frames = frames[:, :, ::-1, :]
             alphas = alphas[:, :, ::-1]
             if masks is not None:
                 masks = masks[:, :, ::-1]
-        return frames, alphas, masks
+        
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        input_dict["masks"] = masks
+
+        return input_dict
 
 class RandomComposeBackground(object):
     def __init__(self, bg_paths, random, is_rgb=True, blur_p=0.5, blur_kernel_size=[5, 15, 25], blur_sigma=[1.0, 1.5, 3.0, 5.0]):
@@ -142,12 +196,15 @@ class RandomComposeBackground(object):
         self.blur_kernel_size = blur_kernel_size
         self.blur_sigma = blur_sigma
     
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
         '''
         frames: (T, H, W, C)
         alphas: (T, H, W)
         masks: (T, H, W) or None
         '''
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+
         bg_path = self.random.choice(self.bg_paths)
         bg = cv2.imread(bg_path)
         if self.is_rgb:
@@ -172,17 +229,28 @@ class RandomComposeBackground(object):
         bg = bg.astype(np.float32)
         compose_frames = frames * (alphas[..., None].astype(float) / 255.0) + bg * (1 - alphas[..., None].astype(float) / 255.0)
         compose_frames = np.clip(compose_frames, 0, 255).astype(np.uint8)
-
-        return compose_frames, alphas, masks
+        input_dict["fg"] = frames
+        input_dict["bg"] = np.tile(bg, (frames.shape[0], 1, 1, 1))
+        
+        input_dict["frames"] = compose_frames
+        
+        return input_dict
 
 class MasksFromBinarizedAlpha(object):
     def __init__(self, threshold=0.5):
         self.threshold = threshold
     
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
+        
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+
         if masks is None:
             masks = [(a > self.threshold * 255).astype(np.uint8) * 255 for a in alphas]
-        return frames, alphas, masks
+        
+        input_dict["masks"] = masks
+
+        return input_dict
     
 class RandomBinarizeAlpha(object):
     def __init__(self, random, binarize_max_k=30):
@@ -222,7 +290,7 @@ class RandomBinarizeAlpha(object):
             img_final = cv2.erode(img_binarized, kernel_erode, iterations=1)
         return img_final * 255
 
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
         '''
         Args:
         frames: (T, H, W, C)
@@ -234,15 +302,21 @@ class RandomBinarizeAlpha(object):
         alphas: (T, H, W)
         masks: (T, H, W) from alphas
         '''
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+
         if masks is None:
             masks = np.stack([self._gen_single_mask(alpha) for alpha in alphas], axis=0)
-        return frames, alphas, masks
+        
+        input_dict["masks"] = masks
+
+        return input_dict
         
 
 class ToTensor(object):
     def __init__(self):
         pass
-    def __call__(self, frames, alphas, masks, transform_info):
+    def __call__(self, input_dict: dict):
         '''
         Args:
         frames: (T, H, W, C)
@@ -254,21 +328,43 @@ class ToTensor(object):
         alphas: (T, 1, H, W)
         masks: (T, 1, H, W) or None
         '''
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+
         frames = torch.from_numpy(np.ascontiguousarray(frames)).permute(0, 3, 1, 2).contiguous().float()        
         alphas = torch.from_numpy(np.ascontiguousarray(alphas)).unsqueeze(1).contiguous()
 
         if masks is not None:
             masks = torch.from_numpy(np.ascontiguousarray(masks).astype('uint8')).unsqueeze(1).contiguous()
-        return frames, alphas, masks
+
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        input_dict["masks"] = masks
+        
+        if "fg" in input_dict:
+            input_dict["fg"] = torch.from_numpy(np.ascontiguousarray(input_dict["fg"])).permute(0, 3, 1, 2).contiguous().float()
+        if "bg" in input_dict:
+            input_dict["bg"] = torch.from_numpy(np.ascontiguousarray(input_dict["bg"])).permute(0, 3, 1, 2).contiguous().float()
+        return input_dict
 
 class Normalize(object):
     def __init__(self, mean=[], std=[]):
         self.mean = mean
         self.std = std
     
-    def __call__(self, frames, alphas, masks, transform_info):
+    def norm(self, frames):
         mean = torch.tensor(self.mean).view(1, 3, 1, 1).float()
         std = torch.tensor(self.std).view(1, 3, 1, 1).float()
         frames = frames / 255.0
         frames = (frames - mean) / std
-        return frames, alphas, masks
+        return frames
+    
+    def __call__(self, input_dict: dict):
+        frames = input_dict["frames"]    
+        input_dict["frames"] = self.norm(frames)
+        if "fg" in input_dict:
+            input_dict["fg"] = self.norm(input_dict["fg"])
+        if "bg" in input_dict:
+            input_dict["bg"] = self.norm(input_dict["bg"])
+        return input_dict

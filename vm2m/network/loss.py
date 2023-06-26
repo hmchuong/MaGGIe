@@ -1,6 +1,29 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+# from pudb.remote import set_trace
+
+def loss_dtSSD(pred, gt, mask):
+    b, n_f, _, h, w = pred.shape
+    dadt = pred[:, 1:] - pred[:, :-1]
+    dgdt = gt[:, 1:] - gt[:, :-1]
+    diff = (dadt - dgdt) ** 2
+    diff = diff * mask[:, 1:]
+    # import pdb; pdb.set_trace()
+    diff = torch.sum(diff) / torch.sum(mask[:, 1:])
+    return diff
+    # metric = torch.sqrt(torch.sum((dadt - dgdt) ** 2, dim=(2, 3, 4)))
+    # metric = torch.sum(metric)
+    # count = ((n_f - 1) * b)
+    # if torch.isnan(metric).any():
+    #     # set_trace()
+    # return metric/ (count + 1e-4)
+
+def loss_comp(alpha_pred, alpha_gt, fg, bg, mask):
+    comp_pred = alpha_pred * fg + (1 - alpha_pred) * bg
+    comp_gt = alpha_gt * fg + (1 - alpha_gt) * bg
+    loss = torch.sum(F.l1_loss(comp_pred, comp_gt, reduction='none')) / (mask.sum() + 1e-6)
+    return loss
 
 class GradientLoss(nn.Module):
     def __init__(self, eps=1e-6):

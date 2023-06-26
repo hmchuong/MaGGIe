@@ -18,6 +18,7 @@ train:
   val_iter: 100
   vis_iter: 50
   log_iter: 10
+  seed: 1629
 output_dir: 'output'
 dataset:
   train:

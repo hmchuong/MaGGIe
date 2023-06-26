@@ -44,7 +44,13 @@ class ImageMatteDataset(Dataset):
     
     def __getitem__(self, idx):
         image_path, alpha_path = self.data[idx]
-        image, alpha, mask, transform_info = self.transforms([image_path], [alpha_path], None)
+        input_dict = {
+            "frames": [image_path],
+            "alphas": [alpha_path],
+            "masks": None
+        }
+        output_dict = self.transforms(input_dict)
+        image, alpha, mask, transform_info = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"]
         
         mask = F.interpolate(mask, size=(mask.shape[2] // 8, mask.shape[3] // 8), mode="nearest")
 
@@ -63,6 +69,9 @@ class ImageMatteDataset(Dataset):
             return self.__getitem__(self.random.randint(0, len(self.data)))
 
         out =  {'image': image, 'mask': mask.float(), 'alpha': alpha.float()}
+        out['fg'] = output_dict.get('fg', image)
+        out['bg'] = output_dict.get('bg', image)
+        
         if not self.is_train:
             # Generate trimap for evaluation
             trans = gen_transition_gt(alpha)

@@ -113,7 +113,13 @@ class SingleInstComposedVidDataset(Dataset):
         alpha_paths = [os.path.join(self.root_dir, "pha", video_name, frame_name) for frame_name in frame_names]
         
         # Transforms
-        frames, alphas, masks, transform_info = self.transforms(frame_paths, alpha_paths, mask_paths)
+        input_dict = {
+            "frames": frame_paths,
+            "alphas": alpha_paths,
+            "masks": mask_paths
+        }
+        output_dict = self.transforms(input_dict)
+        frames, alphas, masks, transform_info = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"]
 
         masks = F.interpolate(masks, size=(masks.shape[2] // 8, masks.shape[3] // 8), mode="nearest")
 
@@ -132,6 +138,9 @@ class SingleInstComposedVidDataset(Dataset):
             return self.__getitem__(self.random.randint(0, len(self.frame_ids)))
         
         out =  {'image':frames, 'mask': masks.float(), 'alpha': alphas.float()}
+        out['fg'] = output_dict.get('fg', frames)
+        out['bg'] = output_dict.get('bg', frames)
+
         if not self.is_train:
             # Generate trimap for evaluation
             trans = gen_transition_gt(alphas)

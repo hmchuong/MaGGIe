@@ -3,6 +3,7 @@ from typing import Optional
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
+# from pudb.remote import set_trace
 
 from .position_encoding import TemporalPositionEmbeddingSine
 
@@ -93,20 +94,23 @@ class CrossAttentionLayer(nn.Module):
                      pos: Optional[Tensor] = None,
                      query_pos: Optional[Tensor] = None):
         if torch.isnan(tgt).any():
-            import pdb; pdb.set_trace()
+            # import pdb; pdb.set_trace()
+            # set_trace()
+            raise ValueError("Mask is empty")
         tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
                                    key_padding_mask=memory_key_padding_mask)[0]
         self.multihead_attn(query=self.with_pos_embed(tgt, query_pos), key=self.with_pos_embed(memory, pos), value=memory, attn_mask=memory_mask, key_padding_mask=memory_key_padding_mask)[0]
-        if torch.isnan(tgt2).any():
-            import pdb; pdb.set_trace()
+        # if torch.isnan(tgt2).any():
+        #     import pdb; pdb.set_trace()
+            # raise ValueError("Mask is empty")
         tgt = tgt + self.dropout(tgt2)
-        if torch.isnan(tgt).any():
-            import pdb; pdb.set_trace()
+        # if torch.isnan(tgt).any():
+        #     import pdb; pdb.set_trace()
         tgt = self.norm(tgt)
-        if torch.isnan(tgt).any():
-            import pdb; pdb.set_trace()
+        # if torch.isnan(tgt).any():
+        #     import pdb; pdb.set_trace()
         return tgt
 
     def forward_pre(self, tgt, memory,
@@ -294,7 +298,8 @@ class MaskAttentionDynamicKernel(nn.Module):
             else:
                 ds_mask = masks
             if ds_mask[0, :, 0, :].sum() == 0:
-                import pdb; pdb.set_trace()
+                # import pdb; pdb.set_trace()
+                raise ValueError("Mask is empty")
             atten_mask = ds_mask.view(b_s, n_f, n_ins, h * w).permute(0, 2, 1, 3).reshape(b_s, n_ins, n_f * h * w)
             atten_mask = atten_mask.repeat(self.num_heads, 2, 1)
             atten_masks.append(atten_mask == 0)
@@ -339,8 +344,10 @@ class MaskAttentionDynamicKernel(nn.Module):
         for i in range(self.num_layers):
             level_index = i % self.num_feature_levels
             
-            if torch.isnan(dynamic_kernels).any():
-                import pdb; pdb.set_trace()
+            # if torch.isnan(dynamic_kernels).any():
+                # import pdb; pdb.set_trace()
+                # set_trace()
+                
 
             # attention: cross-attention first
             dynamic_kernels = self.transformer_cross_attention_layers[i](
@@ -350,8 +357,8 @@ class MaskAttentionDynamicKernel(nn.Module):
                 pos=pos[level_index], query_pos=query_embed
             )
 
-            if torch.isnan(dynamic_kernels).any():
-                import pdb; pdb.set_trace()
+            # if torch.isnan(dynamic_kernels).any():
+            #     import pdb; pdb.set_trace()
 
             dynamic_kernels = self.transformer_self_attention_layers[i](
                 dynamic_kernels, tgt_mask=None,
@@ -359,8 +366,8 @@ class MaskAttentionDynamicKernel(nn.Module):
                 query_pos=query_embed
             )
             
-            if torch.isnan(dynamic_kernels).any():
-                import pdb; pdb.set_trace()
+            # if torch.isnan(dynamic_kernels).any():
+            #     import pdb; pdb.set_trace()
 
             # FFN
             dynamic_kernels = self.transformer_ffn_layers[i](
@@ -371,12 +378,12 @@ class MaskAttentionDynamicKernel(nn.Module):
         incoherence_kernels = dynamic_kernels[:n_ins, ]
         decoder_kernels = dynamic_kernels[n_ins:, ]
 
-        if torch.isnan(incoherence_kernels).any():
-            import pdb; pdb.set_trace()
+        # if torch.isnan(incoherence_kernels).any():
+        #     import pdb; pdb.set_trace()
 
         # Forward to some FFNs to build outputs
         incoherence_kernels = self.incoherence_embedder(incoherence_kernels).permute(1, 0, 2)
         decoder_kernels = self.pixeldecoder_embedder(decoder_kernels).permute(1, 0, 2)
-        if torch.isnan(incoherence_kernels).any():
-            import pdb; pdb.set_trace()
+        # if torch.isnan(incoherence_kernels).any():
+        #     import pdb; pdb.set_trace()
         return incoherence_kernels, decoder_kernels # (b, n_ins, kernel_size)

@@ -12,6 +12,9 @@ train:
   val_iter: 1000
   vis_iter: 200
   log_iter: 50
+model:
+  loss_dtSSD_w: 0.0
+  loss_comp_w: 0.0
 dataset:
   train:
     name: 'HHM'

@@ -1,4 +1,6 @@
 import math
+import logging
+# from pudb.remote import set_trace
 
 import numpy as np
 import torch
@@ -11,7 +13,7 @@ from .module.fpn import FPN
 from .module.mask_attention import MaskAttentionDynamicKernel
 from .module.position_encoding import TemporalPositionEmbeddingSine
 from .module.pixel_encoder import TransformerEncoder, TransformerEncoderLayer
-from .loss import GradientLoss, LapLoss, RMSELoss
+from .loss import GradientLoss, LapLoss, RMSELoss, loss_dtSSD, loss_comp
 
 def conv1x1bnrelu(in_channels, out_channels):
     return nn.Sequential(
@@ -103,6 +105,8 @@ class VM2M(nn.Module):
         self.loss_alpha_w = cfg.loss_alpha_w
         self.loss_alpha_grad_w = cfg.loss_alpha_grad_w
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
+        self.loss_dtSSD_w = cfg.loss_dtSSD_w
+        self.loss_comp_w = cfg.loss_comp_w
         
         need_init_weights = [self.dynamic_kernels_generator, self.trans_pred_conv, self.pixel_decoder, self.hr_conv, self.fpn]
 
@@ -315,7 +319,7 @@ class VM2M(nn.Module):
         
         # and transition_preds during testing
 
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         
         # Generate position emebddings and add to features to have point features to refine
         point_feats = []
@@ -438,6 +442,8 @@ class VM2M(nn.Module):
         masks = batch['mask']
         alphas = batch.get('alpha', None)
         trans_gt = batch.get('transition', None)
+        fg = batch.get('fg', None)
+        bg = batch.get('bg', None)
 
         # Forward image to get features
         b, n_f, _, h, w = x.shape
@@ -446,6 +452,7 @@ class VM2M(nn.Module):
         # Reshape x and masks
         x = x.reshape(b * n_f, 3, h, w)
         # masks = masks.reshape(b,n_f, n_instances, h//8, w//8)
+        
         feats = self.backbone(x) # os1 to os32
 
         # TODO: Running FPN to have attention features (1/16, 1/8, 1/4) and breakdown features (1/8, 1/4, 1)
@@ -455,6 +462,11 @@ class VM2M(nn.Module):
         # breakdown_feats = self.extract_features(feats, self.breakdown_features, self.conv_breakdown)
 
         # Compute dynamic kernels weights with attention module
+        # for x in attention_feats:
+        #     if torch.isnan(x).any():
+        #         # import pdb; pdb.set_trace()
+        #         set_trace()
+
         incoherence_kernels, decoder_kernels = self.dynamic_kernels_generator(attention_feats, masks)
         # incoherence_kernels: b, n_instances, kernel_size
         # decoder_kernels: b, n_instances, kernel_size
@@ -505,7 +517,7 @@ class VM2M(nn.Module):
         output['refined_masks'] = x
         
         if self.training:
-            return output, self.compute_loss(output, alphas, trans_gt)
+            return output, self.compute_loss(output, alphas, trans_gt, fg, bg)
         return output
         
 
@@ -565,7 +577,7 @@ class VM2M(nn.Module):
         return ref_loss / inc_ids.numel()
     
     
-    def compute_loss(self, output_dict, alphas, trans_gt):
+    def compute_loss(self, output_dict, alphas, trans_gt, fg, bg):
         losses = {}
         
         total_loss = 0
@@ -599,6 +611,16 @@ class VM2M(nn.Module):
             lap_loss = self.lap_loss(pred_alpha, gt_alpha)
             losses['loss_ref_lap'] = lap_loss
             total_loss = total_loss + lap_loss * self.loss_alpha_lap_w
+
+        if self.loss_dtSSD_w > 0:
+            dtSSD_loss = loss_dtSSD(output_dict['refined_masks'], alphas, trans_gt)
+            losses['loss_dtSSD'] = dtSSD_loss
+            total_loss = total_loss + dtSSD_loss * self.loss_dtSSD_w
+
+        if self.loss_comp_w > 0 and fg is not None and bg is not None:
+            comp_loss = loss_comp(output_dict['refined_masks'], alphas, fg, bg, trans_gt)
+            losses['loss_comp'] = comp_loss
+            total_loss = total_loss + comp_loss * self.loss_comp_w
 
         losses['total'] = total_loss
         return losses

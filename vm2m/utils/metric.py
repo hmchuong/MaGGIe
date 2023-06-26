@@ -33,6 +33,18 @@ class Metric(object):
     def average(self):
         return self.score / (self.count + 1e-6)
 
+class dtSSD(Metric):
+    def update(self, pred, gt, **kargs):
+        b, n_f, _, h, w = pred.shape
+        dadt = pred[:, 1:] - pred[:, :-1]
+        dgdt = gt[:, 1:] - gt[:, :-1]
+        metric = np.sqrt(np.sum((dadt - dgdt) ** 2, axis=(2, 3, 4)))
+        metric = np.sum(metric)
+        count = ((n_f - 1) * b)
+        self.score += metric
+        self.count += count
+        return metric/ (count + 1e-4)
+
 class SAD(Metric):
     
     def compute_metric(self, pred, gt, **kargs):
