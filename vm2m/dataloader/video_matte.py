@@ -43,11 +43,18 @@ class SingleInstComposedVidDataset(Dataset):
             self.transforms.extend([
                 T.RandomCropByAlpha(crop, self.random),
                 T.RandomHorizontalFlip(self.random, flip_p),
-                T.RandomComposeBackground(bg_images, self.random, 
+                T.LoadRandomBackground(bg_images, self.random, 
                                           blur_p=blur_p, 
                                           blur_kernel_size=blur_kernel_size, 
                                           blur_sigma=blur_sigma),
-                T.RandomBinarizeAlpha(self.random, bin_alpha_max_k)
+                T.GammaContrast(self.random),
+                T.HistogramMatching(self.random),
+                T.MotionBlur(self.random),
+                T.AdditiveGaussionNoise(self.random),
+                T.JpegCompression(self.random),
+                T.RandomAffine(self.random),
+                T.ComposeBackground(),
+                T.RandomBinarizeAlpha(self.random, bin_alpha_max_k),
             ])
         self.transforms += [T.ToTensor(), T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]
         self.transforms = T.Compose(self.transforms)
@@ -140,7 +147,13 @@ class SingleInstComposedVidDataset(Dataset):
         out =  {'image':frames, 'mask': masks.float(), 'alpha': alphas.float()}
         out['fg'] = output_dict.get('fg', frames)
         out['bg'] = output_dict.get('bg', frames)
-
+        
+        if "ignore_regions" in output_dict:
+            ignore_regions = output_dict["ignore_regions"] < 0.5
+            ignore_regions = torch.from_numpy(ignore_regions)[:, None]
+            transition_gt[ignore_regions] = 0
+            # mask out transition GT
+            
         if not self.is_train:
             # Generate trimap for evaluation
             trans = gen_transition_gt(alphas)

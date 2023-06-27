@@ -1,5 +1,6 @@
-name: 'baseline_rn34'
+name: 'vm2m_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml'
 model:
+  weights: 'output/HHM/vm2m_hmm_short-768-512x512_bs16_100k_adamw_2e-4/best_model.pth'
   dynamic_kernel:
     out_incoherence: 157
     out_pixeldecoder: 64
@@ -13,13 +14,14 @@ model:
       - os1
 train:
   optimizer:
-    lr: 0.0002
+    lr: 0.0001
     name: adamw
-  val_iter: 100
-  vis_iter: 50
-  log_iter: 10
-  seed: 1629
-output_dir: 'output'
+  val_iter: 1000
+  vis_iter: 200
+  log_iter: 50
+  batch_size: 4
+  num_workers: 12
+output_dir: 'output/VideoMatte240K'
 dataset:
   train:
     root_dir: '/mnt/localssd/VideoMatte240K'

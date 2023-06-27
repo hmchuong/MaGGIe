@@ -1,5 +1,5 @@
 # Update wandb
-pip install -U wandb
+pip install -U wandb albumentations
 
 ROOT_DIR=/sensei-fs/users/chuongh/vm2m/scripts
 

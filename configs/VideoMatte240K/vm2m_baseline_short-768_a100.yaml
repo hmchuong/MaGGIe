@@ -12,11 +12,13 @@ model:
       - os4
       - os1
 train:
-  batch_size: 3
-  num_workers: 12
   optimizer:
     lr: 0.0002
     name: adamw
+  val_iter: 100
+  vis_iter: 50
+  log_iter: 10
+  seed: 1629
 output_dir: 'output'
 dataset:
   train:

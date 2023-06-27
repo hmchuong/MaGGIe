@@ -1,7 +1,14 @@
+from typing import Any
 import numpy as np
 import cv2
 import torch
 from PIL import Image
+import albumentations as A
+import imgaug.augmenters as iaa
+from imgaug import parameters as iap
+from skimage import exposure
+
+from .utils import random_transform
 
 class Compose(object):
     def __init__(self, transforms):
@@ -187,7 +194,7 @@ class RandomHorizontalFlip(object):
 
         return input_dict
 
-class RandomComposeBackground(object):
+class LoadRandomBackground(object):
     def __init__(self, bg_paths, random, is_rgb=True, blur_p=0.5, blur_kernel_size=[5, 15, 25], blur_sigma=[1.0, 1.5, 3.0, 5.0]):
         self.bg_paths = bg_paths
         self.random = random
@@ -203,7 +210,6 @@ class RandomComposeBackground(object):
         masks: (T, H, W) or None
         '''
         frames = input_dict["frames"]
-        alphas = input_dict["alphas"]
 
         bg_path = self.random.choice(self.bg_paths)
         bg = cv2.imread(bg_path)
@@ -227,11 +233,28 @@ class RandomComposeBackground(object):
         # Compose background
         frames = frames.astype(np.float32)
         bg = bg.astype(np.float32)
-        compose_frames = frames * (alphas[..., None].astype(float) / 255.0) + bg * (1 - alphas[..., None].astype(float) / 255.0)
-        compose_frames = np.clip(compose_frames, 0, 255).astype(np.uint8)
+
         input_dict["fg"] = frames
         input_dict["bg"] = np.tile(bg, (frames.shape[0], 1, 1, 1))
         
+        return input_dict
+
+class ComposeBackground(object):
+    def __call__(self, input_dict: dict):
+        '''
+        frames: (T, H, W, C)
+        alphas: (T, H, W)
+        masks: (T, H, W) or None
+        '''
+        alphas = input_dict["alphas"]
+        bg = input_dict["bg"]
+        fg = input_dict["fg"]
+
+        # Compose background
+        fg = fg.astype(np.float32)
+        bg = bg.astype(np.float32)
+        compose_frames = fg * (alphas[..., None].astype(float) / 255.0) + bg * (1 - alphas[..., None].astype(float) / 255.0)
+        compose_frames = np.clip(compose_frames, 0, 255).astype(np.uint8)
         input_dict["frames"] = compose_frames
         
         return input_dict
@@ -304,7 +327,7 @@ class RandomBinarizeAlpha(object):
         '''
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
-
+        alphas[alphas < 5] = 0
         if masks is None:
             masks = np.stack([self._gen_single_mask(alpha) for alpha in alphas], axis=0)
         
@@ -334,6 +357,7 @@ class ToTensor(object):
 
         frames = torch.from_numpy(np.ascontiguousarray(frames)).permute(0, 3, 1, 2).contiguous().float()        
         alphas = torch.from_numpy(np.ascontiguousarray(alphas)).unsqueeze(1).contiguous()
+        alphas[alphas < 5] = 0
 
         if masks is not None:
             masks = torch.from_numpy(np.ascontiguousarray(masks).astype('uint8')).unsqueeze(1).contiguous()
@@ -367,4 +391,206 @@ class Normalize(object):
             input_dict["fg"] = self.norm(input_dict["fg"])
         if "bg" in input_dict:
             input_dict["bg"] = self.norm(input_dict["bg"])
+        return input_dict
+
+class GammaContrast(object):
+    def __init__(self, random, gamma=(1.0, 0.2, 0.5, 1.5), p=0.3):
+        self.pixel_aug_gamma = iaa.GammaContrast(gamma=iap.TruncatedNormal(*gamma))
+        self.p = p
+        self.random = random
+
+    def __call__(self, input_dict: dict):
+        if self.random.rand() > self.p:
+            return input_dict
+        
+        # Augment frames and fg
+        frames = input_dict["frames"]
+        aug = self.pixel_aug_gamma.to_deterministic()
+        for i in range(frames.shape[0]):
+            frames[i] = aug.augment_image(frames[i])
+        input_dict["frames"] = frames
+
+        if "fg" in input_dict:
+            input_dict["fg"] = frames
+        
+        if "bg" in input_dict:
+            bg = input_dict["bg"]
+            aug = self.pixel_aug_gamma.to_deterministic()
+            for i in range(bg.shape[0]):
+                bg[i] = aug.augment_image(bg[i])
+            input_dict["bg"] = bg
+
+        return input_dict
+
+class HistogramMatching(object):
+    def __init__(self, random, p=0.3):
+        self.random = random
+        self.p = p
+    
+    def __call__(self, input_dict: dict):
+        if "bg" not in input_dict or self.random.rand() > self.p:
+            return input_dict
+
+        fg = input_dict["fg"].astype(np.float32)
+        bg = input_dict["bg"].astype(np.float32)
+        ratio = self.random.uniform(0, 0.5)
+        if self.random.rand() < 0.05:
+            bg_match = exposure.match_histograms(bg, fg, channel_axis=-1)
+            bg = bg_match * ratio + bg * (1. - ratio)
+        else:
+            fg_match = exposure.match_histograms(fg, bg, channel_axis=-1)
+            fg = fg_match * ratio + fg * (1. - ratio)
+        fg = fg.astype(np.uint8)
+        bg = bg.astype(np.uint8)
+        input_dict["fg"] = fg
+        input_dict["frames"] = fg
+        input_dict["bg"] = bg
+        return input_dict
+
+class AdditiveGaussionNoise(object):
+    def __init__(self, random, p=0.3):
+        self.random = random
+        self.p = p
+        self.pixel_aug_gaussian = iaa.AdditiveGaussianNoise(scale=(0, 0.03*255))
+    
+    def __call__(self, input_dict: dict):
+        if self.random.rand() > self.p:
+            return input_dict
+        frames = input_dict["frames"]
+        fg = input_dict.get("fg", None)
+        bg = input_dict.get("bg", None)
+        aug = self.pixel_aug_gaussian.to_deterministic()
+        for i in range(frames.shape[0]):
+            frames[i] = aug.augment_image(np.uint8(frames[i]))
+            if fg is not None:
+                fg[i] = frames[i]
+            if bg is not None:
+                bg[i] = aug.augment_image(np.uint8(bg[i]))
+
+        input_dict["frames"] = frames
+        if fg is not None:
+            input_dict["fg"] = fg
+        if bg is not None:
+            input_dict["bg"] = bg
+        
+        return input_dict
+
+class JpegCompression(object):
+    def __init__(self, random, p=0.3):
+        self.random = random
+        self.p = p
+        self.jpeg_aug = iaa.JpegCompression(compression=(20, 80)) 
+    
+    def __call__(self, input_dict: dict):
+        if self.random.rand() > self.p:
+            return input_dict
+        frames = input_dict["frames"]
+        fg = input_dict.get("fg", None)
+        bg = input_dict.get("bg", None)
+        alphas = input_dict.get("alphas", None)
+
+        aug = self.jpeg_aug.to_deterministic()
+        for i in range(frames.shape[0]):
+            frames[i] = aug.augment_image(np.uint8(frames[i]))
+            alphas[i] = aug.augment_image(np.uint8(alphas[i]))
+
+            if fg is not None:
+                fg[i] = frames[i]
+            if bg is not None:
+                bg[i] = aug.augment_image(np.uint8(bg[i]))
+
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        if fg is not None:
+            input_dict["fg"] = fg
+        if bg is not None:
+            input_dict["bg"] = bg
+        return input_dict
+    
+class RandomAffine(object):
+    def __init__(self, random, p=0.5):
+        self.random = random
+        self.p = p
+    
+    def __call__(self, input_dict: dict):
+        if self.random.rand() > self.p:
+            return input_dict
+        frames = input_dict["frames"]
+        bg = input_dict.get("bg", None)
+        alphas = input_dict.get("alphas", None)
+
+        ignore_regions = np.ones_like(alphas)
+        list_FM = list(frames) + list(alphas) + list(ignore_regions)
+        if bg is not None:
+            list_FM += list(bg)
+        
+        list_trans_FM = random_transform(list_FM, self.random, rt=10, sh=5, zm=[0.95,1.05], sc= [1, 1], cs=0.03*255., hf=False)
+        n_f = len(frames)
+        frames = np.stack(list_trans_FM[:n_f], axis=0)
+        alphas = np.stack(list_trans_FM[n_f:2*n_f], axis=0)
+        ignore_regions = np.stack(list_trans_FM[2*n_f:3*n_f], axis=0)
+        if bg is not None:
+            bg = np.stack(list_trans_FM[3*n_f:], axis=0)
+        
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        input_dict["ignore_regions"] = ignore_regions
+        if bg is not None:
+            input_dict["bg"] = bg
+            input_dict["fg"] = frames
+        return input_dict
+
+class MotionBlur(object):
+    def __init__(self, random, p=0.3) -> None:
+        self.random = random
+        self.p = p
+        self.motion_aug = A.MotionBlur(p=1.0, blur_limit=(3,49))
+    
+    def __call__(self, input_dict: dict):
+        if self.random.rand() > self.p:
+            return input_dict
+
+        frames = input_dict["frames"]
+        alphas = input_dict["alphas"]
+        bg = input_dict.get("bg", None)
+        
+        if self.random.uniform(0, 1) < 0.5 and bg is not None:
+            N_cat = np.concatenate([frames, bg, alphas[:, :, :, None]], axis=-1) # T x H x W x 7
+            N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x 7 x T
+            N_cat = N_cat.reshape(*N_cat.shape[:2], -1) # H x W x 7T
+            N_cat_aug = self.motion_aug(image=N_cat)["image"] # H x W x 7T
+            N_cat_aug = N_cat_aug.reshape(*N_cat_aug.shape[:2], -1, frames.shape[0]) # H x W x 7 x T
+            N_cat_aug = N_cat_aug.transpose((3, 0, 1, 2)) # T x H x W x 7
+            frames = N_cat_aug[:, :, :, :3]
+            bg = N_cat_aug[:, :, :, 3:6]
+            alphas = N_cat_aug[:, :, :, 6]
+            frames = np.clip(frames, 0, 255)
+            bg = np.clip(bg, 0, 255)
+            alphas = np.clip(alphas, 0, 255)
+        else:
+            if self.random.uniform(0, 1) < 0.9:
+                N_cat = np.concatenate([frames, alphas[:, :, :, None]], axis=-1) # T x H x W x 4
+                N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x 4 x T
+                N_cat = N_cat.reshape(*N_cat.shape[:2], -1) # H x W x 4T
+                N_cat_aug = self.motion_aug(image=N_cat)["image"] # H x W x 4T
+                N_cat_aug = N_cat_aug.reshape(*N_cat_aug.shape[:2], -1, frames.shape[0]) # H x W x 4 x T
+                N_cat_aug = N_cat_aug.transpose((3, 0, 1, 2)) # T x H x W x 4
+                frames = N_cat_aug[:, :, :, :3]
+                alphas = N_cat_aug[:, :, :, 3]
+                frames = np.clip(frames, 0, 255)
+                alphas = np.clip(alphas, 0, 255)
+            if self.random.uniform(0, 1) < 0.3 and bg is not None:
+                N_cat = bg 
+                N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x 3 x T
+                N_cat = N_cat.reshape(*N_cat.shape[:2], -1) # H x W x 3T
+                N_cat_aug = self.motion_aug(image=N_cat)["image"] # H x W x 3T
+                N_cat_aug = N_cat_aug.reshape(*N_cat_aug.shape[:2], -1, frames.shape[0]) # H x W x 3 x T
+                N_cat_aug = N_cat_aug.transpose((3, 0, 1, 2)) # T x H x W x 3
+                bg = N_cat_aug
+                bg = np.clip(bg, 0, 255)
+        input_dict["frames"] = frames
+        input_dict["alphas"] = alphas
+        if bg is not None:
+            input_dict["bg"] = bg
+            input_dict["fg"] = frames
         return input_dict
