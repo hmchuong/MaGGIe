@@ -25,7 +25,7 @@ def main(rank, cfg, dist_url=None, world_size=8):
     else:
         rootLogger.setLevel('INFO')
 
-    if rank == 0:
+    if rank == 0 or os.getenv("DEBUG", False):
         consoleHandler = logging.StreamHandler()
         consoleHandler.setFormatter(logFormatter)
         rootLogger.addHandler(consoleHandler)

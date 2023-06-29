@@ -12,4 +12,5 @@ sh scripts/prepare_vid240k.sh
 echo "Starting training..."
 cd $ROOT_DIR
 
-python -m tools.main --config configs/VideoMatte240K/vm2m_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml --override --dist
+python -m tools.main --config configs/VideoMatte240K/vm2m_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml --dist \
+                    train.resume output/VideoMatte240K/vm2m_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4 wandb.id jgp4hoof

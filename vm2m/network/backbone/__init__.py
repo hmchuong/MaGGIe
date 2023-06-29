@@ -1,1 +1,2 @@
-from .resnet import res_encoder_29
+from .resnet_enc import res_encoder_29, res_shortcut_encoder_29
+from .resnet_dec import res_shortcut_decoder_22

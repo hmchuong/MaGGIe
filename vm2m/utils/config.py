@@ -58,6 +58,11 @@ CONFIG.model.weights = ''
 CONFIG.model.arch = 'VM2M'
 CONFIG.model.backbone = 'res_encoder_29' # resnet34
 
+# For MGM
+CONFIG.model.mgm = CN({})
+CONFIG.model.mgm.decoder = 'res_shortcut_decoder_22'
+CONFIG.model.mgm.warmup_iter = 5000
+
 # For loss
 CONFIG.model.loss_alpha_w = 1.0
 CONFIG.model.loss_alpha_type = 'l1'

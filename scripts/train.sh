@@ -4,5 +4,7 @@
 
 # python -m tools.main --config configs/vm2m_baseline_short-768.yaml name baseline_rn34_0613 train.resume output/baseline_rn34_0613 wandb.use False
 
-python -m tools.main --config configs/VideoMatte240K/vm2m_vid240_pre-hmm_s-768-512x512_b32-f8_100k_adamw_1e-4.yaml --override --dist --gpus 4 name debug \
-        train.batch_size 2
+# python -m tools.main --config configs/VideoMatte240K/vm2m_vid240_pre-hmm_s-768-512x512_b32-f8_100k_adamw_1e-4.yaml --override --dist --gpus 4 name debug \
+#         train.batch_size 2
+
+DEBUG=1 python -m tools.main --config configs/VideoMatte240K/mgm_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml --override --gpus 8 name debug wandb.use True train.log_iter 10

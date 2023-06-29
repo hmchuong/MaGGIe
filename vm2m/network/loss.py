@@ -118,16 +118,38 @@ def laplacian_pyramid(img, kernel, max_levels=3):
         current = down
     return pyr
 
+def weight_pyramid(x, max_levels=3):
+    current = x
+    pyr = []
+    for level in range(max_levels):
+        down = downsample(current)
+        pyr.append(current)
+        current = down
+    return pyr
+
 class LapLoss(torch.nn.Module):
     def __init__(self, max_levels=3, channels=3):
         super(LapLoss, self).__init__()
         self.max_levels = max_levels
         self.gauss_kernel = gauss_kernel(channels=channels)
 
-    def forward(self, input, target):
+    def l1_loss(self, input, target, weight=None):
+        if weight is None:
+            return F.l1_loss(input, target)
+        else:
+            return (F.l1_loss(input, target, reduction='none') * weight).sum() / (weight.sum() + 1e-6)
+        
+    def forward(self, input, target, weight=None):
         pyr_input  = laplacian_pyramid(img=input, kernel=self.gauss_kernel, max_levels=self.max_levels)
         pyr_target = laplacian_pyramid(img=target, kernel=self.gauss_kernel, max_levels=self.max_levels)
-        return sum(F.l1_loss(a, b) for a, b in zip(pyr_input, pyr_target))
+        weights = [None] * len(pyr_input)
+        if weight is not None:
+            weights = weight_pyramid(weight, max_levels=self.max_levels)
+        
+        total_loss = 0
+        for i in range(len(pyr_input)):
+            total_loss += self.l1_loss(pyr_input[i], pyr_target[i], weights[i])
+        return total_loss
 
 class RMSELoss(nn.Module):
     def __init__(self, eps=1e-6):

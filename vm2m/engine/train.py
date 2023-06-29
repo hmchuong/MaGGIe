@@ -15,6 +15,11 @@ from vm2m.utils.metric import build_metric
 from .optim import build_optim_lr_scheduler
 from .test import val
 
+def log_alpha(tensor, tag):
+    alpha = tensor[0,0,0].detach().cpu().numpy()
+    alpha = (alpha * 255).astype('uint8')
+    return wandb.Image(alpha, caption=tag)
+
 def wandb_log_image(batch, output, iter):
     # Log transition_preds
     log_images = []
@@ -23,25 +28,42 @@ def wandb_log_image(batch, output, iter):
     image = (image * 255).permute(1, 2, 0).numpy().astype(np.uint8)
     log_images.append(wandb.Image(image, caption="image"))
 
-    alpha_gt = (batch['alpha'][0,0,0] * 255).cpu().numpy().astype('uint8')
-    log_images.append(wandb.Image(alpha_gt, caption="alpha_gt"))
+    log_images.append(log_alpha(batch['alpha'], 'alpha_gt'))
+    # alpha_gt = (batch['alpha'][0,0,0] * 255).cpu().numpy().astype('uint8')
+    # log_images.append(wandb.Image(alpha_gt, caption="alpha_gt"))
 
-    alpha_pred = (output['refined_masks'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
-    log_images.append(wandb.Image(alpha_pred, caption="alpha_pred"))
+    log_images.append(log_alpha(output['refined_masks'], 'alpha_pred'))
+    # alpha_pred = (output['refined_masks'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
+    # log_images.append(wandb.Image(alpha_pred, caption="alpha_pred"))
 
-    mask_gt = (batch['mask'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
-    log_images.append(wandb.Image(mask_gt, caption="mask_gt"))
+    log_images.append(log_alpha(batch['mask'], 'mask_gt'))
+    # mask_gt = (batch['mask'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
+    # log_images.append(wandb.Image(mask_gt, caption="mask_gt"))
     
-    for i, trans_pred in enumerate(output['trans_preds']):
-        trans_pred = (trans_pred[0,0,0].sigmoid() * 255).detach().cpu().numpy().astype('uint8')
-        log_images.append(wandb.Image(trans_pred, caption='transition_pred_' + str(i)))
-    
-    trans_gt = (batch['transition'][0,0,0] * 255).cpu().numpy().astype('uint8')
-    log_images.append(wandb.Image(trans_gt, caption="transition_gt"))
-    
-    for i, inc_bin_map in enumerate(output['inc_bin_maps']):
-        inc_bin_map = (inc_bin_map[0,0,0] * 255).detach().cpu().numpy().astype('uint8')
-        log_images.append(wandb.Image(inc_bin_map, caption='inc_bin_map_' + str(i)))
+    # For VM2M
+    if 'trans_preds' in output:
+        for i, trans_pred in enumerate(output['trans_preds']):
+            # trans_pred = (trans_pred[0,0,0].sigmoid() * 255).detach().cpu().numpy().astype('uint8')
+            # log_images.append(wandb.Image(trans_pred, caption='transition_pred_' + str(i)))
+            log_images.append(log_alpha(trans_pred.sigmoid(), 'transition_pred_' + str(i)))
+        log_images.append(log_alpha(batch['transition'], 'transition_gt'))
+        # trans_gt = (batch['transition'][0,0,0] * 255).cpu().numpy().astype('uint8')
+        # log_images.append(wandb.Image(trans_gt, caption="transition_gt"))
+
+    if 'inc_bin_maps' in output:
+        for i, inc_bin_map in enumerate(output['inc_bin_maps']):
+            # inc_bin_map = (inc_bin_map[0,0,0] * 255).detach().cpu().numpy().astype('uint8')
+            # log_images.append(wandb.Image(inc_bin_map, caption='inc_bin_map_' + str(i)))
+            log_images.append(log_alpha(inc_bin_map, 'inc_bin_map_gt_' + str(i)))
+    # For MGM: logging some intermediate results
+    if 'alpha_os1' in output:
+        log_images.append(log_alpha(output['alpha_os1'], 'alpha_os1_pred'))
+        # alpha_pred = (output['alpha_os1'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
+        # log_images.append(wandb.Image(alpha_pred, caption="alpha_os1_pred"))
+    if 'alpha_os4' in output:
+        log_images.append(log_alpha(output['alpha_os4'], 'alpha_os4_pred'))
+    if 'alpha_os8' in output:
+        log_images.append(log_alpha(output['alpha_os8'], 'alpha_os8_pred'))
     wandb.log({"examples/all": log_images}, step=iter, commit=True)
 
 def train(cfg, rank, is_dist=False):
@@ -89,7 +111,7 @@ def train(cfg, rank, is_dist=False):
     if is_dist:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[rank], find_unused_parameters=True)
+                model, device_ids=[rank], find_unused_parameters=False)
 
     epoch = 0
     iter = 0
@@ -149,6 +171,7 @@ def train(cfg, rank, is_dist=False):
     while iter < cfg.train.max_iter:
         
         for _, batch in enumerate(train_loader):
+            logging.debug("Loaded data")
             if is_dist:
                 train_sampler.set_epoch(epoch)
 
@@ -159,7 +182,7 @@ def train(cfg, rank, is_dist=False):
                 break
 
             batch = {k: v.to(device) for k, v in batch.items()}
-
+            batch['iter'] = iter
             optimizer.zero_grad()
             try:
                 # if iter == 85 and rank == 0:
@@ -167,23 +190,29 @@ def train(cfg, rank, is_dist=False):
                 #     set_trace()
                 output, loss = model(batch)
                 if loss is None:
+                    logging.error("Loss is None!")
                     continue
             except ValueError as e:
                 logging.error("ValueError: {}".format(e))
                 continue
-            loss_reduced = reduce_dict(loss)
+            logging.debug("Reducing loss")
+            loss_reduced = loss #reduce_dict(loss)
 
+            logging.debug("Backwarding")
             loss['total'].backward()
 
+            logging.debug("Storing log metrics")
             # Store to log_metrics
             for k, v in loss_reduced.items():
                 if k not in log_metrics:
                     log_metrics[k] = AverageMeter(k)
                 log_metrics[k].update(v.item())
 
+            logging.debug("Optimizing")
             optimizer.step()
+            logging.debug("Updating lr scheduler")
             lr_scheduler.step()
-
+            logging.debug("Done batch")
             batch_time.update(time.time() - end_time)
 
             # Logging
@@ -256,7 +285,7 @@ def train(cfg, rank, is_dist=False):
 
                 model.train()
             end_time = time.time()
-        
+            logging.debug("Loading data")
         epoch += 1
 
 

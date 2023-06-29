@@ -57,9 +57,9 @@ class ResNet_D(nn.Module):
     without the mix-up part.
     """
 
-    def __init__(self, block, layers, norm_layer=None, late_downsample=False, is_additional_branch=False):
+    def __init__(self, block, layers, norm_layer=None, late_downsample=False, is_additional_branch=False, mask_channel=0):
         super(ResNet_D, self).__init__()
-        mask_channel = 0
+
         self.logger = logging.getLogger("Logger")
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -163,10 +163,72 @@ class ResNet_D(nn.Module):
         out['os32'] = x6
         return out # 1, 1/2, 1/4, 1/8, 1/16, 1/32
 
+class ResShortCut_D(ResNet_D):
+
+    def __init__(self, block, layers, norm_layer=None, late_downsample=False):
+        super(ResShortCut_D, self).__init__(block, layers, norm_layer, late_downsample=late_downsample, mask_channel=1)
+        first_inplane = 3 + 1
+        self.shortcut_inplane = [first_inplane, self.midplanes, 64, 128, 256]
+        self.shortcut_plane = [32, self.midplanes, 64, 128, 256]
+
+        self.shortcut = nn.ModuleList()
+        for stage, inplane in enumerate(self.shortcut_inplane):
+            self.shortcut.append(self._make_shortcut(inplane, self.shortcut_plane[stage]))
+
+    def _make_shortcut(self, inplane, planes):
+        return nn.Sequential(
+            SpectralNorm(nn.Conv2d(inplane, planes, kernel_size=3, padding=1, bias=False)),
+            nn.ReLU(inplace=True),
+            self._norm_layer(planes),
+            SpectralNorm(nn.Conv2d(planes, planes, kernel_size=3, padding=1, bias=False)),
+            nn.ReLU(inplace=True),
+            self._norm_layer(planes)
+        )
+
+    def forward(self, x):
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.activation(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        x1 = self.activation(out) # N x 32 x 256 x 256
+        out = self.conv3(x1)
+        out = self.bn3(out)
+        out = self.activation(out)
+
+        x2 = self.layer1(out) # N x 64 x 128 x 128
+        x3= self.layer2(x2) # N x 128 x 64 x 64
+        x4 = self.layer3(x3) # N x 256 x 32 x 32
+        out = self.layer_bottleneck(x4) # N x 512 x 16 x 16
+
+        fea1 = self.shortcut[0](x) # input image and mask
+        fea2 = self.shortcut[1](x1)
+        fea3 = self.shortcut[2](x2)
+        fea4 = self.shortcut[3](x3)
+        fea5 = self.shortcut[4](x4)
+
+        return out, {'shortcut':(fea1, fea2, fea3, fea4, fea5), 'image':x[:,:3,...], 'backbone_feat': (x2, x3, x4, out)}
+    
 def res_encoder_29(**kwargs):
     model = ResNet_D(BasicBlock, [3, 4, 4, 2], **kwargs)
     state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
     state_dict = {k[7:]: v for k, v in state_dict.items()}
+    model.load_state_dict(state_dict, strict=False)
+    return model
+
+def _res_shortcut_D(block, layers, **kwargs):
+    model = ResShortCut_D(block, layers, **kwargs)
+    return model
+
+def res_shortcut_encoder_29(**kwargs):
+    """Constructs a resnet_encoder_25 model.
+    """
+    model = _res_shortcut_D(BasicBlock, [3, 4, 4, 2], **kwargs)
+    state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
+    state_dict = {k[7:]: v for k, v in state_dict.items()}
+    state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
+    state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
     model.load_state_dict(state_dict, strict=False)
     return model
 

@@ -62,13 +62,13 @@ class MSE(Metric):
         (N, *, H, W)
         '''
         n_pixels = pred.shape[1] * pred.shape[2]
-        return (np.sum((pred - gt) ** 2) / n_pixels)
+        return (np.sum((pred - gt) ** 2) / n_pixels) * 1000
 
 class MAD(Metric):
 
     def compute_metric(self, pred, gt, **kargs):
         n_pixels = pred.shape[1] * pred.shape[2]
-        return (np.sum(np.abs(pred - gt)) / n_pixels)
+        return (np.sum(np.abs(pred - gt)) / n_pixels) * 1000
 
 class MaskedMAD(Metric):
     def compute_metric(self, pred, gt, mask, **kargs):
@@ -76,7 +76,7 @@ class MaskedMAD(Metric):
         mask = reshape2D(mask)
         n_pixels = mask.sum((-1, -2))
         # import pdb; pdb.set_trace()
-        return (np.sum(np.abs(pred - gt) * mask, (-1, -2)) / n_pixels).sum()
+        return (np.sum(np.abs(pred - gt) * mask, (-1, -2)) / n_pixels).sum() * 1000
 
 class FgMAD(MaskedMAD):
     def compute_metric(self, pred, gt, trimap, **kargs):

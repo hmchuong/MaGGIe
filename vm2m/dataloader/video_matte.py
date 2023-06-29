@@ -36,7 +36,6 @@ class SingleInstComposedVidDataset(Dataset):
         else:
             # Else, load clip_length with overlapping
             self.load_frame_ids(overlap)
-        
         self.transforms = [T.Load(), T.ResizeShort(short_size, transform_alphas=is_train), T.PaddingMultiplyBy(32, transform_alphas=is_train), T.Stack()]
         if self.is_train:
             bg_images = self.load_bg(bg_dir)
@@ -70,7 +69,7 @@ class SingleInstComposedVidDataset(Dataset):
 
         # Load frame ids
         start_idx = 0
-        upperbound = len(frame_names) - self.clip_length + 1 if self.is_train else len(frame_names) - overlap + 1
+        upperbound = len(frame_names) - self.clip_length + 1 if self.is_train else len(frame_names) - overlap
         while start_idx < upperbound:
             self.frame_ids.append((video_name, start_idx))
             start_idx += self.clip_length - overlap
@@ -83,7 +82,7 @@ class SingleInstComposedVidDataset(Dataset):
             fg_dir = os.path.join(self.root_dir, "comp")
         for video_name in os.listdir(fg_dir):
             self.load_video_frame(video_name, overlap)
-    
+        
     def load_bg(self, bg_dir):
         ''' Load background image paths
         '''
