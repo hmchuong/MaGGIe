@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from .dist import synchronize, gather
 
 def reshape2D(x):
     return x.reshape(-1, *x.shape[-2:])
@@ -20,6 +21,16 @@ class Metric(object):
     def compute_metric(self, pred, gt, **kargs):
         raise NotImplementedError
     
+    def gather_metric(self, rank=0):
+        synchronize()
+        gather_score = gather(self.score, dst=rank)
+        gather_score = sum(gather_score)
+        gather_count = gather(self.count, dst=rank)
+        gather_count = sum(gather_count)
+        self.score = gather_score
+        self.count = gather_count
+
+
     def update(self, pred, gt, **kargs):
         pred = reshape2D(pred)
         gt = reshape2D(gt)

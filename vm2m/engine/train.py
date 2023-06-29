@@ -90,12 +90,14 @@ def train(cfg, rank, is_dist=False):
         generator=g)
     
     # Validate only at rank 0
-    if rank == 0:
-        logging.info("Creating val dataset...")
-        val_dataset = build_dataset(cfg.dataset.test, is_train=False)
-        val_loader = torch_data.DataLoader(
-            val_dataset, batch_size=cfg.test.batch_size, shuffle=False, pin_memory=True,
-            num_workers=cfg.test.num_workers)
+    # if rank == 0:
+    logging.info("Creating val dataset...")
+    val_dataset = build_dataset(cfg.dataset.test, is_train=False)
+    val_sampler = torch_data.DistributedSampler(val_dataset, shuffle=False) if is_dist else None
+    val_loader = torch_data.DataLoader(
+        val_dataset, batch_size=cfg.test.batch_size, shuffle=False, pin_memory=True,
+        sampler=val_sampler,
+        num_workers=cfg.test.num_workers)
     
     # Build model
     logging.info("Building model...")
@@ -111,7 +113,7 @@ def train(cfg, rank, is_dist=False):
     if is_dist:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[rank], find_unused_parameters=False)
+                model, device_ids=[rank], find_unused_parameters=True)
 
     epoch = 0
     iter = 0
@@ -242,46 +244,52 @@ def train(cfg, rank, is_dist=False):
                 wandb_log_image(batch, output, iter)  
             
             # Validation
-            if iter % cfg.train.val_iter == 0 and rank == 0:
+            if iter % cfg.train.val_iter == 0:
                 logging.info("Start validation...")
                 model.eval()
                 val_model = model.module if is_dist else model
                 _ = [v.reset() for v in val_error_dict.values()]
                 _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, False, None)
 
-                log_str = "Validation:"
-                for k, v in val_error_dict.items():
-                    log_str += "{}: {:.4f}, ".format(k, v.average())
-                if cfg.wandb.use:
+                if is_dist:
+                    logging.info("Gathering metrics...")
+                    # Gather all metrics
                     for k, v in val_error_dict.items():
-                        wandb.log({"val/" + k: v.average()}, commit=False)
-                    wandb.log({"val/epoch": epoch}, commit=False)
-                    wandb.log({"val/iter": iter}, commit=True)
-                
-                # Save best model
-                total_error = val_error_dict[cfg.train.val_best_metric].average()
-                if total_error < best_score:
-                    logging.info("Best score changed from {:.4f} to {:.4f}".format(best_score, total_error))
-                    best_score = total_error
-                    logging.info("Saving best model...")
-                    save_path = os.path.join(cfg.output_dir, 'best_model.pth')
-                    with open(os.path.join(cfg.output_dir,"best_metrics.txt"), 'w') as f:
-                        f.write("iter: {}\n".format(iter))
+                        v.gather_metric(0)
+                if rank == 0:
+                    log_str = "Validation:"
+                    for k, v in val_error_dict.items():
+                        log_str += "{}: {:.4f}, ".format(k, v.average())
+                    if cfg.wandb.use:
                         for k, v in val_error_dict.items():
-                            f.write("{}: {:.4f}\n".format(k, v.average()))
+                            wandb.log({"val/" + k: v.average()}, commit=False)
+                        wandb.log({"val/epoch": epoch}, commit=False)
+                        wandb.log({"val/iter": iter}, commit=True)
+                    
+                    # Save best model
+                    total_error = val_error_dict[cfg.train.val_best_metric].average()
+                    if total_error < best_score:
+                        logging.info("Best score changed from {:.4f} to {:.4f}".format(best_score, total_error))
+                        best_score = total_error
+                        logging.info("Saving best model...")
+                        save_path = os.path.join(cfg.output_dir, 'best_model.pth')
+                        with open(os.path.join(cfg.output_dir,"best_metrics.txt"), 'w') as f:
+                            f.write("iter: {}\n".format(iter))
+                            for k, v in val_error_dict.items():
+                                f.write("{}: {:.4f}\n".format(k, v.average()))
+                        torch.save(val_model.state_dict(), save_path)
+                    
+                    logging.info("Saving last model...")
+                    save_dict = {
+                        'optimizer': optimizer.state_dict(),
+                        'lr_scheduler': lr_scheduler.state_dict(),
+                        'iter': iter,
+                        'best_score': best_score
+                    }
+                    save_path = os.path.join(cfg.output_dir, 'last_opt.pth')
+                    torch.save(save_dict, save_path)
+                    save_path = os.path.join(cfg.output_dir, 'last_model.pth')
                     torch.save(val_model.state_dict(), save_path)
-                
-                logging.info("Saving last model...")
-                save_dict = {
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'iter': iter,
-                    'best_score': best_score
-                }
-                save_path = os.path.join(cfg.output_dir, 'last_opt.pth')
-                torch.save(save_dict, save_path)
-                save_path = os.path.join(cfg.output_dir, 'last_model.pth')
-                torch.save(val_model.state_dict(), save_path)
 
                 model.train()
             end_time = time.time()

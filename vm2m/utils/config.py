@@ -44,7 +44,7 @@ CONFIG.wandb.id = ''
 # ------------------------ Testing ------------------------
 CONFIG.test = CN({})
 CONFIG.test.batch_size = 1 # Only support 1 for now
-CONFIG.test.num_workers = 16
+CONFIG.test.num_workers = 4
 CONFIG.test.save_results = True
 CONFIG.test.save_dir = 'logs'
 CONFIG.test.postprocessing = True

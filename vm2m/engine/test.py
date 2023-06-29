@@ -106,23 +106,26 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
     return batch_time.avg, data_time.avg
 
 @torch.no_grad()
-def test(cfg):
+def test(cfg, rank=0, is_dist=False):
 
-    logFormatter = logging.Formatter("%(asctime)s [%(levelname)-5.5s]  %(message)s")
-    rootLogger = logging.getLogger()
-    consoleHandler = logging.StreamHandler()
-    consoleHandler.setFormatter(logFormatter)
-    rootLogger.addHandler(consoleHandler)
-    rootLogger.setLevel('DEBUG')
+    # logFormatter = logging.Formatter("%(asctime)s [%(levelname)-5.5s]  %(message)s")
+    # rootLogger = logging.getLogger()
+    # consoleHandler = logging.StreamHandler()
+    # consoleHandler.setFormatter(logFormatter)
+    # rootLogger.addHandler(consoleHandler)
+    # rootLogger.setLevel('DEBUG')
 
     # Create dataset
     logging.info("Creating testing dataset...")
     val_dataset = build_dataset(cfg.dataset.test, is_train=False)
+    val_sampler = torch_data.DistributedSampler(val_dataset, shuffle=False) if is_dist else None
+
     val_loader = torch_data.DataLoader(
         val_dataset, batch_size=cfg.test.batch_size, shuffle=False, pin_memory=True,
+        sampler=val_sampler,
         num_workers=cfg.test.num_workers)
     
-    device = "cuda:0"
+    device = f"cuda:{rank}"
 
     # Build model
     logging.info("Building model...")
@@ -131,12 +134,16 @@ def test(cfg):
 
     # Load pretrained model
     assert os.path.isfile(cfg.model.weights), "Cannot find pretrained model at {}".format(cfg.model.weights)
+    
     logging.info("Loading pretrained model from {}".format(cfg.model.weights))
     state_dict = torch.load(cfg.model.weights, map_location=device)
     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=True)
     if len(missing_keys) > 0 or len(unexpected_keys) > 0:
         logging.warn("Missing keys: {}".format(missing_keys))
         logging.warn("Unexpected keys: {}".format(unexpected_keys))
+
+    if is_dist:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank])
 
     # Build metric
     val_error_dict = build_metric(cfg.test.metrics)
@@ -151,10 +158,20 @@ def test(cfg):
 
     batch_time, data_time = val(model, val_loader, device, cfg.test.log_iter, val_error_dict, do_postprocessing=cfg.test.postprocessing, callback=callback_vis)
     
-    metric_str = "Validation\n"
-    for k, v in val_error_dict.items():
-        metric_str += "{}: {:.4f}\n".format(k, v.average())
-    logging.info(metric_str)
-    logging.info('batch_time: {:.4f}, data_time: {:.4f}'.format(batch_time, data_time))
+    logging.info("Testing done!")
+
+    if is_dist:
+        logging.info("Gathering metrics...")
+        # Gather all metrics
+        for k, v in val_error_dict.items():
+            v.gather_metric(0)
+    
+    if rank == 0:
+        logging.info("Metrics:")
+        metric_str = ""
+        for k, v in val_error_dict.items():
+            metric_str += "{}: {:.4f}\n".format(k, v.average())
+        logging.info(metric_str)
+        logging.info('batch_time: {:.4f}, data_time: {:.4f}'.format(batch_time, data_time))
 
 

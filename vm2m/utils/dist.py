@@ -1,6 +1,69 @@
+import functools
+
 import torch
 import torch.distributed as dist
 
+def synchronize():
+    """
+    Helper function to synchronize (barrier) among all processes when
+    using distributed training
+    """
+    if not dist.is_available():
+        return
+    if not dist.is_initialized():
+        return
+    world_size = dist.get_world_size()
+    if world_size == 1:
+        return
+    if dist.get_backend() == dist.Backend.NCCL:
+        # This argument is needed to avoid warnings.
+        # It's valid only for NCCL backend.
+        dist.barrier(device_ids=[torch.cuda.current_device()])
+    else:
+        dist.barrier()
+
+@functools.lru_cache()
+def _get_global_gloo_group():
+    """
+    Return a process group based on gloo backend, containing all the ranks
+    The result is cached.
+    """
+    if dist.get_backend() == "nccl":
+        return dist.new_group(backend="gloo")
+    else:
+        return dist.group.WORLD
+    
+def gather(data, dst=0, group=None):
+    """
+    Run gather on arbitrary picklable data (not necessarily tensors).
+
+    Args:
+        data: any picklable object
+        dst (int): destination rank
+        group: a torch process group. By default, will use a group which
+            contains all ranks on gloo backend.
+
+    Returns:
+        list[data]: on dst, a list of data gathered from each rank. Otherwise,
+            an empty list.
+    """
+    if get_world_size() == 1:
+        return [data]
+    if group is None:
+        group = _get_global_gloo_group()
+    world_size = dist.get_world_size(group=group)
+    if world_size == 1:
+        return [data]
+    rank = dist.get_rank(group=group)
+
+    if rank == dst:
+        output = [None for _ in range(world_size)]
+        dist.gather_object(data, output, dst=dst, group=group)
+        return output
+    else:
+        dist.gather_object(data, None, dst=dst, group=group)
+        return []
+    
 class AverageMeter(object):
     """Computes and stores the average and current value"""
     def __init__(self, name='', fmt=':f'):

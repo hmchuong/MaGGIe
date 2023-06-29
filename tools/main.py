@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 from vm2m.utils import CONFIG
 from vm2m.engine import train, test
 
-def main(rank, cfg, dist_url=None, world_size=8):
+def main(rank, cfg, dist_url=None, world_size=8, eval_only=False):
 
     # Set up logger
     logFormatter = logging.Formatter("%(asctime)s [rank " + str(rank) + "] [%(levelname)-5.5s]  %(message)s")
@@ -30,7 +30,7 @@ def main(rank, cfg, dist_url=None, world_size=8):
         consoleHandler.setFormatter(logFormatter)
         rootLogger.addHandler(consoleHandler)
     
-    logging.info("Config used for training:\n" + str(cfg))
+    logging.info("Config:\n" + str(cfg))
 
     # Set up distributed training
     if dist_url is not None:
@@ -38,7 +38,7 @@ def main(rank, cfg, dist_url=None, world_size=8):
         dist.init_process_group(backend="nccl", init_method=dist_url, world_size=world_size, rank=rank)
 
     # Set up wandb
-    if rank == 0:
+    if rank == 0 and not eval_only:
         if cfg.wandb.use:
             # try:
             #     wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"))
@@ -50,8 +50,10 @@ def main(rank, cfg, dist_url=None, world_size=8):
                 wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, 
                            name=cfg.name, id=cfg.wandb.id, resume='must')
             wandb.config.update(cfg, allow_val_change=True)
-    
-    train(cfg, rank, dist_url is not None)
+    if eval_only:
+        test(cfg, rank, dist_url is not None)
+    else:
+        train(cfg, rank, dist_url is not None)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Video Mask To Matte")
@@ -74,17 +76,19 @@ if __name__ == "__main__":
         seed = np.random.randint(1, 10000)
     CONFIG.train.seed = seed
 
+    # Dump config to the file
+    if not args.eval_only:
+        os.makedirs(CONFIG.output_dir, exist_ok=True)
+        with open(os.path.join(CONFIG.output_dir, "config.yaml"), 'w') as f:
+            f.write(CONFIG.dump())
+            
     CONFIG.output_dir = os.path.join(CONFIG.output_dir, CONFIG.name)
     
     # Check output directory
     if (os.path.exists(CONFIG.output_dir) and os.listdir(CONFIG.output_dir) and not args.eval_only and not args.override and not (CONFIG.output_dir == CONFIG.train.resume)):
         raise ValueError("Output directory ({}) already exists and is not empty.".format(CONFIG.output_dir))
     
-    # Dump config to the file
-    if not args.eval_only:
-        os.makedirs(CONFIG.output_dir, exist_ok=True)
-        with open(os.path.join(CONFIG.output_dir, "config.yaml"), 'w') as f:
-            f.write(CONFIG.dump())
+    
 
     # Set random seed
     torch.manual_seed(seed)
@@ -96,10 +100,7 @@ if __name__ == "__main__":
 
     os.environ["WANDB_START_METHOD"] = "thread"
 
-    if not args.eval_only:
-        if args.dist:
-            mp.spawn(main, nprocs=args.gpus, args=(CONFIG, args.dist_url, args.gpus))
-        else:
-            main(0, CONFIG, None, 1)
+    if args.dist:
+        mp.spawn(main, nprocs=args.gpus, args=(CONFIG, args.dist_url, args.gpus, args.eval_only))
     else:
-        test(CONFIG)
+        main(0, CONFIG, None, 1, args.eval_only)
