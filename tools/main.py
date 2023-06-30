@@ -75,14 +75,15 @@ if __name__ == "__main__":
     if seed == -1:
         seed = np.random.randint(1, 10000)
     CONFIG.train.seed = seed
+    
 
     # Dump config to the file
-    if not args.eval_only:
-        os.makedirs(CONFIG.output_dir, exist_ok=True)
+    if not args.eval_only:    
         with open(os.path.join(CONFIG.output_dir, "config.yaml"), 'w') as f:
             f.write(CONFIG.dump())
             
     CONFIG.output_dir = os.path.join(CONFIG.output_dir, CONFIG.name)
+    os.makedirs(CONFIG.output_dir, exist_ok=True)
     
     # Check output directory
     if (os.path.exists(CONFIG.output_dir) and os.listdir(CONFIG.output_dir) and not args.eval_only and not args.override and not (CONFIG.output_dir == CONFIG.train.resume)):

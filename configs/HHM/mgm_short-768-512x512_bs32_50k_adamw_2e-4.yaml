@@ -13,6 +13,8 @@ train:
   vis_iter: 200
   log_iter: 50
   seed: 1105
+test:
+  num_workers: 4
 model:
   arch: 'MGM'
   backbone: 'res_shortcut_encoder_29'

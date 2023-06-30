@@ -12,3 +12,4 @@ sh scripts/prepare_hhm.sh
 echo "Starting training..."
 cd $ROOT_DIR
 python -m tools.main --config configs/HHM/mgm_short-768-512x512_bs32_50k_adamw_2e-4.yaml --override --dist --gpus 8 #name debug train.log_iter 10
+# python -m tools.main --config configs/HHM/mgm_short-768-512x512_bs32_50k_adamw_2e-4.yaml --override --dist --gpus 4 name debug train.log_iter 10 train.batch_size 16

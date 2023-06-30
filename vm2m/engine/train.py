@@ -113,7 +113,7 @@ def train(cfg, rank, is_dist=False):
     if is_dist:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[rank], find_unused_parameters=True)
+                model, device_ids=[rank], find_unused_parameters=True if cfg.model.arch == 'VM2M' else False)
 
     epoch = 0
     iter = 0
