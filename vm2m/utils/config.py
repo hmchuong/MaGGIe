@@ -16,7 +16,7 @@ CONFIG.train.max_iter = 100000
 CONFIG.train.log_iter = 50
 CONFIG.train.vis_iter = 500
 CONFIG.train.val_iter = 2000
-CONFIG.train.val_metrics = ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'MSE']
+CONFIG.train.val_metrics = ['MAD', 'MSE', 'dtSSD']
 CONFIG.train.val_best_metric = 'MAD'
 
 optimizer = CN({})

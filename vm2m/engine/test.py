@@ -170,7 +170,7 @@ def test(cfg, rank=0, is_dist=False):
         logging.info("Metrics:")
         metric_str = ""
         for k, v in val_error_dict.items():
-            metric_str += "{}: {:.4f}\n".format(k, v.average())
+            metric_str += "{}: {}\n".format(k, v.average())
         logging.info(metric_str)
         logging.info('batch_time: {:.4f}, data_time: {:.4f}'.format(batch_time, data_time))
 

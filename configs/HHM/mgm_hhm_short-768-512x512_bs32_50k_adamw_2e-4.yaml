@@ -1,4 +1,4 @@
-name: 'mgm_short-768-512x512_bs32_50k_adamw_2e-4'
+name: 'mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4'
 output_dir: 'output/HHM'
 train:
   batch_size: 32

@@ -1,6 +1,8 @@
 import cv2
 import numpy as np
+import torch
 from .dist import synchronize, gather
+from multiprocessing import Pool
 
 def reshape2D(x):
     return x.reshape(-1, *x.shape[-2:])
@@ -13,10 +15,13 @@ class Metric(object):
         self.score = 0
         self.count = 0
 
-    def reshape(self, pred, gt):
-        if sum(pred.shape) != sum(gt.shape):
-            pred = cv2.resize(pred, (gt.shape[-2], gt.shape[-1]), interpolation=cv2.INTER_LINEAR)
-        return pred, gt
+    # def reshape(self, pred, gt):
+    #     gt_shape = gt.shape
+    #     if len(pred.shape) > 4:
+            
+    #     if sum(pred.shape) != sum(gt.shape):
+    #         pred = cv2.resize(pred, (gt.shape[-2], gt.shape[-1]), interpolation=cv2.INTER_LINEAR)
+    #     return pred
 
     def compute_metric(self, pred, gt, **kargs):
         raise NotImplementedError
@@ -31,88 +36,67 @@ class Metric(object):
         self.count = gather_count
 
 
-    def update(self, pred, gt, **kargs):
+    def update(self, pred, gt, trimap=None, **kargs):
+        
+        mask = None
+        if trimap is not None:
+            mask = (trimap == 1).astype('float32')
+        else:
+            mask = np.ones_like(gt).astype('float32')
+
         pred = reshape2D(pred)
         gt = reshape2D(gt)
-        pred, gt = self.reshape(pred, gt)
-        n_frames = pred.shape[0]
-        self.count += n_frames
-        metric = self.compute_metric(pred, gt, **kargs)
-        self.score += metric
-        return metric * 1.0 / (n_frames + 1e-4)
+        mask = reshape2D(mask)
+
+        # pred, gt = self.reshape(pred, gt)
+        score, count = self.compute_metric(pred, gt, mask, **kargs)
+        self.count += count
+        self.score += score
+        return score * 1.0 / count
 
     def average(self):
         return self.score / (self.count + 1e-6)
 
-class dtSSD(Metric):
-    def update(self, pred, gt, **kargs):
-        b, n_f, _, h, w = pred.shape
-        dadt = pred[:, 1:] - pred[:, :-1]
-        dgdt = gt[:, 1:] - gt[:, :-1]
-        metric = np.sqrt(np.sum((dadt - dgdt) ** 2, axis=(2, 3, 4)))
-        metric = np.sum(metric)
-        count = ((n_f - 1) * b)
-        self.score += metric
-        self.count += count
-        return metric/ (count + 1e-4)
-
 class SAD(Metric):
     
-    def compute_metric(self, pred, gt, **kargs):
+    def compute_metric(self, pred, gt, mask, **kargs):
         '''
         pred, gt: numpy array
         (N, *, H, W)
         '''
-        return np.sum(np.abs(pred - gt)) / 1000.0
+        return np.sum(np.abs(pred - gt) * mask), mask.shape[0]
+
 
 class MSE(Metric):
     
-    def compute_metric(self, pred, gt, **kargs):
+    def compute_metric(self, pred, gt, mask, **kargs):
         '''
         pred, gt: numpy array
         (N, *, H, W)
         '''
-        n_pixels = pred.shape[1] * pred.shape[2]
-        return (np.sum((pred - gt) ** 2) / n_pixels) * 1000
+        return np.sum(((pred - gt) ** 2) * mask), mask.sum()
 
 class MAD(Metric):
 
-    def compute_metric(self, pred, gt, **kargs):
-        n_pixels = pred.shape[1] * pred.shape[2]
-        return (np.sum(np.abs(pred - gt)) / n_pixels) * 1000
-
-class MaskedMAD(Metric):
     def compute_metric(self, pred, gt, mask, **kargs):
-        
-        mask = reshape2D(mask)
-        n_pixels = mask.sum((-1, -2))
-        # import pdb; pdb.set_trace()
-        return (np.sum(np.abs(pred - gt) * mask, (-1, -2)) / n_pixels).sum() * 1000
-
-class FgMAD(MaskedMAD):
-    def compute_metric(self, pred, gt, trimap, **kargs):
-        fg_mask = (trimap == 2)
-        return super().compute_metric(pred, gt, fg_mask, **kargs)
-
-class BgMAD(MaskedMAD):
-    def compute_metric(self, pred, gt, trimap, **kargs):
-        bg_mask = (trimap == 0)
-        return super().compute_metric(pred, gt, bg_mask, **kargs)
-
-class TransMAD(MaskedMAD):
-    def compute_metric(self, pred, gt, trimap, **kargs):
-        trans_mask = (trimap == 1)
-        return super().compute_metric(pred, gt, trans_mask, **kargs)
+        return np.sum(np.abs(pred - gt) * mask), mask.sum()
     
 class Conn(Metric):
     
-    def compute_metric(self, pred, gt, **kargs):
+    def compute_metric(self, pred, gt, mask, **kargs):
         conn_err = 0
-        for i in range(pred.shape[0]):
-            conn_err += self.compute_conn(pred[i], gt[i])
-        return conn_err / 1000.0
+        B = pred.shape[0]
+        # mask = np.ones_like(mask)
+        pool = Pool(B)
+        for err in pool.imap(self.compute_conn, zip(pred, gt, mask)):
+            conn_err += err
+        # for i in range(pred.shape[0]):
+        #     conn_err += self.compute_conn((pred[i], gt[i], mask[i]))
+        pool.close()
+        # import pdb; pdb.set_trace()
+        return conn_err, B
 
-    def compute_conn(self, pred, gt, step=0.1):
+    def compute_conn(self, args):
         """
         update metric.
         Args:
@@ -121,7 +105,8 @@ class Conn(Metric):
             step (float, optional): Step of threshold when computing intersection between
             `gt` and `pred`. Default: 0.1.
         """
-
+        pred, gt, roi_mask = args
+        step=0.1
         thresh_steps = np.arange(0, 1 + step, step)
         round_down_map = -np.ones_like(gt)
         for i in range(1, len(thresh_steps)):
@@ -150,8 +135,7 @@ class Conn(Metric):
         # only calculate difference larger than or equal to 0.15
         gt_phi = 1 - gt_diff * (gt_diff >= 0.15)
         pred_phi = 1 - pred_diff * (pred_diff >= 0.15)
-
-        conn_diff = np.sum(np.abs(gt_phi - pred_phi))
+        conn_diff = np.sum(np.abs(gt_phi - pred_phi) * roi_mask)
         return conn_diff
 
 class Grad(Metric):
@@ -189,8 +173,9 @@ class Grad(Metric):
             img, -1, filter_y, borderType=cv2.BORDER_REPLICATE)
         return np.sqrt(img_filtered_x**2 + img_filtered_y**2)
     
-    def compute_grad(self, pred, gt, sigma=1.4):
-
+    def compute_grad(self, args):
+        pred, gt, mask = args
+        sigma=1.4
         gt = gt.astype(np.float64)
         pred = pred.astype(np.float64)
         gt_normed = np.zeros_like(gt)
@@ -201,15 +186,110 @@ class Grad(Metric):
         gt_grad = self.gauss_gradient(gt_normed, sigma).astype(np.float32)
         pred_grad = self.gauss_gradient(pred_normed, sigma).astype(np.float32)
 
-        grad_diff = ((gt_grad - pred_grad)**2).sum()
+        grad_diff = (((gt_grad - pred_grad)**2) * mask).sum()
 
         return grad_diff
     
-    def compute_metric(self, pred, gt, **kargs):
+    def compute_metric(self, pred, gt, mask, **kargs):
         grad_err = 0
-        for i in range(pred.shape[0]):
-            grad_err += self.compute_grad(pred[i], gt[i])
-        return grad_err / 1000.0
+        B = pred.shape[0]
+        pool = Pool(B)
+        for err in pool.imap(self.compute_grad, zip(pred, gt, mask)):
+            grad_err += err
+        pool.close()
+        return grad_err, B
+
+class dtSSD(Metric):
+
+    def update(self, pred, gt, trimap=None, **kargs):
+        mask = None
+        if trimap is not None:
+            mask = (trimap == 1).astype('float32')
+        else:
+            mask = np.ones_like(gt).astype('float32')
+
+        dadt = pred[:, 1:] - pred[:, :-1]
+        dgdt = gt[:, 1:] - gt[:, :-1]
+        mask_0 = mask[:, :-1]
+        err_m = (dadt - dgdt) ** 2
+        err_m = err_m * mask_0
+        err = np.sqrt(np.sum(err_m, axis=(2, 3, 4)))
+        err = np.sum(err)
+        num = mask_0.sum()
+
+        self.score += err
+        self.count += num
+        return err / num
+    
+class MESSDdt(Metric):
+    def calcOpticalFlow(self, frames):
+        prev, curr = frames
+        flow = cv2.calcOpticalFlowFarneback(prev.astype(np.uint8), curr.astype(np.uint8), None,  
+                                        0.5, 5, 10, 2, 7, 1.5, 
+                                        cv2.OPTFLOW_FARNEBACK_GAUSSIAN)
+        return flow
+    
+    def compute_single_video(self, pred, gt, mask):
+        pred = reshape2D(pred)
+        gt = reshape2D(gt)
+        
+        B, h, w = gt.shape
+        pool = Pool(B)
+        flows = []
+        items = [t for t in (gt * 255)]
+        for flow in pool.imap(self.calcOpticalFlow, zip(items[:-1], items[1:])):
+            flows.append(flow)
+        flow = torch.from_numpy(np.rint(np.array(flows)).astype(np.int64))
+        pool.close()
+
+        pred = torch.from_numpy(pred)
+        gt = torch.from_numpy(gt)
+        mask = torch.from_numpy(mask)
+        pred_0 = pred[:-1, ...]
+        pred_1 = pred[1:, ...]
+        target_0 = gt[:-1, ...]
+        target_1 = gt[1:, ...]
+        mask_0 = mask[:-1, ...]
+        mask_1 = mask[1:, ...]
+        
+        B, h, w = target_0.shape
+        x = torch.arange(0, w)
+        y = torch.arange(0, h)
+        xx, yy = torch.meshgrid([y, x])
+        coords = torch.stack([yy, xx], dim=2).unsqueeze(0).repeat((B, 1, 1, 1))
+        coords_n = (coords + flow)
+        coords_y = coords_n[..., 0].clamp(0, h-1)
+        coords_x = coords_n[..., 1].clamp(0, w-1)
+        indices = coords_y * w + coords_x
+        pred_1 = torch.take(pred_1, indices)
+        target_1 = torch.take(target_1, indices)
+        mask_1 = torch.take(mask_1, indices)
+
+        error_map = (pred_0-target_0).pow(2) * mask_0 - (pred_1-target_1).pow(2) * mask_1
+        error = error_map.abs().view(mask_0.shape[0], -1).sum(dim=1)
+        num = mask_0.view(mask_0.shape[0], -1).sum(dim=1) + 1.
+        
+        error = error.cpu().numpy().sum()
+        num = num.cpu().numpy().sum()
+        return error, num
+    
+    def update(self, pred, gt, trimap=None, **kargs):
+        mask = None
+        if trimap is not None:
+            mask = (trimap == 1).astype('float32')
+        else:
+            mask = np.ones_like(gt).astype('float32')
+
+        error = 0
+        count = 0
+        for i in range(len(pred)):
+            e, c = self.compute_single_video(pred[i], gt[i], mask[i])
+            error += e
+            count += c
+        self.score += error
+        self.count += count
+        return error / count
+        
 
 def build_metric(metrics):
     '''
