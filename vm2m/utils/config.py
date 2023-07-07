@@ -63,6 +63,13 @@ CONFIG.model.mgm = CN({})
 CONFIG.model.mgm.decoder = 'res_shortcut_decoder_22'
 CONFIG.model.mgm.warmup_iter = 5000
 
+# For SHM
+CONFIG.model.shm = CN({})
+CONFIG.model.shm.lr_scale = 0.5
+CONFIG.model.shm.dilation_kernel = 15
+CONFIG.model.shm.max_n_pixel = 4000000
+CONFIG.model.shm.mgm_weights = ''
+
 # For loss
 CONFIG.model.loss_alpha_w = 1.0
 CONFIG.model.loss_alpha_type = 'l1'

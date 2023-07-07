@@ -78,17 +78,16 @@ if __name__ == "__main__":
     
 
     # Dump config to the file
+    output_dir = os.path.join(CONFIG.output_dir, CONFIG.name)
+    os.makedirs(output_dir, exist_ok=True)
     if not args.eval_only:    
-        with open(os.path.join(CONFIG.output_dir, "config.yaml"), 'w') as f:
+        with open(os.path.join(output_dir, "config.yaml"), 'w') as f:
             f.write(CONFIG.dump())
-            
-    CONFIG.output_dir = os.path.join(CONFIG.output_dir, CONFIG.name)
-    os.makedirs(CONFIG.output_dir, exist_ok=True)
-    
+
+    CONFIG.output_dir = output_dir
     # Check output directory
-    if (os.path.exists(CONFIG.output_dir) and os.listdir(CONFIG.output_dir) and not args.eval_only and not args.override and not (CONFIG.output_dir == CONFIG.train.resume)):
-        raise ValueError("Output directory ({}) already exists and is not empty.".format(CONFIG.output_dir))
-    
+    if (os.path.exists(output_dir) and os.listdir(output_dir) and not args.eval_only and not args.override and not (CONFIG.output_dir == CONFIG.train.resume)):
+        raise ValueError("Output directory ({}) already exists and is not empty.".format(output_dir))
     
 
     # Set random seed

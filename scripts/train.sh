@@ -8,3 +8,5 @@
 #         train.batch_size 2
 
 DEBUG=1 python -m tools.main --config configs/VideoMatte240K/mgm_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml --override --gpus 8 name debug wandb.use True train.log_iter 10
+
+DEBUG=1 python -m tools.main --config configs/VideoMatte240K/sparsemat_vid240_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml --override --gpus 4 name debug wandb.use False train.log_iter 1

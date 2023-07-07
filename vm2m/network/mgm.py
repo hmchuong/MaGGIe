@@ -65,7 +65,7 @@ class MGM(nn.Module):
 
         return alpha_pred, weight_os4, weight_os1
 
-    def forward(self, batch):
+    def forward(self, batch, return_ctx=False):
         '''
         x: b, n_f, 3, h, w, image tensors
         masks: b, n_frames, n_instances, h//8, w//8, coarse masks
@@ -84,8 +84,12 @@ class MGM(nn.Module):
         n_i = masks.shape[2]
 
         x = x.view(-1, 3, h, w)
-        masks = masks.view(-1, 1, h//8, w//8)
-        masks = F.interpolate(masks, size=(h, w), mode="nearest")
+        if masks.shape[-1] != w:
+            masks = masks.view(-1, 1, h//8, w//8)
+            masks = F.interpolate(masks, size=(h, w), mode="nearest")
+        else:
+            masks = masks.view(-1, 1, h, w)
+            
         inp = torch.cat([x, masks], dim=1)
         if alphas is not None:
             alphas = alphas.view(-1, 1, h, w)
@@ -98,7 +102,7 @@ class MGM(nn.Module):
        
         embedding, mid_fea = self.encoder(inp)
         embedding = self.aspp(embedding)
-        pred = self.decoder(embedding, mid_fea)
+        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx)
         
         # Fushion
         logging.debug("Doing fusion")
@@ -111,6 +115,8 @@ class MGM(nn.Module):
         output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, n_i, h, w)
         output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, n_i, h, w)
         output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, n_i, h, w)
+        if 'ctx' in pred:
+            output['ctx'] = pred['ctx']
 
         # Reshape the output
         alpha_pred = alpha_pred.view(b, n_f, n_i, h, w)
@@ -194,7 +200,7 @@ class MGM(nn.Module):
             loss_dict['loss_comp_os4'] = comp_loss_os4
             loss_dict['loss_comp_os8'] = comp_loss_os8
             loss_dict['loss_comp'] = comp_loss
-            total_loss += total_loss + comp_loss * self.loss_comp_w
+            total_loss += comp_loss * self.loss_comp_w
 
         # Lap loss
         if self.loss_alpha_lap_w > 0:
@@ -206,7 +212,7 @@ class MGM(nn.Module):
             loss_dict['loss_lap_os4'] = lap_loss_os4
             loss_dict['loss_lap_os8'] = lap_loss_os8
             loss_dict['loss_lap'] = lap_loss
-            total_loss += total_loss + lap_loss * self.loss_alpha_lap_w
+            total_loss += lap_loss * self.loss_alpha_lap_w
         
         loss_dict['total'] = total_loss
         return loss_dict
