@@ -49,7 +49,7 @@ CONFIG.test.save_results = True
 CONFIG.test.save_dir = 'logs'
 CONFIG.test.postprocessing = True
 # CONFIG.test.metrics = ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'SAD', 'MSE', 'Conn', 'Grad']
-CONFIG.test.metrics = ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'MSE']
+CONFIG.test.metrics = ['MAD', 'MSE', 'SAD', 'Conn', 'Grad', 'dtSSD', 'MESSDdt']
 CONFIG.test.log_iter = 50
 
 # ------------------------ Model ------------------------
@@ -131,6 +131,7 @@ dataset.test = CN({})
 dataset.test.name = 'VideoMatte240K'
 dataset.test.root_dir = ''
 dataset.test.split = 'valid'
+dataset.test.use_thresh_mask = False
 
 # For video augmentation
 dataset.test.clip_length = 8

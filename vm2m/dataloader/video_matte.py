@@ -5,19 +5,19 @@ import logging
 import torch
 from torch.nn import functional as F
 from torch.utils.data import Dataset
-try:
-    from . import transforms as T
-    from .utils import gen_transition_gt
-except:
-    import transforms as T
-    from utils import gen_transition_gt
+# try:
+from . import transforms as T
+from .utils import gen_transition_gt
+# except:
+#     import transforms as T
+#     from utils import gen_transition_gt
 
 class SingleInstComposedVidDataset(Dataset):
     def __init__(self, root_dir, split, clip_length, overlap=0, short_size=1024, 
                  is_train=False, 
                  crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
                  blur_p=0.5, blur_kernel_size=[5, 15, 25], blur_sigma=[1.0, 1.5, 3.0, 5.0],
-                 bg_dir=None, max_step_size=5, random_seed=2023, **kwargs):
+                 bg_dir=None, max_step_size=5, random_seed=2023, use_thresh_mask=False, **kwargs):
         super().__init__()
         self.root_dir = os.path.join(root_dir, split)
         self.is_train = is_train
@@ -55,6 +55,9 @@ class SingleInstComposedVidDataset(Dataset):
                 T.ComposeBackground(),
                 T.RandomBinarizeAlpha(self.random, bin_alpha_max_k),
             ])
+        else:
+            if use_thresh_mask:
+                self.transforms += [T.GenMaskFromAlpha()]
         self.transforms += [T.ToTensor(), T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]
         self.transforms = T.Compose(self.transforms)
     

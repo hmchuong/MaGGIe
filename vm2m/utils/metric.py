@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 import torch
+import skimage.measure
 from .dist import synchronize, gather
 from multiprocessing import Pool
 
@@ -81,8 +82,65 @@ class MAD(Metric):
     def compute_metric(self, pred, gt, mask, **kargs):
         return np.sum(np.abs(pred - gt) * mask), mask.sum()
     
-class Conn(Metric):
+# class Conn(Metric):
     
+#     def compute_metric(self, pred, gt, mask, **kargs):
+#         conn_err = 0
+#         B = pred.shape[0]
+#         # mask = np.ones_like(mask)
+#         pool = Pool(B)
+#         for err in pool.imap(self.compute_conn, zip(pred, gt, mask)):
+#             conn_err += err
+#         # for i in range(pred.shape[0]):
+#         #     conn_err += self.compute_conn((pred[i], gt[i], mask[i]))
+#         pool.close()
+#         # import pdb; pdb.set_trace()
+#         return conn_err, B
+
+#     def compute_conn(self, args):
+#         """
+#         update metric.
+#         Args:
+#             pred (np.ndarray): The value range is [0., 1.].
+#             gt (np.ndarray): The value range is [0, 1].
+#             step (float, optional): Step of threshold when computing intersection between
+#             `gt` and `pred`. Default: 0.1.
+#         """
+#         pred, gt, roi_mask = args
+#         step=0.1
+#         thresh_steps = np.arange(0, 1 + step, step)
+#         round_down_map = -np.ones_like(gt)
+#         for i in range(1, len(thresh_steps)):
+#             gt_thresh = gt >= thresh_steps[i]
+#             pred_thresh = pred >= thresh_steps[i]
+#             intersection = (gt_thresh & pred_thresh).astype(np.uint8)
+
+#             # connected components
+#             _, output, stats, _ = cv2.connectedComponentsWithStats(intersection, connectivity=4)
+#             # start from 1 in dim 0 to exclude background
+#             size = stats[1:, -1]
+
+#             # largest connected component of the intersection
+#             omega = np.zeros_like(gt)
+#             if len(size) != 0:
+#                 max_id = np.argmax(size)
+#                 # plus one to include background
+#                 omega[output == max_id + 1] = 1
+
+#             mask = (round_down_map == -1) & (omega == 0)
+#             round_down_map[mask] = thresh_steps[i - 1]
+#         round_down_map[round_down_map == -1] = 1
+
+#         gt_diff = gt - round_down_map
+#         pred_diff = pred - round_down_map
+#         # only calculate difference larger than or equal to 0.15
+#         gt_phi = 1 - gt_diff * (gt_diff >= 0.15)
+#         pred_phi = 1 - pred_diff * (pred_diff >= 0.15)
+#         conn_diff = np.sum(np.abs(gt_phi - pred_phi) * roi_mask)
+#         return conn_diff
+
+class Conn(Metric):
+
     def compute_metric(self, pred, gt, mask, **kargs):
         conn_err = 0
         B = pred.shape[0]
@@ -114,17 +172,23 @@ class Conn(Metric):
             pred_thresh = pred >= thresh_steps[i]
             intersection = (gt_thresh & pred_thresh).astype(np.uint8)
 
-            # connected components
-            _, output, stats, _ = cv2.connectedComponentsWithStats(intersection, connectivity=4)
-            # start from 1 in dim 0 to exclude background
-            size = stats[1:, -1]
+            # # connected components
+            # _, output, stats, _ = cv2.connectedComponentsWithStats(intersection, connectivity=4)
+            # # start from 1 in dim 0 to exclude background
+            # size = stats[1:, -1]
 
-            # largest connected component of the intersection
-            omega = np.zeros_like(gt)
-            if len(size) != 0:
-                max_id = np.argmax(size)
-                # plus one to include background
-                omega[output == max_id + 1] = 1
+            # # largest connected component of the intersection
+            # omega = np.zeros_like(gt)
+            # if len(size) != 0:
+            #     max_id = np.argmax(size)
+            #     # plus one to include background
+            #     omega[output == max_id + 1] = 1
+            cc, num = skimage.measure.label(intersection, connectivity=1, return_num=True)
+            omega = np.zeros_like(intersection)
+            if num > 0:
+                # find the largest connected region
+                max_id = np.argmax(np.bincount(cc.flatten())[1:]) + 1
+                omega[cc == max_id] = 1
 
             mask = (round_down_map == -1) & (omega == 0)
             round_down_map[mask] = thresh_steps[i - 1]

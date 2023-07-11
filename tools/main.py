@@ -17,7 +17,7 @@ def main(rank, cfg, dist_url=None, world_size=8, eval_only=False):
     logFormatter = logging.Formatter("%(asctime)s [rank " + str(rank) + "] [%(levelname)-5.5s]  %(message)s")
     rootLogger = logging.getLogger()
 
-    fileHandler = logging.FileHandler("{0}/log_rank{1}.log".format(cfg.output_dir, str(rank)))
+    fileHandler = logging.FileHandler("{0}/{1}log_rank{2}.log".format(cfg.output_dir, "test-" if eval_only else "", str(rank)))
     fileHandler.setFormatter(logFormatter)
     rootLogger.addHandler(fileHandler)
     if os.getenv("DEBUG", False):
@@ -54,6 +54,10 @@ def main(rank, cfg, dist_url=None, world_size=8, eval_only=False):
         test(cfg, rank, dist_url is not None)
     else:
         train(cfg, rank, dist_url is not None)
+    
+    if dist_url is not None:
+        dist.destroy_process_group()
+        
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Video Mask To Matte")

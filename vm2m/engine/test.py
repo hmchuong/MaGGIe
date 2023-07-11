@@ -16,6 +16,7 @@ from vm2m.utils.metric import build_metric
 @torch.no_grad()
 def save_visualization(save_dir, image_names, alphas, transform_info, output):
     trans_preds = None
+    inc_bin_maps = None
     if 'trans_preds' in output:
         trans_preds = output['trans_preds'][0]
         trans_preds = reverse_transform_tensor(trans_preds, transform_info).sigmoid().cpu().numpy()
@@ -66,6 +67,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
         for i, batch in enumerate(val_loader):
 
             data_time.update(time.time() - end_time)
+            
 
             image_names = batch.pop('image_names')
             transform_info = batch.pop('transform_info')
@@ -75,8 +77,8 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 
             batch = {k: v.to(device) for k, v in batch.items()}
 
+            end_time = time.time()
             output = model(batch)
-
             batch_time.update(time.time() - end_time)
 
             
@@ -88,14 +90,17 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 
             current_metrics = {}
             for k, v in val_error_dict.items():
+                logging.debug(f"updating {k}...")
                 current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=trimap[:, skip:])
+                logging.debug(f"Done {k}!")
 
             # Logging
             if i % log_iter == 0:
                 log_str = "Validation: Iter {}/{}: ".format(i, len(val_loader))
                 for k, v in current_metrics.items():
                     log_str += "{} - {:.4f}, ".format(k, v)
-                log_str += 'batch_time: {:.4f}, data_time: {:.4f}'.format(batch_time.avg, data_time.avg)
+                memory = torch.cuda.max_memory_allocated() / 1024.0 / 1024.0
+                log_str += 'batch_time: {:.4f}, data_time: {:.4f}, memory: {:.4f} MB'.format(batch_time.avg, data_time.avg, memory)
                 logging.info(log_str)
             
             # Visualization
@@ -108,20 +113,14 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 @torch.no_grad()
 def test(cfg, rank=0, is_dist=False):
 
-    # logFormatter = logging.Formatter("%(asctime)s [%(levelname)-5.5s]  %(message)s")
-    # rootLogger = logging.getLogger()
-    # consoleHandler = logging.StreamHandler()
-    # consoleHandler.setFormatter(logFormatter)
-    # rootLogger.addHandler(consoleHandler)
-    # rootLogger.setLevel('DEBUG')
-
     # Create dataset
     logging.info("Creating testing dataset...")
     val_dataset = build_dataset(cfg.dataset.test, is_train=False)
     val_sampler = torch_data.DistributedSampler(val_dataset, shuffle=False) if is_dist else None
 
+    
     val_loader = torch_data.DataLoader(
-        val_dataset, batch_size=cfg.test.batch_size, shuffle=False, pin_memory=True,
+        val_dataset, batch_size=cfg.test.batch_size, shuffle=False, pin_memory=False,
         sampler=val_sampler,
         num_workers=cfg.test.num_workers)
     
@@ -141,7 +140,11 @@ def test(cfg, rank=0, is_dist=False):
     if len(missing_keys) > 0 or len(unexpected_keys) > 0:
         logging.warn("Missing keys: {}".format(missing_keys))
         logging.warn("Unexpected keys: {}".format(unexpected_keys))
+    
+    num_parameters = sum([p.numel() for p in model.parameters()])
 
+    logging.info("Number of parameters: {}".format(num_parameters))
+    
     if is_dist:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[rank])
 
@@ -156,7 +159,9 @@ def test(cfg, rank=0, is_dist=False):
     else:
         callback_vis = None
 
-    batch_time, data_time = val(model, val_loader, device, cfg.test.log_iter, val_error_dict, do_postprocessing=cfg.test.postprocessing, callback=callback_vis)
+    batch_time, data_time = val(model, val_loader, device, cfg.test.log_iter, \
+                                val_error_dict, do_postprocessing=cfg.test.postprocessing, \
+                                    callback=callback_vis)
     
     logging.info("Testing done!")
 

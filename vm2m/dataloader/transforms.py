@@ -334,7 +334,20 @@ class RandomBinarizeAlpha(object):
         input_dict["masks"] = masks
 
         return input_dict
-        
+
+class GenMaskFromAlpha(object):
+    def __init__(self, threshold=0.5):
+        self.threshold = 0.5
+        pass
+
+    def __call__(self, input_dict: dict):
+        alphas = input_dict["alphas"]
+        masks = input_dict["masks"]
+        h, w = masks.shape[-2:]
+        new_masks = ((alphas > 127) * 255).astype('uint8')
+        input_dict["masks"] = np.stack([cv2.resize(m, (w, h), cv2.INTER_NEAREST) for m in new_masks], axis=0)
+
+        return input_dict
 
 class ToTensor(object):
     def __init__(self):

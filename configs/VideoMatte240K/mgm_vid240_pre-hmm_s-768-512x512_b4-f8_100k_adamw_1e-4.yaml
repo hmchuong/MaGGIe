@@ -31,5 +31,5 @@ dataset:
   test:
     root_dir: '/mnt/localssd/VideoMatte240K'
     short_size: 768
-    clip_length: 1
-    clip_overlap: 0
+    clip_length: 8
+    clip_overlap: 2
