@@ -57,6 +57,9 @@ CONFIG.model = CN({})
 CONFIG.model.weights = ''
 CONFIG.model.arch = 'VM2M'
 CONFIG.model.backbone = 'res_encoder_29' # resnet34
+CONFIG.model.backbone_args = CN({})
+CONFIG.model.backbone_args.pretrained = True
+CONFIG.model.backbone_args.num_mask = 1
 
 # For MGM
 CONFIG.model.mgm = CN({})
@@ -80,6 +83,12 @@ CONFIG.model.loss_atten_w = 1.0
 CONFIG.model.loss_comp_w = 0.25
 CONFIG.model.loss_dtSSD_w = 1.0
 
+CONFIG.model.aspp = CN({})
+CONFIG.model.aspp.in_channels = 512
+CONFIG.model.aspp.out_channels = 512
+
+CONFIG.model.shortcut_dims = [32, 32, 64, 128, 256]
+
 # Dynamic kernel
 dynamic_kernel = CN({})
 dynamic_kernel.in_features = ['os32', 'os16', 'os8']
@@ -91,7 +100,7 @@ dynamic_kernel.pre_norm = False
 dynamic_kernel.enforce_input_project = True
 dynamic_kernel.in_channels = 256
 dynamic_kernel.out_incoherence = 157 # 99
-dynamic_kernel.out_pixeldecoder = 64
+dynamic_kernel.out_pixeldecoder = 288 * 3
 CONFIG.model.dynamic_kernel = dynamic_kernel
 
 # Breakdown incoherence

@@ -127,7 +127,17 @@ class TCVOM(MGM):
 
             # Compute temporal loss
             if self.loss_dtSSD_w > 0:
-                dtSSD_loss = loss_dtSSD(output['refined_masks'], alphas, trans_gt)
+                alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = preds['alpha_os1'], preds['alpha_os4'], preds['alpha_os8']
+                alpha_pred_os8 = alpha_pred_os8.reshape(*alphas.shape)
+                alpha_pred_os4 = alpha_pred_os4.reshape(*alphas.shape)
+                alpha_pred_os1 = alpha_pred_os1.reshape(*alphas.shape)
+                dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, trans_gt)
+                dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, trans_gt)
+                dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, trans_gt)
+                dtSSD_loss = (dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1) / 5.0
+                loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
+                loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
+                loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8
                 loss_dict['loss_dtSSD'] = dtSSD_loss
                 total_loss = loss_dict['total'] + dtSSD_loss * self.loss_dtSSD_w
                 loss_dict['total'] = total_loss

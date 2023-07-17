@@ -57,7 +57,7 @@ class ResNet_D(nn.Module):
     without the mix-up part.
     """
 
-    def __init__(self, block, layers, norm_layer=None, late_downsample=False, is_additional_branch=False, mask_channel=0):
+    def __init__(self, block, layers, norm_layer=None, late_downsample=False, is_additional_branch=False, mask_channel=0, **kwargs):
         super(ResNet_D, self).__init__()
 
         self.logger = logging.getLogger("Logger")
@@ -165,9 +165,9 @@ class ResNet_D(nn.Module):
 
 class ResShortCut_D(ResNet_D):
 
-    def __init__(self, block, layers, norm_layer=None, late_downsample=False):
-        super(ResShortCut_D, self).__init__(block, layers, norm_layer, late_downsample=late_downsample, mask_channel=1)
-        first_inplane = 3 + 1
+    def __init__(self, block, layers, num_mask=1, norm_layer=None, late_downsample=False, **kwargs):
+        super(ResShortCut_D, self).__init__(block, layers, norm_layer, late_downsample=late_downsample, mask_channel=num_mask)
+        first_inplane = 3 + num_mask
         self.shortcut_inplane = [first_inplane, self.midplanes, 64, 128, 256]
         self.shortcut_plane = [32, self.midplanes, 64, 128, 256]
 
@@ -227,8 +227,9 @@ def res_shortcut_encoder_29(**kwargs):
     model = _res_shortcut_D(BasicBlock, [3, 4, 4, 2], **kwargs)
     state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
     state_dict = {k[7:]: v for k, v in state_dict.items()}
-    state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
-    state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
+    if kwargs['num_mask'] > 0:
+        state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
+        state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
     model.load_state_dict(state_dict, strict=False)
     return model
 

@@ -5,12 +5,12 @@ import logging
 import torch
 from torch.nn import functional as F
 from torch.utils.data import Dataset
-# try:
-from . import transforms as T
-from .utils import gen_transition_gt
-# except:
-#     import transforms as T
-#     from utils import gen_transition_gt
+try:
+    from . import transforms as T
+    from .utils import gen_transition_temporal_gt, gen_transition_gt
+except ImportError:
+    import transforms as T
+    from utils import gen_transition_gt, gen_transition_temporal_gt
 
 class SingleInstComposedVidDataset(Dataset):
     def __init__(self, root_dir, split, clip_length, overlap=0, short_size=1024, 
@@ -137,7 +137,7 @@ class SingleInstComposedVidDataset(Dataset):
         if self.is_train:
             k_size = self.random.choice(range(2, 5))
             iterations = np.random.randint(5, 15)
-            transition_gt = gen_transition_gt(alphas, masks, k_size, iterations)
+            transition_gt = gen_transition_temporal_gt(alphas, masks, k_size, iterations)
 
         alphas = alphas * 1.0 / 255
         masks = masks * 1.0 / 255
@@ -168,10 +168,11 @@ class SingleInstComposedVidDataset(Dataset):
         return out
 
 if __name__ == "__main__":
-    train_dataset = SingleInstComposedVidDataset(root_dir="/home/chuongh/mask2matte/data/VideoMatte240K", split="train", clip_length=8, bg_dir="/mnt/localssd/bg", max_step_size=5, is_train=True)
-    valid_dataset = SingleInstComposedVidDataset(root_dir="/home/chuongh/mask2matte/data/VideoMatte240K", split="valid", clip_length=8, is_train=False)
+    train_dataset = SingleInstComposedVidDataset(root_dir="/mnt/localssd/VideoMatte240K", split="train", clip_length=8, bg_dir="/mnt/localssd/bg", max_step_size=5, is_train=True)
+    valid_dataset = SingleInstComposedVidDataset(root_dir="/mnt/localssd/VideoMatte240K", split="valid", clip_length=8, is_train=False)
     
-    for frames, masks, alphas, transition_gt in train_dataset:
+    for batch in train_dataset:
+        frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch["transition"]
         for idx in range(len(frames)):
             frame = frames[idx]
             mask = masks[idx]

@@ -51,7 +51,7 @@ class VM2M(nn.Module):
         # Attention module to build dynamic kernels
         self.dynamic_kernels_generator = MaskAttentionDynamicKernel(cfg.dynamic_kernel)
 
-        # Laplacian kernels
+    # Laplacian kernels
         self.laplacian_kernel = torch.tensor(
                 [-1, -1, -1, -1, 8, -1, -1, -1, -1],
                 dtype=torch.float32).reshape(1, 1, 3, 3).requires_grad_(False)

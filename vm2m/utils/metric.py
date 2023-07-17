@@ -65,7 +65,7 @@ class SAD(Metric):
         pred, gt: numpy array
         (N, *, H, W)
         '''
-        return np.sum(np.abs(pred - gt) * mask), mask.shape[0]
+        return np.sum(np.abs(pred - gt) * mask) * 0.001, mask.shape[0]
 
 
 class MSE(Metric):
@@ -75,12 +75,12 @@ class MSE(Metric):
         pred, gt: numpy array
         (N, *, H, W)
         '''
-        return np.sum(((pred - gt) ** 2) * mask), mask.sum()
+        return np.sum(((pred - gt) ** 2) * mask) * 1000, mask.sum()
 
 class MAD(Metric):
 
     def compute_metric(self, pred, gt, mask, **kargs):
-        return np.sum(np.abs(pred - gt) * mask), mask.sum()
+        return np.sum(np.abs(pred - gt) * mask) * 1000, mask.sum()
     
 # class Conn(Metric):
     
@@ -147,7 +147,7 @@ class Conn(Metric):
         # mask = np.ones_like(mask)
         pool = Pool(B)
         for err in pool.imap(self.compute_conn, zip(pred, gt, mask)):
-            conn_err += err
+            conn_err += err * 0.001
         # for i in range(pred.shape[0]):
         #     conn_err += self.compute_conn((pred[i], gt[i], mask[i]))
         pool.close()
@@ -259,7 +259,7 @@ class Grad(Metric):
         B = pred.shape[0]
         pool = Pool(B)
         for err in pool.imap(self.compute_grad, zip(pred, gt, mask)):
-            grad_err += err
+            grad_err += err * 0.001
         pool.close()
         return grad_err, B
 
@@ -278,7 +278,7 @@ class dtSSD(Metric):
         err_m = (dadt - dgdt) ** 2
         err_m = err_m * mask_0
         err = np.sqrt(np.sum(err_m, axis=(2, 3, 4)))
-        err = np.sum(err)
+        err = np.sum(err) * 10000
         num = mask_0.sum()
 
         self.score += err
@@ -347,12 +347,16 @@ class MESSDdt(Metric):
         error = 0
         count = 0
         for i in range(len(pred)):
-            e, c = self.compute_single_video(pred[i], gt[i], mask[i])
-            error += e
+            try:
+                e, c = self.compute_single_video(pred[i], gt[i], mask[i])
+            except Exception as e:
+                print(e)
+                continue
+            error += e * 1000
             count += c
         self.score += error
         self.count += count
-        return error / count
+        return error / (count + 1e-8)
         
 
 def build_metric(metrics):

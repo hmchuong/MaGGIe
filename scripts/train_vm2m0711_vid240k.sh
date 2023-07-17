@@ -12,7 +12,6 @@ sh scripts/prepare_vid240k.sh
 echo "Starting training..."
 cd $ROOT_DIR
 
-python -m tools.main --config configs/VideoMatte240K/tcvom_vid240_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml --dist --override --gpu 4 #ß\
-                    # train.resume output/VideoMatte240K/sparsemat_vid240_s-768-512x512_b4-f8_100k_adamw_1e-4 wandb.id 4baupkau
+python -m tools.main --config configs/VideoMatte240K/vm2m0711_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml --dist --gpus 8 --override
 
 # python -m tools.main --config configs/VideoMatte240K/vm2m_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4.yaml --dist --gpus 4 name debug train.val_iter 10 train.log_iter 5 test.log_iter 5

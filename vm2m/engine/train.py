@@ -112,8 +112,11 @@ def train(cfg, rank, is_dist=False):
 
     if is_dist:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        having_unused_params = False
+        if cfg.model.arch in ['VM2M', 'VM2M0711']:
+            having_unused_params = True
         model = torch.nn.parallel.DistributedDataParallel(
-                model, device_ids=[rank], find_unused_parameters=True if cfg.model.arch == 'VM2M' else False)
+                model, device_ids=[rank], find_unused_parameters=having_unused_params)
 
     epoch = 0
     iter = 0
@@ -186,17 +189,17 @@ def train(cfg, rank, is_dist=False):
             batch = {k: v.to(device) for k, v in batch.items()}
             batch['iter'] = iter
             optimizer.zero_grad()
-            try:
+            # try:
                 # if iter == 85 and rank == 0:
                 #     from pudb.remote import set_trace
                 #     set_trace()
-                output, loss = model(batch)
-                if loss is None:
-                    logging.error("Loss is None!")
-                    continue
-            except ValueError as e:
-                logging.error("ValueError: {}".format(e))
+            output, loss = model(batch)
+            if loss is None:
+                logging.error("Loss is None!")
                 continue
+            # except ValueError as e:
+            #     logging.error("ValueError: {}".format(e))
+            #     continue
             logging.debug("Reducing loss")
             loss_reduced = loss #reduce_dict(loss)
 
