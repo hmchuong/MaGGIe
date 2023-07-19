@@ -452,8 +452,8 @@ class ProgressiveSMHADec(nn.Module):
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
 
         # Fuse with coarse_mask
-        inc_mask = F.interpolate(inc_mask, scale_factor=8.0, mode='nearest')
-        coarse_mask = F.interpolate(coarse_mask, scale_factor=8.0, mode='nearest')
+        inc_mask = F.interpolate(inc_mask, scale_factor=8.0, mode='bilinear', align_corners=False)
+        coarse_mask = F.interpolate(coarse_mask, scale_factor=8.0, mode='bilinear', align_corners=False)
         x_os1 = coarse_mask * (1.0 - inc_mask) + inc_mask * x_os1
         x_os4 = coarse_mask * (1.0 - inc_mask) + inc_mask * x_os4
         x_os8 = coarse_mask * (1.0 - inc_mask) + inc_mask * x_os8

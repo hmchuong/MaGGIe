@@ -137,12 +137,12 @@ class SingleInstComposedVidDataset(Dataset):
         if self.is_train:
             k_size = self.random.choice(range(2, 5))
             iterations = np.random.randint(5, 15)
-            transition_gt = gen_transition_temporal_gt(alphas, masks, k_size, iterations)
+            transition_gt = gen_transition_gt(alphas, masks, k_size, iterations)
 
         alphas = alphas * 1.0 / 255
         masks = masks * 1.0 / 255
 
-        if masks.sum() == 0:
+        if masks.sum() == 0 and self.is_train:
             logging.error("Get another sample, alphas are incorrect: {} - {}".format(alpha_paths[0], alpha_paths[-1]))
             return self.__getitem__(self.random.randint(0, len(self.frame_ids)))
         

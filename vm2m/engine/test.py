@@ -68,6 +68,9 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 
             data_time.update(time.time() - end_time)
             
+            # if i < 681:
+            #     continue
+            # import pdb; pdb.set_trace()
 
             image_names = batch.pop('image_names')
             transform_info = batch.pop('transform_info')
@@ -78,6 +81,8 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             batch = {k: v.to(device) for k, v in batch.items()}
 
             end_time = time.time()
+            if batch['mask'].sum() == 0:
+                continue
             output = model(batch)
             batch_time.update(time.time() - end_time)
 
@@ -118,6 +123,7 @@ def test(cfg, rank=0, is_dist=False):
     val_dataset = build_dataset(cfg.dataset.test, is_train=False)
     val_sampler = torch_data.DistributedSampler(val_dataset, shuffle=False) if is_dist else None
 
+    # val_dataset.frame_ids = val_dataset.frame_ids[681:]
     
     val_loader = torch_data.DataLoader(
         val_dataset, batch_size=cfg.test.batch_size, shuffle=False, pin_memory=False,

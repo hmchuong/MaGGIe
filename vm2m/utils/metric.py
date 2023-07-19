@@ -283,7 +283,7 @@ class dtSSD(Metric):
 
         self.score += err
         self.count += num
-        return err / num
+        return err / (num + 1e-10)
     
 class MESSDdt(Metric):
     def calcOpticalFlow(self, frames):

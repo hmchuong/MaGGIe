@@ -176,3 +176,81 @@ python -m tools.main --gpus 1 --config configs/polarized_matting/sparsemat.yaml 
                                                 test.save_results True \
                                                 test.postprocessing True \
                                                 test.save_dir output/polarized_matting/sparsemat_threshmask/vis_test
+
+python -m tools.main --gpus 1 --config configs/polarized_matting/vm2m.yaml --eval-only \
+                                        model.weights output/VideoMatte240K/vm2m_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4/best_model.pth \
+                                        dataset.test.split test \
+                                        dataset.test.use_thresh_mask False \
+                                        test.save_results True \
+                                        test.postprocessing True \
+                                        test.log_iter 1 \
+                                        test.save_dir output/polarized_matting/vm2m/vis_test
+
+python -m tools.main --gpus 1 --config configs/polarized_matting/vm2m.yaml --eval-only \
+                                        name vm2m_threshmask \
+                                        model.weights output/VideoMatte240K/vm2m_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4/best_model.pth \
+                                        dataset.test.split test \
+                                        dataset.test.use_thresh_mask True \
+                                        test.save_results True \
+                                        test.postprocessing True \
+                                        test.log_iter 1 \
+                                        test.save_dir output/polarized_matting/vm2m_threshmask/vis_test
+
+python -m tools.main --gpus 1 --config configs/polarized_matting/tcvom.yaml --eval-only \
+                                                model.weights output/VideoMatte240K/tcvom_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4/best_model.pth \
+                                                dataset.test.split test \
+                                                test.save_results False \
+                                                test.postprocessing True \
+                                                test.log_iter 1 \
+                                                test.num_workers 10 \
+                                                test.save_dir output/polarized_matting/tcvom/vis_test
+
+python -m tools.main --gpus 1 --config configs/polarized_matting/tcvom.yaml --eval-only \
+                                                name tcvom_0714 \
+                                                model.weights output/VideoMatte240K/tcvom_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4_fix-dtssdloss/best_model.pth \
+                                                dataset.test.split test \
+                                                test.save_results False \
+                                                test.postprocessing True \
+                                                test.log_iter 1 \
+                                                test.num_workers 10 \
+                                                test.save_dir output/polarized_matting/tcvom_0714/vis_test
+
+python -m tools.main --gpus 1 --config configs/polarized_matting/tcvom.yaml --eval-only \
+                                                name tcvom_0714_threshmask \
+                                                model.weights output/VideoMatte240K/tcvom_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4_fix-dtssdloss/best_model.pth \
+                                                dataset.test.split test \
+                                                dataset.test.use_thresh_mask True \
+                                                test.save_results True \
+                                                test.postprocessing True \
+                                                test.log_iter 1 \
+                                                test.num_workers 10 \
+                                                test.save_dir output/polarized_matting/tcvom_0714_threshmask/vis_test
+
+python -m tools.main --gpus 1 --config configs/polarized_matting/vm2m0711.yaml --eval-only \
+                                                name vm2m0711 \
+                                                model.weights output/VideoMatte240K/vm2m0711_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4_continue/best_model.pth \
+                                                dataset.test.split test \
+                                                test.save_results True \
+                                                test.postprocessing True \
+                                                test.log_iter 1 \
+                                                test.num_workers 10 \
+                                                test.save_dir output/polarized_matting/vm2m0711/vis_test
+
+python -m tools.main --gpus 1 --config configs/polarized_matting/vm2m0711.yaml --eval-only \
+                                                name vm2m0711_threshmask \
+                                                model.weights output/VideoMatte240K/vm2m0711_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4_continue/best_model.pth \
+                                                dataset.test.split test \
+                                                test.save_results True \
+                                                dataset.test.use_thresh_mask True \
+                                                test.postprocessing True \
+                                                test.log_iter 1 \
+                                                test.num_workers 10 \
+                                                test.save_dir output/polarized_matting/vm2m0711_threshmask/vis_test_postprocess
+
+# Test HHM
+python -m tools.main --gpus 1 --config configs/HHM/mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4.yaml --eval-only \
+                                                model.weights output/HHM/mgm_hmm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth \
+                                                dataset.test.split val \
+                                                test.log_iter 1 \
+                                                test.save_results False \
+                                                test.postprocessing True

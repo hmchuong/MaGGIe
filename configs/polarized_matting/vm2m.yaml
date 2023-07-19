@@ -1,29 +1,29 @@
-name: 'sparsemat'
-
+name: 'vm2m'
 model:
-  arch: 'SparseMat'
-  shm:
-    mgm_weights: 'output/VideoMatte240K/mgm_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4/best_model.pth'
-  backbone: 'res_shortcut_encoder_29'
-  mgm:
-    warmup_iter: 0
-  loss_dtSSD_w: 0.0
-  loss_comp_w: 1.0
+  weights: 'output/HHM/vm2m_hmm_short-768-512x512_bs16_100k_adamw_2e-4/best_model.pth'
+  dynamic_kernel:
+    out_incoherence: 157
+    out_pixeldecoder: 64
+    in_features:
+      - os32
+      - os16
+      - os8
+  breakdown:
+    in_features:
+      - os4
+      - os1
 train:
   optimizer:
     lr: 0.0001
     name: adamw
-  val_metrics: ['MAD', 'MSE', 'dtSSD']
-  val_best_metric: 'MAD'
   val_iter: 1000
   vis_iter: 200
   log_iter: 50
-  batch_size: 32
-  num_workers: 4
-  max_iter: 100000
+  batch_size: 4
+  num_workers: 12
 output_dir: 'output/polarized_matting'
 test:
-  num_workers: 10
+  num_workers: 4
   batch_size: 1
 dataset:
   train:

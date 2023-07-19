@@ -104,7 +104,11 @@ class SparseMat(nn.Module):
         preds = []
         for i in range(len(lr_pred)):
             sparse_inputs, coords = self.generate_sparse_inputs(x_hr[i:i+1], lr_pred[i: i+1], mask[i: i + 1])
-            pred = self.shm(sparse_inputs, lr_pred, coords, 1, mask.size()[2:], ctx=ctx[i: i + 1])
+            if coords.shape[0] > 0:
+                pred = self.shm(sparse_inputs, lr_pred, coords, 1, mask.size()[2:], ctx=ctx[i: i + 1])
+            else:
+                # import pdb; pdb.set_trace()
+                pred = [lr_pred[i:i+1]]
             preds.append(pred[-1])
         preds = torch.cat(preds, dim=0)
         

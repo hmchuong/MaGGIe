@@ -4,6 +4,7 @@ import logging
 # from pudb.remote import set_trace
 
 import numpy as np
+import cv2
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -48,6 +49,8 @@ class VM2M0711(nn.Module):
             nn.BatchNorm2d(cfg.aspp.out_channels//16),
             nn.ReLU(),
         )
+
+        self.inc_smooth = nn.Conv2d(2, 1, 5, padding=2)
 
         self.inc_attention = KernelTemporalAttention(cfg.dynamic_kernel.out_incoherence)
         self.dec_attention = KernelTemporalAttention(cfg.dynamic_kernel.out_pixeldecoder)
@@ -108,7 +111,7 @@ class VM2M0711(nn.Module):
     #     x = x.reshape(b * n_f, n_i, h, w)
     #     return x
     
-    def predict_inc(self, embedding, inc_kernels):
+    def predict_inc(self, embedding, inc_kernels, coarse_masks):
         '''
         embedding: b x n_f, c, h/32, w/32
         inc_kernels: b, n_f n_i, d
@@ -137,6 +140,13 @@ class VM2M0711(nn.Module):
             x = F.conv2d(x, weight=weight, bias=bias, stride=1, padding=0, groups=b * n_f)
             if i < n_layers - 1:
                 x = F.relu(x)
+
+        # Smooth with a large conv kernel
+        x = x.reshape(b * n_f * n_i, 1, h, w)
+        masks = coarse_masks.reshape(b * n_f * n_i, 1, h, w)
+        x = torch.cat([x.sigmoid(), masks], dim=1)
+        x = self.inc_smooth(x)
+
         x = x.reshape(b * n_f, n_i, h, w)
         return x
 
@@ -151,6 +161,23 @@ class VM2M0711(nn.Module):
         alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
 
         return alpha_pred, weight_os4, weight_os1
+
+    def gen_unknown_region(self, masks):
+        '''
+        masks: b * n_f * n_i, h, w
+        '''
+        
+        mask_cpu = masks.cpu().numpy()
+        unknown_masks = []
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
+        for i in range(mask_cpu.shape[0]):
+            dilated = cv2.dilate(mask_cpu[i, 0], kernel)
+            eroded = cv2.erode(mask_cpu[i, 0], kernel)
+            unknown_masks.append(dilated - eroded)
+        unknown_masks = np.stack(unknown_masks, axis=0)
+        unknown_masks = torch.from_numpy(unknown_masks).to(masks.device)
+        unknown_masks = (unknown_masks > 0).float()
+        return unknown_masks
 
     def forward(self, batch):
         '''
@@ -191,7 +218,7 @@ class VM2M0711(nn.Module):
         
 
         # Predict inc_mask
-        inc_pred = self.predict_inc(embedding, inc_kernels) # b*n_f, n_i, h/8, w/8
+        inc_pred = self.predict_inc(embedding, inc_kernels, masks) # b*n_f, n_i, h/8, w/8
         
         # Use gt inc_mask if training
         if self.training:
@@ -199,6 +226,11 @@ class VM2M0711(nn.Module):
             inc_mask = inc_mask.reshape(*inc_pred.shape)
         else:
             inc_mask = (inc_pred.sigmoid() > 0.5).float()
+
+            # Get input mask dilation + erosion
+            unk_mask = self.gen_unknown_region(masks.reshape(b * n_f * n_i, 1, h//8, w//8))
+            unk_mask = unk_mask.reshape(*inc_mask.shape)
+            inc_mask = ((inc_mask + unk_mask) > 0.5).float()
 
         if inc_mask.sum() > 0:
             dec_kernels = dec_kernels.reshape(b * n_f, n_i, -1)
@@ -220,6 +252,7 @@ class VM2M0711(nn.Module):
         output['refined_masks'] = alpha_pred
 
         output['trans_preds'] = [inc_pred.view(b, n_f, n_i, h//8, w//8)]
+        output['inc_bin_maps'] = [inc_mask.view(b, n_f, n_i, h//8, w//8)]
 
         if self.training:
             iter = batch['iter']
