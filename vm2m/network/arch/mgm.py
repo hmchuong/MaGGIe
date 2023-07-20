@@ -6,9 +6,9 @@ import random
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from .module.aspp import ASPP
-from .backbone import *
-from .loss import LapLoss, loss_comp
+from vm2m.network.module.aspp import ASPP
+from vm2m.network.decoder import *
+from vm2m.network.loss import LapLoss, loss_comp
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
@@ -37,7 +37,7 @@ def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
     return weight
 
 class MGM(nn.Module):
-    def __init__(self, backbone, cfg):
+    def __init__(self, backbone, decoder, cfg):
         super(MGM, self).__init__()
         self.backbone = backbone
         self.cfg = cfg
@@ -45,7 +45,7 @@ class MGM(nn.Module):
         self.encoder = backbone
 
         self.aspp = ASPP(in_channel=512, out_channel=512)
-        self.decoder = eval(cfg.mgm.decoder)()
+        self.decoder = decoder
 
         # Some weights for loss
         self.loss_alpha_w = cfg.loss_alpha_w

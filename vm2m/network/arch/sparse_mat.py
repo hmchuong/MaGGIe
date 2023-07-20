@@ -6,9 +6,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .module.shm import SHM
+from vm2m.network.module.shm import SHM
+from vm2m.network.loss import LapLoss, loss_comp
 from .mgm import MGM
-from .loss import LapLoss, loss_comp
+
 
 def _upsample_like(src,tar,mode='bilinear'):
     src = F.interpolate(src,size=tar.shape[-2:],mode=mode,align_corners=False if mode=='bilinear' else None)
@@ -42,7 +43,7 @@ def batch_slice(tensor, pos, size, mode='bilinear'):
     return torch.cat(patchs, dim=0)
 
 class SparseMat(nn.Module):
-    def __init__(self, backbone, cfg):
+    def __init__(self, backbone, decoder, cfg):
         super(SparseMat, self).__init__()
         self.cfg = cfg
         self.mgm = MGM(backbone, cfg)

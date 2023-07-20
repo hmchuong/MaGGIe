@@ -1,2 +1,2 @@
 from .resnet_enc import res_encoder_29, res_shortcut_encoder_29
-from .resnet_dec import res_shortcut_decoder_22, res_shortcut_decoder_fam_22
+from .sparse_resnet_bn import l_sparse_resnet18, l_sparse_resnet50

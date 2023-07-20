@@ -3,11 +3,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from .mgm import MGM
-from .loss import loss_dtSSD
+from vm2m.network.loss import loss_dtSSD
 
 class TCVOM(MGM):
-    def __init__(self, backbone, cfg):
-        super(TCVOM, self).__init__(backbone, cfg)
+    def __init__(self, backbone, decoder, cfg):
+        super(TCVOM, self).__init__(backbone, decoder, cfg)
         self.eval()
         self.dilate_op = nn.MaxPool2d(15, stride=1, padding=15//2)
         self.loss_dtSSD_w = cfg.loss_dtSSD_w

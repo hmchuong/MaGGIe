@@ -10,24 +10,17 @@ import torch.nn as nn
 from torch.nn import functional as F
 from kornia.losses import binary_focal_loss_with_logits
 import spconv.pytorch as spconv
+from vm2m.network.loss import GradientLoss, LapLoss, RMSELoss, loss_dtSSD, loss_comp
+from vm2m.network.module.aspp import ASPP
 
-from .module.fpn import FPN
-from .module.mask_attention import MaskAttentionDynamicKernel
-from .module.position_encoding import TemporalPositionEmbeddingSine
-from .module.pixel_encoder import TransformerEncoder, TransformerEncoderLayer
-from .loss import GradientLoss, LapLoss, RMSELoss, loss_dtSSD, loss_comp
-
-from .vm2m_1 import VM2M
-from .module.aspp import ASPP
-from .module.prsmha_dec import ProgressiveSMHADec
-from .module.dcn_idk import DCInstDynKernelGenerator
-from .module.temporal_attention import KernelTemporalAttention
+from vm2m.network.module.dcn_idk import DCInstDynKernelGenerator
+from vm2m.network.module.temporal_attention import KernelTemporalAttention
 from vm2m.utils import resizeAnyShape
 
 from .mgm import get_unknown_tensor_from_pred
 
 class VM2M0711(nn.Module):
-    def __init__(self, backbone, cfg):
+    def __init__(self, backbone, decoder, cfg):
         super().__init__()
         
         # Backbone module
@@ -54,7 +47,7 @@ class VM2M0711(nn.Module):
 
         self.inc_attention = KernelTemporalAttention(cfg.dynamic_kernel.out_incoherence)
         self.dec_attention = KernelTemporalAttention(cfg.dynamic_kernel.out_pixeldecoder)
-        self.decoder = ProgressiveSMHADec(cfg.aspp.out_channels, cfg.shortcut_dims)
+        self.decoder = decoder
 
         # Losses
         self.gradient_loss = GradientLoss()

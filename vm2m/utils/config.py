@@ -36,8 +36,8 @@ scheduler.warmup_iters = 1000
 CONFIG.train.scheduler = scheduler
 
 CONFIG.wandb = CN({})
-CONFIG.wandb.project = 'vm2m'
-CONFIG.wandb.entity = 'chuongh'
+CONFIG.wandb.project = 'video-maskg-matting'
+CONFIG.wandb.entity = 'research-dmo'
 CONFIG.wandb.use = True
 CONFIG.wandb.id = ''
 
@@ -56,14 +56,19 @@ CONFIG.test.log_iter = 50
 CONFIG.model = CN({})
 CONFIG.model.weights = ''
 CONFIG.model.arch = 'VM2M'
+
+# Backbone aka encoder
 CONFIG.model.backbone = 'res_encoder_29' # resnet34
 CONFIG.model.backbone_args = CN({})
 CONFIG.model.backbone_args.pretrained = True
 CONFIG.model.backbone_args.num_mask = 1
 
+# Decoder
+CONFIG.model.decoder = ''
+CONFIG.model.decoder_args = CN({}, new_allowed=True)
+
 # For MGM
 CONFIG.model.mgm = CN({})
-CONFIG.model.mgm.decoder = 'res_shortcut_decoder_22'
 CONFIG.model.mgm.warmup_iter = 5000
 
 # For SHM

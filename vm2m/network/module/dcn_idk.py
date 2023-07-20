@@ -16,8 +16,16 @@ class DCInstDynKernelGenerator(nn.Module):
             nn.Linear(in_dcn, in_dcn),
             nn.ReLU()
         )   
-        self.inc_layer = nn.Linear(in_dcn, n_inc_params, bias=False)
+        if n_inc_params > 0:
+            self.inc_layer = nn.Linear(in_dcn, n_inc_params, bias=False)
+        else:
+            self.inc_layer = None
+
         self.pix_layer = nn.Linear(in_dcn, n_pix_params, bias=False)
+
+        for p in self.parameters():
+            if p.dim() > 1:
+                nn.init.xavier_uniform_(p)
 
     def forward(self, x, masks):
         '''
@@ -40,10 +48,13 @@ class DCInstDynKernelGenerator(nn.Module):
         
         x = self.smooth(x) # (b x n_f x n_i x in_dcn)
 
-        inc_kernels = self.inc_layer(x) # (b x n_f x n_i x n_inc_params)
         pix_kernels = self.pix_layer(x) # (b x n_f x n_i x n_pix_params)
 
-        return inc_kernels, pix_kernels
+        if self.inc_layer is not None:
+            inc_kernels = self.inc_layer(x) # (b x n_f x n_i x n_inc_params)
+            return inc_kernels, pix_kernels
+
+        return pix_kernels
 
 
         

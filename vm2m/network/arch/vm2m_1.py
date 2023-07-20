@@ -9,11 +9,9 @@ from torch.nn import functional as F
 from kornia.losses import binary_focal_loss_with_logits
 import spconv.pytorch as spconv
 
-from .module.fpn import FPN
-from .module.mask_attention import MaskAttentionDynamicKernel
-from .module.position_encoding import TemporalPositionEmbeddingSine
-from .module.pixel_encoder import TransformerEncoder, TransformerEncoderLayer
-from .loss import GradientLoss, LapLoss, RMSELoss, loss_dtSSD, loss_comp
+from vm2m.network.module.fpn import FPN
+from vm2m.network.module.mask_attention import MaskAttentionDynamicKernel
+from vm2m.network.loss import GradientLoss, LapLoss, RMSELoss, loss_dtSSD, loss_comp
 
 def conv1x1bnrelu(in_channels, out_channels):
     return nn.Sequential(
@@ -23,7 +21,7 @@ def conv1x1bnrelu(in_channels, out_channels):
     )
 
 class VM2M(nn.Module):
-    def __init__(self, backbone, cfg):
+    def __init__(self, backbone, decoder, cfg):
         super().__init__()
         
         # Backbone module

@@ -1,27 +1,31 @@
-name: 'mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4'
+name: 'mgmdk_hhm_short-768-512x512_bs32_50k_adamw_2e-4'
 output_dir: 'output/HHM'
 train:
   batch_size: 32
-  num_workers: 4
+  num_workers: 10
   max_iter: 50000
   optimizer:
     lr: 0.0002
     name: adamw
-  val_metrics: ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'MSE']
+  val_metrics: ['MAD', 'MSE', 'SAD']
   val_best_metric: 'MAD'
   val_iter: 1000
   vis_iter: 200
   log_iter: 50
-  seed: 1105
 test:
   num_workers: 4
   metrics: ['MAD', 'MSE', 'SAD', 'Conn', 'Grad']
 model:
-  arch: 'MGM'
+  arch: 'MGM_DK'
   backbone: 'res_shortcut_encoder_29'
-  decoder: 'res_shortcut_decoder_22'
+  backbone_args:
+    num_mask: 0
+  dynamic_kernel:
+    out_incoherence: 0
+    out_pixeldecoder: 864
   mgm:
     warmup_iter: 5000
+    decoder: 'res_shortcut_dk_decoder_22'
   loss_dtSSD_w: 0.0
   loss_comp_w: 0.0
 dataset:

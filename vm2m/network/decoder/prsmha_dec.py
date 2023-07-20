@@ -4,9 +4,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import spconv.pytorch as spconv
 from spconv.pytorch import functional as Fsp
-from vm2m.network.ops import SpectralNorm
 from timm.models.layers import trunc_normal_
-from .position_encoding import TemporalPositionEmbeddingSine
 
 # Temporal attention: Normal cross attention
 
@@ -263,7 +261,7 @@ class UpsamplingNearest2d(spconv.SparseModule):
 
 
 class ProgressiveSMHADec(nn.Module):
-    def __init__(self, emb_dim, shc_dims):
+    def __init__(self, **kwargs):
         super(ProgressiveSMHADec, self).__init__()
         block = BasicBlock
         layers = [2, 3, 3, 2]
@@ -547,3 +545,5 @@ class ProgressiveSMHADec(nn.Module):
 #         import pdb; pdb.set_trace()
 
 
+def progressive_sparse_matting_dec(**kwargs):
+    return ProgressiveSMHADec(**kwargs)

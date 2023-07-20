@@ -1,11 +1,14 @@
-from .vm2m_1 import VM2M
-from .mgm import MGM
-from .sparse_mat import SparseMat
-from .tcvom import TCVOM
+from .arch import *
 from .backbone import *
-from .vm2m_0711 import VM2M0711
+from .decoder import *
 
 def build_model(cfg):
     backbone = eval(cfg.backbone)(**cfg.backbone_args)
-    model = eval(cfg.arch)(backbone, cfg)
+    
+    if cfg.decoder == '':
+        decoder = None
+    else:
+        decoder = eval(cfg.decoder)(**cfg.decoder_args)
+    
+    model = eval(cfg.arch)(backbone, decoder, cfg)
     return model

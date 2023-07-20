@@ -1,10 +1,11 @@
 import torch.nn as nn
-from   vm2m.network.ops import SpectralNorm
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from .resnet_enc import conv1x1, conv3x3
+from   vm2m.network.ops import SpectralNorm
 from vm2m.network.module.fam import FeatureAggregationModule
+from vm2m.network.module.base import conv1x1, conv3x3
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -167,7 +168,7 @@ class ResShortCut_D_Dec(ResNet_D_Dec):
         super(ResShortCut_D_Dec, self).__init__(block, layers, norm_layer, large_kernel,
                                                 late_downsample=late_downsample)
 
-    def forward(self, x, mid_fea, kv_masked=True, return_ctx=False):
+    def forward(self, x, mid_fea, return_ctx=False):
         ret = {}
         fea1, fea2, fea3, fea4, fea5 = mid_fea['shortcut']
         x = self.layer1(x) + fea5
