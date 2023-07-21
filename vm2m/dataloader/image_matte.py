@@ -65,7 +65,7 @@ class ImageMatteDataset(Dataset):
         mask = mask * 1.0 / 255
 
         if mask.sum() == 0:
-            logging.error("Get another sample, alphas are incorrect: {}".format(alpha_path))
+            # logging.error("Get another sample, alphas are incorrect: {}".format(alpha_path))
             return self.__getitem__(self.random.randint(0, len(self.data)))
 
         out =  {'image': image, 'mask': mask.float(), 'alpha': alpha.float()}

@@ -53,7 +53,7 @@ class MGM_DK(MGM):
         # Generate dynamic kernels
         dec_kernels = self.ik_generator(embedding, masks)
         dec_kernels = dec_kernels.reshape(b * n_f, n_i, -1)
-        pred = self.decoder(embedding, mid_fea, dec_kernels)
+        pred = self.decoder(embedding, mid_fea, dec_kernels, n_f=n_f)
         
         # Fushion
         alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
@@ -70,10 +70,11 @@ class MGM_DK(MGM):
         output['refined_masks'] = alpha_pred
 
         if self.training:
+            alphas_shape = alphas.shape
             alphas = alphas.view(-1, 1, h, w)
             trans_gt = trans_gt.view(-1, 1, h, w)
             iter = batch['iter']
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter)
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, alphas_shape)
             return output, loss_dict
 
         return output

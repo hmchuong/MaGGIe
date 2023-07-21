@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from vm2m.network.module.aspp import ASPP
 from vm2m.network.decoder import *
-from vm2m.network.loss import LapLoss, loss_comp
+from vm2m.network.loss import LapLoss, loss_comp, loss_dtSSD
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
@@ -51,7 +51,16 @@ class MGM(nn.Module):
         self.loss_alpha_w = cfg.loss_alpha_w
         self.loss_comp_w = cfg.loss_comp_w
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
+        self.loss_dtSSD_w = cfg.loss_dtSSD_w
         self.lap_loss = LapLoss()
+
+        need_init_weights = [self.aspp, self.decoder]
+
+        # Init weights
+        for module in need_init_weights:
+            for p in module.parameters():
+                if p.dim() > 1:
+                    nn.init.xavier_uniform_(p)
     
     def fushion(self, pred):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
@@ -102,7 +111,7 @@ class MGM(nn.Module):
        
         embedding, mid_fea = self.encoder(inp)
         embedding = self.aspp(embedding)
-        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx)
+        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, n_f=n_f)
         
         # Fushion
         logging.debug("Doing fusion")
@@ -127,7 +136,7 @@ class MGM(nn.Module):
             trans_gt = trans_gt.view(-1, 1, h, w)
             iter = batch['iter']
             logging.debug("Computing loss")
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter)
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, (b, n_f, 1, h, w))
             logging.debug("Loss computed")
             return output, loss_dict
 
@@ -158,7 +167,7 @@ class MGM(nn.Module):
             else:
                 raise NotImplementedError("NotImplemented loss type {}".format(loss_type))
        
-    def compute_loss(self, pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter):
+    def compute_loss(self, pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, alpha_shape):
         '''
         pred: dict of output from forward
         batch: dict of input batch
@@ -214,6 +223,22 @@ class MGM(nn.Module):
             loss_dict['loss_lap'] = lap_loss
             total_loss += lap_loss * self.loss_alpha_lap_w
         
+        if self.loss_dtSSD_w > 0:
+            alpha_pred_os8 = alpha_pred_os8.reshape(*alpha_shape)
+            alpha_pred_os4 = alpha_pred_os4.reshape(*alpha_shape)
+            alpha_pred_os1 = alpha_pred_os1.reshape(*alpha_shape)
+            alphas = alphas.reshape(*alpha_shape)
+            trans_gt = trans_gt.reshape(*alpha_shape)
+            dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, trans_gt)
+            dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, trans_gt)
+            dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, trans_gt)
+            dtSSD_loss = (dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1) / 5.0
+            loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
+            loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
+            loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8
+            loss_dict['loss_dtSSD'] = dtSSD_loss
+            total_loss += dtSSD_loss * self.loss_dtSSD_w
+
         loss_dict['total'] = total_loss
         return loss_dict
 

@@ -1,3 +1,5 @@
-from .resnet_dec import res_shortcut_decoder_22, res_shortcut_decoder_fam_22
+from .resnet_dec import res_shortcut_decoder_22
+from .resnet_fam import res_shortcut_decoder_fam_22
 from .resnet_dk_dec import res_shortcut_dk_decoder_22
 from .prsmha_dec import progressive_sparse_matting_dec
+from .resnet_sftm import res_shortcut_sftm_22

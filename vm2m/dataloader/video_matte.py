@@ -143,7 +143,7 @@ class SingleInstComposedVidDataset(Dataset):
         masks = masks * 1.0 / 255
 
         if masks.sum() == 0 and self.is_train:
-            logging.error("Get another sample, alphas are incorrect: {} - {}".format(alpha_paths[0], alpha_paths[-1]))
+            # logging.error("Get another sample, alphas are incorrect: {} - {}".format(alpha_paths[0], alpha_paths[-1]))
             return self.__getitem__(self.random.randint(0, len(self.frame_ids)))
         
         out =  {'image':frames, 'mask': masks.float(), 'alpha': alphas.float()}
