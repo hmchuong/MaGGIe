@@ -98,8 +98,11 @@ class MGM(nn.Module):
             masks = F.interpolate(masks, size=(h, w), mode="nearest")
         else:
             masks = masks.view(-1, 1, h, w)
-            
-        inp = torch.cat([x, masks], dim=1)
+        
+        if self.cfg.backbone_args.num_mask > 0:
+            inp = torch.cat([x, masks], dim=1)  
+        else:
+            inp = x
         if alphas is not None:
             alphas = alphas.view(-1, 1, h, w)
         if trans_gt is not None:
@@ -111,7 +114,7 @@ class MGM(nn.Module):
        
         embedding, mid_fea = self.encoder(inp)
         embedding = self.aspp(embedding)
-        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, n_f=n_f)
+        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks)
         
         # Fushion
         logging.debug("Doing fusion")

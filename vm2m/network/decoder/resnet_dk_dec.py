@@ -181,7 +181,7 @@ class ResShortCut_DK_D_Dec(nn.Module):
         x = x.reshape(b, -1, h, w)
         return x
     
-    def forward(self, x, mid_fea, dec_kernels):
+    def forward(self, x, mid_fea, dec_kernels, **kwargs):
         ret = {}
         fea1, fea2, fea3, fea4, fea5 = mid_fea['shortcut']
         # Break the kernels into 3 parts

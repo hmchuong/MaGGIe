@@ -51,6 +51,7 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = self.min_lr
             self.base_lrs.append(self.min_lr)
+        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
     
     def get_lr(self):
         if self.step_in_cycle == -1:
@@ -89,21 +90,24 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
         self.last_epoch = math.floor(epoch)
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
             param_group['lr'] = lr
+        self._last_lr = [group['lr'] for group in self.optimizer.param_groups]
 
-def gradient_clipping(optim):
-    # detectron2 doesn't have full model gradient clipping now
-    clip_norm_val = 0.01
-    enable = True
 
-    class FullModelGradientClippingOptimizer(optim):
-        def step(self, closure=None):
-            all_params = itertools.chain(*[x["params"] for x in self.param_groups])
-            torch.nn.utils.clip_grad_norm_(all_params, clip_norm_val)
-            super().step(closure=closure)
-
-    return FullModelGradientClippingOptimizer if enable else optim
 
 def build_optim_lr_scheduler(cfg, model):
+    def gradient_clipping(optim):
+        # detectron2 doesn't have full model gradient clipping now
+        clip_norm_val = 0.01
+        enable = False
+
+        class FullModelGradientClippingOptimizer(optim):
+            def step(self, closure=None):
+                all_params = itertools.chain(*[x["params"] for x in self.param_groups])
+                torch.nn.utils.clip_grad_norm_(all_params, clip_norm_val)
+                super().step(closure=closure)
+
+        return FullModelGradientClippingOptimizer if enable else optim
+
     # Define optimizer
     optim_config = cfg.train.optimizer
     if optim_config.name == 'sgd':
@@ -122,7 +126,13 @@ def build_optim_lr_scheduler(cfg, model):
     elif scheduler_config.name == 'step':
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_config.step_size, gamma=scheduler_config.gamma)
     elif scheduler_config.name == 'cosine':
-        scheduler = CosineAnnealingWarmupRestarts(optimizer, warmup_steps= scheduler_config.warmup_iters, max_lr=optim_config.lr, first_cycle_steps=cfg.train.max_iter, cycle_mult=1.0)
+        # scheduler = CosineAnnealingWarmupRestarts(optimizer, warmup_steps= scheduler_config.warmup_iters, 
+        #                                           max_lr=optim_config.lr, min_lr=optim_config.lr * scheduler_config.gamma, 
+        #                                           first_cycle_steps=cfg.train.max_iter, cycle_mult=1.0)
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=scheduler_config.warmup_iters,
+        #                                                                 T_mult=1, eta_min=optim_config.lr * scheduler_config.gamma)
+        pct_start = scheduler_config.warmup_iters * 1.0 / cfg.train.max_iter
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=optim_config.lr, total_steps=cfg.train.max_iter, pct_start=pct_start, anneal_strategy='cos', cycle_momentum=False)
     else:
         raise NotImplementedError
 

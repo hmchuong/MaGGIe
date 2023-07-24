@@ -31,7 +31,7 @@ scheduler = CN({})
 scheduler.name = 'poly' # step, cosine
 scheduler.power = 0.9 # for poly
 scheduler.step_size = 10000 # for step
-scheduler.gamma = 0.1 # for step
+scheduler.gamma = 0.1 # for step or warmup
 scheduler.warmup_iters = 1000
 CONFIG.train.scheduler = scheduler
 

@@ -46,7 +46,7 @@ class SparseMat(nn.Module):
     def __init__(self, backbone, decoder, cfg):
         super(SparseMat, self).__init__()
         self.cfg = cfg
-        self.mgm = MGM(backbone, cfg)
+        self.mgm = MGM(backbone, decoder, cfg)
         self.shm = SHM(inc=4)
         self.lr_scale = cfg.shm.lr_scale
         self.stride = cfg.shm.dilation_kernel

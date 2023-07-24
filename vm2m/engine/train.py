@@ -1,5 +1,6 @@
 
 import os
+import itertools
 import random
 import time
 import torch
@@ -215,7 +216,13 @@ def train(cfg, rank, is_dist=False):
                 log_metrics[k].update(v.item())
 
             logging.debug("Optimizing")
+            
+            # Clip norm
+            all_params = itertools.chain(*[x["params"] for x in optimizer.param_groups])
+            torch.nn.utils.clip_grad_norm_(all_params, 0.01)
+            
             optimizer.step()
+
             logging.debug("Updating lr scheduler")
             lr_scheduler.step()
             logging.debug("Done batch")

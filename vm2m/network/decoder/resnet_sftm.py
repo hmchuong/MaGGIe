@@ -39,7 +39,7 @@ class ResShortCut_SFTM(ResShortCut_D_Dec):
         new_feats = torch.stack(new_feats, dim=1)
         return new_feats.reshape(x_shape)
 
-    def forward(self, x, mid_fea, return_ctx, n_f=8):
+    def forward(self, x, mid_fea, return_ctx, n_f=8, **kwargs):
         ret = {}
         fea1, fea2, fea3, fea4, fea5 = mid_fea['shortcut']
 

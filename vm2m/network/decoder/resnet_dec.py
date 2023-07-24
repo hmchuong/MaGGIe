@@ -168,7 +168,7 @@ class ResShortCut_D_Dec(ResNet_D_Dec):
         super(ResShortCut_D_Dec, self).__init__(block, layers, norm_layer, large_kernel,
                                                 late_downsample=late_downsample)
 
-    def forward(self, x, mid_fea, return_ctx=False, n_f=None):
+    def forward(self, x, mid_fea, return_ctx=False, **kwargs):
         ret = {}
         fea1, fea2, fea3, fea4, fea5 = mid_fea['shortcut']
         x = self.layer1(x) + fea5
