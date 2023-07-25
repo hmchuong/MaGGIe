@@ -1,5 +1,7 @@
 from .video_matte import SingleInstComposedVidDataset
 from .image_matte import ImageMatteDataset
+from .him import HIMDataset
+from .inst_image_matte import ComposedInstImageMatteDataset
 
 def build_dataset(cfg, is_train=True, random_seed=0):
     if cfg.name in ["VideoMatte240K", "polarized_matting"]:
@@ -14,6 +16,11 @@ def build_dataset(cfg, is_train=True, random_seed=0):
             dataset = ImageMatteDataset(root_dir=cfg.root_dir, split=cfg.split, short_size=cfg.short_size, crop=cfg.crop, flip_p=cfg.flip_prob, is_train=is_train, random_seed=random_seed)
         else:
             dataset = ImageMatteDataset(root_dir=cfg.root_dir, split=cfg.split, short_size=cfg.short_size, is_train=is_train)
+    elif cfg.name in ["HIM"]:
+        if is_train:
+            dataset = ComposedInstImageMatteDataset(root_dir=cfg.root_dir, split=cfg.split, bg_dir=cfg.bg_dir, max_inst=cfg.max_inst,  short_size=cfg.short_size, crop=cfg.crop, random_seed=random_seed)
+        else:
+            dataset = HIMDataset(root_dir=cfg.root_dir, split=cfg.split, short_size=cfg.short_size)
     else:
         raise NotImplementedError
     return dataset

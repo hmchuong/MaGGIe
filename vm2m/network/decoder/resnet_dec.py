@@ -48,7 +48,7 @@ class BasicBlock(nn.Module):
 
 class ResNet_D_Dec(nn.Module):
 
-    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False):
+    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False, max_obj=1):
         super(ResNet_D_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -71,7 +71,6 @@ class ResNet_D_Dec(nn.Module):
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
         self.layer4 = self._make_layer(block, self.midplanes, layers[3], stride=2)
 
-        max_obj = 1
         ## 1 scale
         self.refine_OS1 = nn.Sequential(
             nn.Conv2d(32, 32, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
@@ -164,9 +163,9 @@ class ResNet_D_Dec(nn.Module):
 
 class ResShortCut_D_Dec(ResNet_D_Dec):
 
-    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False):
+    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False, max_inst=1):
         super(ResShortCut_D_Dec, self).__init__(block, layers, norm_layer, large_kernel,
-                                                late_downsample=late_downsample)
+                                                late_downsample=late_downsample, max_obj=max_inst)
 
     def forward(self, x, mid_fea, return_ctx=False, **kwargs):
         ret = {}

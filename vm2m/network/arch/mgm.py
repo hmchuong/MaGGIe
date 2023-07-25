@@ -43,6 +43,7 @@ class MGM(nn.Module):
         self.cfg = cfg
 
         self.encoder = backbone
+        self.num_masks = cfg.backbone_args.num_mask
 
         self.aspp = ASPP(in_channel=512, out_channel=512)
         self.decoder = decoder
@@ -94,19 +95,22 @@ class MGM(nn.Module):
 
         x = x.view(-1, 3, h, w)
         if masks.shape[-1] != w:
-            masks = masks.view(-1, 1, h//8, w//8)
+            masks = masks.view(-1, n_i, h//8, w//8)
             masks = F.interpolate(masks, size=(h, w), mode="nearest")
         else:
-            masks = masks.view(-1, 1, h, w)
+            masks = masks.view(-1, n_i, h, w)
         
-        if self.cfg.backbone_args.num_mask > 0:
+        if self.num_masks > 0:
             inp = torch.cat([x, masks], dim=1)  
+            if self.num_masks - n_i > 0:
+                padding = torch.zeros((b*n_f, self.num_masks - n_i, h, w), device=x.device)
+                inp = torch.cat([inp, padding], dim=1)
         else:
             inp = x
         if alphas is not None:
-            alphas = alphas.view(-1, 1, h, w)
+            alphas = alphas.view(-1, n_i, h, w)
         if trans_gt is not None:
-            trans_gt = trans_gt.view(-1, 1, h, w)
+            trans_gt = trans_gt.view(-1, n_i, h, w)
         if fg is not None:
             fg = fg.view(-1, 3, h, w)
         if bg is not None:
@@ -117,30 +121,25 @@ class MGM(nn.Module):
         pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks)
         
         # Fushion
-        logging.debug("Doing fusion")
         alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
-        logging.debug("Fusion done")
 
         
         output = {}
-        
-        output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, n_i, h, w)
-        output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, n_i, h, w)
-        output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, n_i, h, w)
+        output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, self.num_masks, h, w)
+        output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
+        output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, self.num_masks, h, w)
         if 'ctx' in pred:
             output['ctx'] = pred['ctx']
 
         # Reshape the output
-        alpha_pred = alpha_pred.view(b, n_f, n_i, h, w)
+        alpha_pred = alpha_pred.view(b, n_f, self.num_masks, h, w)
         output['refined_masks'] = alpha_pred
 
         if self.training:
-            alphas = alphas.view(-1, 1, h, w)
-            trans_gt = trans_gt.view(-1, 1, h, w)
+            alphas = alphas.view(-1, n_i, h, w)
+            trans_gt = trans_gt.view(-1, n_i, h, w)
             iter = batch['iter']
-            logging.debug("Computing loss")
             loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, (b, n_f, 1, h, w))
-            logging.debug("Loss computed")
             return output, loss_dict
 
         return output
@@ -189,6 +188,13 @@ class MGM(nn.Module):
         loss_dict = {}
         weight_os8 = torch.ones_like(weight_os1)
 
+        # Add padding to alphas and trans_gt
+        n_i = alphas.shape[1]
+        if self.num_masks - n_i > 0:
+            padding = torch.zeros((alphas.shape[0], self.num_masks - n_i, *alphas.shape[-2:]), device=alphas.device)
+            alphas = torch.cat([alphas, padding], dim=1)
+            trans_gt = torch.cat([trans_gt, padding], dim=1)
+
         # Reg loss
         total_loss = 0
         if self.loss_alpha_w > 0:
@@ -216,9 +222,10 @@ class MGM(nn.Module):
 
         # Lap loss
         if self.loss_alpha_lap_w > 0:
-            lap_loss_os1 = self.lap_loss(alpha_pred_os1, alphas, weight_os1)
-            lap_loss_os4 = self.lap_loss(alpha_pred_os4, alphas, weight_os4)
-            lap_loss_os8 = self.lap_loss(alpha_pred_os8, alphas, weight_os8)
+            h, w = alpha_pred_os1.shape[-2:]
+            lap_loss_os1 = self.lap_loss(alpha_pred_os1.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os1.view(-1, 1, h, w))
+            lap_loss_os4 = self.lap_loss(alpha_pred_os4.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os4.view(-1, 1, h, w))
+            lap_loss_os8 = self.lap_loss(alpha_pred_os8.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os8.view(-1, 1, h, w))
             lap_loss = (lap_loss_os1 * 2 + lap_loss_os4 * 1 + lap_loss_os8 * 1) / 5.0
             loss_dict['loss_lap_os1'] = lap_loss_os1
             loss_dict['loss_lap_os4'] = lap_loss_os4

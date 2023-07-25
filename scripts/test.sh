@@ -277,7 +277,6 @@ python -m tools.main --gpus 1 --config configs/polarized_matting/mgm_sftm.yaml -
                                                 test.save_results True \
                                                 test.postprocessing False \
                                                 test.log_iter 1 \
-                                                test.num_workers 1 \
                                                 test.save_dir output/polarized_matting/mgm_sftm/vis_test
 
 python -m tools.main --gpus 1 --config configs/polarized_matting/mgm_sftm.yaml --eval-only \
@@ -288,8 +287,17 @@ python -m tools.main --gpus 1 --config configs/polarized_matting/mgm_sftm.yaml -
                                                 test.save_results True \
                                                 test.postprocessing False \
                                                 test.log_iter 1 \
-                                                test.num_workers 1 \
                                                 test.save_dir output/polarized_matting/mgm_sftm_threshmask/vis_test
+
+python -m tools.main --dist --gpus 4 --config configs/polarized_matting/mgm_atten-dec.yaml --eval-only \
+                                                name mgm_atten-dec_threshmask \
+                                                model.weights output/HHM/mgm_atten-dec_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4/best_model.pth \
+                                                dataset.test.split test \
+                                                dataset.test.use_thresh_mask True \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.log_iter 1 \
+                                                test.save_dir output/polarized_matting/mgm_atten-dec_threshmask/vis_test
 
 # Test HHM
 python -m tools.main --dist --gpus 4 --config configs/HHM/mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4.yaml --eval-only \

@@ -218,8 +218,10 @@ def res_shortcut_encoder_29(**kwargs):
     state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
     state_dict = {k[7:]: v for k, v in state_dict.items()}
     if kwargs['num_mask'] > 0:
-        state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
-        state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
+        del state_dict['conv1.module.weight_bar']
+        del state_dict['conv1.module.weight_v']
+        # state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
+        # state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
     model.load_state_dict(state_dict, strict=False)
     return model
 

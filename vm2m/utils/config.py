@@ -132,6 +132,7 @@ dataset.train.short_size = 768
 dataset.train.random_state = 2023
 dataset.train.crop = [512, 512] # (h, w)
 dataset.train.flip_prob = 0.5
+dataset.train.max_inst = 3
 
 # For video augmentation
 dataset.train.max_step_size = 2
