@@ -3,6 +3,7 @@ model:
   arch: 'MGM'
   weights: 'output/HHM/mgm_hmm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth'
   backbone: 'res_shortcut_encoder_29'
+  decoder: 'res_shortcut_decoder_22'
   mgm:
     warmup_iter: 0
   loss_dtSSD_w: 0.0

@@ -6,7 +6,7 @@ from .position_encoding import TemporalPositionEmbeddingSine
 from .mask_attention import MLP, SelfAttentionLayer, CrossAttentionLayer, FFNLayer
 
 class MaskMatteAttenHead(nn.Module):
-    def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_heads=4, output_dim=32, return_feat=True):
+    def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_heads=4, output_dim=32, return_feat=True, static_queries=0):
         super().__init__()
 
         self.n_block = n_block
@@ -65,6 +65,13 @@ class MaskMatteAttenHead(nn.Module):
             normalize_before=False
         )
         self.final_mlp = MLP(attention_dim, attention_dim, output_dim, 1)
+        self.decoder_norm = nn.LayerNorm(attention_dim)
+
+        self.static_queries = static_queries
+        if static_queries > 0:
+            self.static_query_feat = nn.Embedding(static_queries, attention_dim)
+            self.static_query_embed = nn.Embedding(static_queries, attention_dim)
+            self.static_query_conv = nn.Conv2d(static_queries, 1, kernel_size=3, stride=1, padding=1, bias=True)
 
         # Convolutions to smooth features
         self.conv = nn.Sequential(
@@ -113,6 +120,20 @@ class MaskMatteAttenHead(nn.Module):
 
         tokens = (feat * mask).sum(dim=-1) / (mask.sum(dim=-1) + 1e-6) # (b, n_f, n_i, c)
         token_pos = (feat_pos * mask).sum(dim=-1) / (mask.sum(dim=-1) + 1e-6) # (b, n_f, n_i, c_atten)
+
+        # Update with static queries
+        if self.static_queries > 0:
+            # (static_queries, c_atten) --> (b, n_f, n_i * static_queries, c_atten)
+            static_tokens = self.static_query_feat.weight[None, None].repeat(b, n_f, n_i, 1)
+            tokens = tokens.repeat(1, 1, self.static_queries, 1)
+            tokens = tokens + static_tokens
+
+            # Same for token_pos
+            static_token_pos = self.static_query_embed.weight[None, None].repeat(b, n_f, n_i, 1)
+            token_pos = token_pos.repeat(1, 1, self.static_queries, 1)
+            token_pos = token_pos + static_token_pos
+        
+        # n_i = static_queries * n_i  if static_queries > 0 else n_i
 
         # Reshape feat to h * w, n_f * b, c
         feat = feat.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c)
@@ -178,6 +199,7 @@ class MaskMatteAttenHead(nn.Module):
         tokens = tokens.reshape(n_i, n_f, b, -1)
         tokens = tokens.permute(2, 1, 0, 3) # (b, n_f, n_i, c_out)
         tokens = tokens.reshape(b * n_f, n_i, -1) # (b * n_f, n_i, c_out)
+        tokens = self.decoder_norm(tokens)
 
         # Smooth feature with 2 Convs
         feat = feat.reshape(h, w, n_f, b, -1)
@@ -196,6 +218,13 @@ class MaskMatteAttenHead(nn.Module):
         
         # Dot product feat with kernel to have matte
         output_mask = torch.einsum('bqc,bchw->bqhw', tokens, feat) # (b * n_f, n_i, h, w)
+
+        if self.static_queries > 0:
+            output_mask = output_mask.reshape(-1, self.static_queries, n_i, h, w)
+            output_mask = output_mask.permute(0, 2, 1, 3, 4)
+            output_mask = output_mask.reshape(-1, self.static_queries, h, w)
+            output_mask = self.static_query_conv(output_mask)
+            output_mask = output_mask.reshape(b * n_f, -1, h, w)
         
         if self.return_feat:
             return output_mask, out_feat

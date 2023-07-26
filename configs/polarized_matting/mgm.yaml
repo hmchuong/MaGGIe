@@ -23,6 +23,7 @@ output_dir: 'output/polarized_matting'
 test:
   num_workers: 4
   batch_size: 1
+  # metrics: ['MAD']
 dataset:
   train:
     root_dir: '/mnt/localssd/polarized_matting'

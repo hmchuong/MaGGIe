@@ -39,7 +39,6 @@ def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
 class MGM(nn.Module):
     def __init__(self, backbone, decoder, cfg):
         super(MGM, self).__init__()
-        self.backbone = backbone
         self.cfg = cfg
 
         self.encoder = backbone
@@ -125,14 +124,22 @@ class MGM(nn.Module):
 
         
         output = {}
-        output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, self.num_masks, h, w)
-        output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
-        output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, self.num_masks, h, w)
+        if self.num_masks > 0:
+            output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, self.num_masks, h, w)
+            output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
+            output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, self.num_masks, h, w)
+        else:
+            output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, n_i, h, w)
+            output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, n_i, h, w)
+            output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, n_i, h, w)
         if 'ctx' in pred:
             output['ctx'] = pred['ctx']
 
         # Reshape the output
-        alpha_pred = alpha_pred.view(b, n_f, self.num_masks, h, w)
+        if self.num_masks > 0:
+            alpha_pred = alpha_pred.view(b, n_f, self.num_masks, h, w)
+        else:
+            alpha_pred = alpha_pred.view(b, n_f, n_i, h, w)
         output['refined_masks'] = alpha_pred
 
         if self.training:

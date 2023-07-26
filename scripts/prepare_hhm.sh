@@ -18,3 +18,7 @@ if [ ! -d "HHM" ]; then
     rm images.zip.*
     rm images.zip
 fi
+
+echo "Cleaning HHM..."
+cd /sensei-fs/users/chuongh/vm2m/tools
+python clean_hhm.py

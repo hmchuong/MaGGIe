@@ -142,7 +142,7 @@ def test(cfg, rank=0, is_dist=False):
     
     logging.info("Loading pretrained model from {}".format(cfg.model.weights))
     state_dict = torch.load(cfg.model.weights, map_location=device)
-    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=True)
+    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
     if len(missing_keys) > 0 or len(unexpected_keys) > 0:
         logging.warn("Missing keys: {}".format(missing_keys))
         logging.warn("Unexpected keys: {}".format(unexpected_keys))

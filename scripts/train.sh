@@ -18,3 +18,5 @@ python -m tools.main --config configs/VideoMatte240K/mgm_sftm_vid240_pre-hmm_s-7
 python -m tools.main --config configs/HIM/mgm_him_short-768-512x512_bs32_50k_adamw_2e-4.yaml --gpus 4 name debug wandb.use False train.log_iter 1 train.vis_iter 25 train.val_iter 50
 
 python -m tools.main --config configs/HIM/mgm_him_short-768-512x512_bs32_50k_adamw_2e-4.yaml --dist --gpus 4
+
+python -m tools.main --config configs/VideoMatte240K/mgm_m-1_atten-dec_vid240_pre-hmm_s-768-512x512_b6-f8_100k_adamw_1e-4.yaml --dist --gpus 4 name debug wandb.use False train.log_iter 1 train.vis_iter 25 train.val_iter 50 train.batch_size 2

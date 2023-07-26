@@ -10,7 +10,7 @@ class ResShortCut_Atten_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
                  atten_dims=[32, 64, 128], atten_blocks=[2, 2, 2], 
-                 atten_heads=[1, 2, 4], atten_strides=[2, 1, 1]):
+                 atten_heads=[1, 2, 4], atten_strides=[2, 1, 1], num_queries=[8, 8, 8]):
         super(ResShortCut_Atten_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -41,7 +41,8 @@ class ResShortCut_Atten_Dec(nn.Module):
             n_block=atten_blocks[0],
             n_heads=atten_heads[0],
             output_dim=final_channel,
-            return_feat=False
+            return_feat=False,
+            static_queries=num_queries[0]
         )
         
         ## OS4
@@ -51,7 +52,8 @@ class ResShortCut_Atten_Dec(nn.Module):
             attention_dim=atten_dims[1],
             n_block=atten_blocks[1],
             n_heads=atten_heads[1],
-            output_dim=final_channel
+            output_dim=final_channel,
+            static_queries=num_queries[1]
         )
         
         ## 1/8 scale
@@ -61,7 +63,8 @@ class ResShortCut_Atten_Dec(nn.Module):
             attention_dim=atten_dims[2],
             n_block=atten_blocks[2],
             n_heads=atten_heads[2],
-            output_dim=final_channel
+            output_dim=final_channel,
+            static_queries=num_queries[2]
         )
 
         for m in self.modules():
@@ -75,6 +78,11 @@ class ResShortCut_Atten_Dec(nn.Module):
                 nn.init.constant_(m.bias, 0)
             elif isinstance(m, BasicBlock):
                 nn.init.constant_(m.bn2.weight, 0)
+            else:
+                for p in m.parameters():
+                    if p.dim() > 1:
+                        nn.init.xavier_uniform_(p)
+
 
     def _make_layer(self, block, planes, blocks, stride=1):
         if blocks == 0:

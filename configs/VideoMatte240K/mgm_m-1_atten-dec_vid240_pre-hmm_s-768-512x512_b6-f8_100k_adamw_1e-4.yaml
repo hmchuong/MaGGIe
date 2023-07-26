@@ -1,4 +1,4 @@
-name: 'mgm_atten-dec_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4'
+name: 'mgm_m-1_atten-dec_vid240_pre-hmm_s-768-512x512_b6-f8_100k_adamw_1e-4'
 output_dir: 'output/VideoMatte240K'
 train:
   batch_size: 6
@@ -20,10 +20,10 @@ test:
   metrics: ['MAD', 'MSE', 'SAD', 'Conn', 'Grad']
 model:
   arch: 'MGM'
-  weights: 'output/HHM/mgm_atten-dec_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth'
+  weights: 'output/VideoMatte240K/mgm_vid240_pre-hmm_s-768-512x512_b4-f8_100k_adamw_1e-4/best_model.pth'
   backbone: 'res_shortcut_encoder_29'
   backbone_args:
-    num_mask: 0
+    num_mask: 1
   decoder: 'res_shortcut_attention_decoder_22'
   decoder_args:
     final_channel: 32
@@ -40,9 +40,9 @@ dataset:
     root_dir: '/mnt/localssd/VideoMatte240K'
     bg_dir: '/mnt/localssd/bg'
     short_size: 768
-    clip_length: 5
+    clip_length: 8
   test:
     root_dir: '/mnt/localssd/VideoMatte240K'
     short_size: 768
-    clip_length: 5
+    clip_length: 8
     clip_overlap: 2
