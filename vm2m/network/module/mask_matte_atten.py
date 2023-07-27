@@ -112,6 +112,8 @@ class MaskMatteAttenHead(nn.Module):
 
         # Build tokens from mask and feat with MAP + Conv
         b, n_f, n_i, h, w = mask.shape
+        # ori_ni = n_i
+
         feat = feat.view(b, n_f, 1, -1, h * w)
         mask = mask.view(b, n_f, n_i, 1, h * w)
         
@@ -120,6 +122,15 @@ class MaskMatteAttenHead(nn.Module):
 
         tokens = (feat * mask).sum(dim=-1) / (mask.sum(dim=-1) + 1e-6) # (b, n_f, n_i, c)
         token_pos = (feat_pos * mask).sum(dim=-1) / (mask.sum(dim=-1) + 1e-6) # (b, n_f, n_i, c_atten)
+        
+
+        # Reshape feat to h * w, n_f * b, c
+        feat = feat.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c)
+        feat_pos = feat_pos.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c_atten)
+        
+        # FFN to reduce dimension of tokens and feats
+        tokens = self.token_proj(tokens) # (b, n_f, n_i, c_atten)
+        feat = self.feat_proj(feat) # (h * w, n_f * b, c_atten)
 
         # Update with static queries
         if self.static_queries > 0:
@@ -132,16 +143,9 @@ class MaskMatteAttenHead(nn.Module):
             static_token_pos = self.static_query_embed.weight[None, None].repeat(b, n_f, n_i, 1)
             token_pos = token_pos.repeat(1, 1, self.static_queries, 1)
             token_pos = token_pos + static_token_pos
-        
-        # n_i = static_queries * n_i  if static_queries > 0 else n_i
 
-        # Reshape feat to h * w, n_f * b, c
-        feat = feat.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c)
-        feat_pos = feat_pos.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c_atten)
-        
-        # FFN to reduce dimension of tokens and feats
-        tokens = self.token_proj(tokens) # (b, n_f, n_i, c_atten)
-        feat = self.feat_proj(feat) # (h * w, n_f * b, c_atten)
+        # import pdb; pdb.set_trace()
+        n_i = self.static_queries * n_i  if self.static_queries > 0 else n_i
 
         # Reshape tokens to n_i * n_f, b, c_atten
         tokens = tokens.permute(2, 1, 0, 3).reshape(-1, b, self.atten_dim)
@@ -220,11 +224,11 @@ class MaskMatteAttenHead(nn.Module):
         output_mask = torch.einsum('bqc,bchw->bqhw', tokens, feat) # (b * n_f, n_i, h, w)
 
         if self.static_queries > 0:
-            output_mask = output_mask.reshape(-1, self.static_queries, n_i, h, w)
+            output_mask = output_mask.reshape(b * n_f, self.static_queries, -1, *ori_feat.shape[-2:])
             output_mask = output_mask.permute(0, 2, 1, 3, 4)
-            output_mask = output_mask.reshape(-1, self.static_queries, h, w)
+            output_mask = output_mask.reshape(-1, self.static_queries, *ori_feat.shape[-2:])
             output_mask = self.static_query_conv(output_mask)
-            output_mask = output_mask.reshape(b * n_f, -1, h, w)
+            output_mask = output_mask.reshape(b * n_f, -1, *ori_feat.shape[-2:])
         
         if self.return_feat:
             return output_mask, out_feat

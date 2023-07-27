@@ -10,7 +10,7 @@ class ResShortCut_Atten_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
                  atten_dims=[32, 64, 128], atten_blocks=[2, 2, 2], 
-                 atten_heads=[1, 2, 4], atten_strides=[2, 1, 1], num_queries=[8, 8, 8]):
+                 atten_heads=[1, 2, 4], atten_strides=[2, 1, 1], num_queries=[0, 0, 0]):
         super(ResShortCut_Atten_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d

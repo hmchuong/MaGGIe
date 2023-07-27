@@ -59,7 +59,7 @@ CONFIG.model.arch = 'VM2M'
 
 # Backbone aka encoder
 CONFIG.model.backbone = 'res_encoder_29' # resnet34
-CONFIG.model.backbone_args = CN({})
+CONFIG.model.backbone_args = CN({}, new_allowed=True)
 CONFIG.model.backbone_args.pretrained = True
 CONFIG.model.backbone_args.num_mask = 1
 
