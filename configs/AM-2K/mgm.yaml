@@ -1,16 +1,13 @@
-name: 'mgm_him_short-768-512x512_bs8_50k_adamw_2e-4_fixval'
-output_dir: 'output/HIM'
+name: 'mgm'
+output_dir: 'output/AM-2K'
 train:
-  batch_size: 16 #16
+  batch_size: 32
   num_workers: 4
   max_iter: 50000
   optimizer:
-    lr: 2.0e-4
+    lr: 0.0002
     name: adamw
-  scheduler:
-    name: cosine
-    warmup_iters: 1000
-  val_metrics: ['MAD', 'MSE', 'SAD']
+  val_metrics: ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'MSE']
   val_best_metric: 'MAD'
   val_iter: 1000
   vis_iter: 200
@@ -19,26 +16,24 @@ train:
 test:
   num_workers: 4
   metrics: ['MAD', 'MSE', 'SAD']
+  postprocessing: False
+  use_trimap: False
   log_iter: 1
+  save_results: False
 model:
   arch: 'MGM'
   backbone: 'res_shortcut_encoder_29'
-  backbone_args:
-    num_mask: 10
   decoder: 'res_shortcut_decoder_22'
-  decoder_args:
-    max_inst: 10
   mgm:
     warmup_iter: 5000
   loss_dtSSD_w: 0.0
   loss_comp_w: 0.0
 dataset:
   train:
-    name: 'HIM'
+    name: 'HHM'
     root_dir: '/mnt/localssd/HHM'
-    bg_dir: '/mnt/localssd/bg'
     split: 'train'
   test:
-    name: 'HIM'
-    root_dir: '/mnt/localssd/HIM2K'
-    split: 'comp'
+    name: 'HHM'
+    root_dir: '/mnt/localssd/AM-2K'
+    split: 'val'

@@ -1,8 +1,8 @@
-name: 'mgm_him_short-768-512x512_bs8_50k_adamw_2e-4_fixval'
-output_dir: 'output/HIM'
+name: 'mgm_dyn-atten-dec_q-8_hhm_short-768-512x512_bs24_50k_adamw_2e-4'
+output_dir: 'output/HHM'
 train:
-  batch_size: 16 #16
-  num_workers: 4
+  batch_size: 24
+  num_workers: 10
   max_iter: 50000
   optimizer:
     lr: 2.0e-4
@@ -15,30 +15,32 @@ train:
   val_iter: 1000
   vis_iter: 200
   log_iter: 50
-  seed: 1105
 test:
   num_workers: 4
   metrics: ['MAD', 'MSE', 'SAD']
-  log_iter: 1
 model:
   arch: 'MGM'
   backbone: 'res_shortcut_encoder_29'
   backbone_args:
-    num_mask: 10
-  decoder: 'res_shortcut_decoder_22'
+    num_mask: 0
+  decoder: 'res_shortcut_dyn_attention_decoder_22'
   decoder_args:
-    max_inst: 10
+    final_channel: 32
+    atten_dims: [32, 32, 32]
+    atten_strides: [4, 2, 2]
+    atten_blocks: [2, 2, 2]
+    atten_heads: [1, 1, 1]
+    num_queries: [8, 8, 8]
   mgm:
     warmup_iter: 5000
   loss_dtSSD_w: 0.0
   loss_comp_w: 0.0
 dataset:
   train:
-    name: 'HIM'
+    name: 'HHM'
     root_dir: '/mnt/localssd/HHM'
-    bg_dir: '/mnt/localssd/bg'
     split: 'train'
   test:
-    name: 'HIM'
-    root_dir: '/mnt/localssd/HIM2K'
-    split: 'comp'
+    name: 'HHM'
+    root_dir: '/mnt/localssd/HHM'
+    split: 'val'

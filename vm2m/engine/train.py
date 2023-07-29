@@ -16,8 +16,8 @@ from vm2m.utils.metric import build_metric
 from .optim import build_optim_lr_scheduler
 from .test import val
 
-def log_alpha(tensor, tag, index=0):
-    alpha = tensor[0,index,0].detach().cpu().numpy()
+def log_alpha(tensor, tag, index=0, inst_idx=0):
+    alpha = tensor[0,index,inst_idx].detach().cpu().numpy()
     alpha = (alpha * 255).astype('uint8')
     return wandb.Image(alpha, caption=tag)
 
@@ -25,20 +25,24 @@ def wandb_log_image(batch, output, iter):
     # Log transition_preds
     log_images = []
     index = random.randint(0, batch['image'].shape[1] - 1)
+    valid_inst_index = batch['alpha'][0,index].sum((1, 2)) > 0
+    inst_index = 0
+    if valid_inst_index.sum() > 0:
+        inst_index = torch.where(valid_inst_index)[0][0]
     image = batch['image'][0,index].cpu()
     image = image * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
     image = (image * 255).permute(1, 2, 0).numpy().astype(np.uint8)
     log_images.append(wandb.Image(image, caption="image"))
 
-    log_images.append(log_alpha(batch['alpha'], 'alpha_gt', index))
+    log_images.append(log_alpha(batch['alpha'], 'alpha_gt', index, inst_index))
     # alpha_gt = (batch['alpha'][0,0,0] * 255).cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(alpha_gt, caption="alpha_gt"))
 
-    log_images.append(log_alpha(output['refined_masks'], 'alpha_pred', index))
+    log_images.append(log_alpha(output['refined_masks'], 'alpha_pred', index, inst_index))
     # alpha_pred = (output['refined_masks'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(alpha_pred, caption="alpha_pred"))
 
-    log_images.append(log_alpha(batch['mask'], 'mask_gt', index))
+    log_images.append(log_alpha(batch['mask'], 'mask_gt', index, inst_index))
     # mask_gt = (batch['mask'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(mask_gt, caption="mask_gt"))
     
@@ -47,8 +51,8 @@ def wandb_log_image(batch, output, iter):
         for i, trans_pred in enumerate(output['trans_preds']):
             # trans_pred = (trans_pred[0,0,0].sigmoid() * 255).detach().cpu().numpy().astype('uint8')
             # log_images.append(wandb.Image(trans_pred, caption='transition_pred_' + str(i)))
-            log_images.append(log_alpha(trans_pred.sigmoid(), 'transition_pred_' + str(i), index))
-        log_images.append(log_alpha(batch['transition'], 'transition_gt', index))
+            log_images.append(log_alpha(trans_pred.sigmoid(), 'transition_pred_' + str(i), index, inst_index))
+        log_images.append(log_alpha(batch['transition'], 'transition_gt', index, inst_index))
         # trans_gt = (batch['transition'][0,0,0] * 255).cpu().numpy().astype('uint8')
         # log_images.append(wandb.Image(trans_gt, caption="transition_gt"))
 
@@ -56,16 +60,16 @@ def wandb_log_image(batch, output, iter):
         for i, inc_bin_map in enumerate(output['inc_bin_maps']):
             # inc_bin_map = (inc_bin_map[0,0,0] * 255).detach().cpu().numpy().astype('uint8')
             # log_images.append(wandb.Image(inc_bin_map, caption='inc_bin_map_' + str(i)))
-            log_images.append(log_alpha(inc_bin_map, 'inc_bin_map_gt_' + str(i), index))
+            log_images.append(log_alpha(inc_bin_map, 'inc_bin_map_gt_' + str(i), index, inst_index))
     # For MGM: logging some intermediate results
     if 'alpha_os1' in output:
-        log_images.append(log_alpha(output['alpha_os1'], 'alpha_os1_pred', index))
+        log_images.append(log_alpha(output['alpha_os1'], 'alpha_os1_pred', index, inst_index))
         # alpha_pred = (output['alpha_os1'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
         # log_images.append(wandb.Image(alpha_pred, caption="alpha_os1_pred"))
     if 'alpha_os4' in output:
-        log_images.append(log_alpha(output['alpha_os4'], 'alpha_os4_pred', index))
+        log_images.append(log_alpha(output['alpha_os4'], 'alpha_os4_pred', index, inst_index))
     if 'alpha_os8' in output:
-        log_images.append(log_alpha(output['alpha_os8'], 'alpha_os8_pred', index))
+        log_images.append(log_alpha(output['alpha_os8'], 'alpha_os8_pred', index, inst_index))
     wandb.log({"examples/all": log_images}, step=iter, commit=True)
 
 def train(cfg, rank, is_dist=False):
@@ -260,7 +264,7 @@ def train(cfg, rank, is_dist=False):
                 model.eval()
                 val_model = model.module if is_dist else model
                 _ = [v.reset() for v in val_error_dict.values()]
-                _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, False, None)
+                _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, False, True, None)
 
                 if is_dist:
                     logging.info("Gathering metrics...")

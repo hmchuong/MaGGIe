@@ -216,8 +216,14 @@ class ComposedInstImageMatteDataset(Dataset):
 
         add_padding = self.padding_inst - no_instances
         if add_padding > 0:
-            composed_alpha = torch.cat([composed_alpha, torch.zeros(1, add_padding, *composed_alpha.shape[2:])], dim=1)
-            masks = torch.cat([masks, torch.zeros(1, add_padding, *masks.shape[2:])], dim=1)
+            pasted_alpha = torch.zeros((1, self.padding_inst, *composed_alpha.shape[2:]))
+            chosen_ids = self.random.choice(range(self.padding_inst), no_instances, replace=False)
+            pasted_alpha[:, chosen_ids] = composed_alpha
+            composed_alpha = pasted_alpha
+
+            pasted_masks = torch.zeros((1, self.padding_inst, *masks.shape[2:]))
+            pasted_masks[:, chosen_ids] = masks
+            masks = pasted_masks
        
         # Compute transition GT
         k_size = self.random.choice(range(2, 5))

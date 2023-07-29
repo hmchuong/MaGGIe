@@ -45,21 +45,21 @@ class HIMDataset(Dataset):
         return len(self.data)
     
     def __getitem__(self, index):
-        image, alphas = self.data[index]
+        image_path, alphas = self.data[index]
 
         # Load image
         input_dict = {
-            "frames": [image],
+            "frames": [image_path],
             "alphas": alphas,
             "masks": None
         }
         output_dict = self.transforms(input_dict)
         image, alpha, mask, transform_info = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"]
         
-        add_padding = self.padding_inst - len(alphas)
-        if add_padding > 0:
-            alpha = torch.cat([alpha, torch.zeros(add_padding,*alpha.shape[1:])], dim=0)
-            mask = torch.cat([mask, torch.zeros(add_padding, *mask.shape[1:])], dim=0)
+        # add_padding = self.padding_inst - len(alphas)
+        # if add_padding > 0:
+        #     alpha = torch.cat([alpha, torch.zeros(add_padding,*alpha.shape[1:])], dim=0)
+        #     mask = torch.cat([mask, torch.zeros(add_padding, *mask.shape[1:])], dim=0)
 
         mask = F.interpolate(mask, size=(mask.shape[2] // 8, mask.shape[3] // 8), mode="nearest")
         alpha = alpha * 1.0 / 255
@@ -74,7 +74,7 @@ class HIMDataset(Dataset):
         trimap = torch.zeros_like(alpha)
         trimap[alpha > 0.5] = 2.0 # FG
         trimap[trans > 0] = 1.0 # Transition
-        out.update({'trimap': trimap[None, :, 0], 'image_names': [image], 'transform_info': transform_info, "skip": 0})
+        out.update({'trimap': trimap[None, :, 0], 'image_names': [image_path], 'transform_info': transform_info, "skip": 0})
 
         return out
 

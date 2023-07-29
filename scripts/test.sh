@@ -366,6 +366,14 @@ python -m tools.main --dist --gpus 4 --config configs/HHM/mgm_hhm_short-768-512x
                                                 test.save_results False \
                                                 test.postprocessing True
 
+python -m tools.main --dist --gpus 4 --config configs/HHM/mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4.yaml --eval-only \
+                                                name mgm_wild \
+                                                model.weights pretrain/wild_matting_converted.pth \
+                                                dataset.test.split val \
+                                                test.log_iter 1 \
+                                                test.save_results False \
+                                                test.postprocessing True
+
 python -m tools.main --gpus 1 --config configs/HHM/mgmdk_8x8_hhm_short-768-512x512_bs32_50k_adamw_2e-4.yaml --eval-only \
                                                 model.weights output/HHM/mgmdk_8x8_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth \
                                                 dataset.test.split val \
@@ -379,3 +387,39 @@ python -m tools.main --gpus 1 --config configs/HHM/mgm_atten-dec_hhm_short-768-5
                                                 test.log_iter 1 \
                                                 test.save_results False \
                                                 test.postprocessing True
+
+python -m tools.main --dist --gpus 4 --config configs/HHM/mgm_swint_atten-dec_q-16_hhm_short-768-512x512_bs30_50k_adamw_2e-4.yaml --eval-only \
+                                                model.weights output/HHM/mgm_swint_atten-dec_q-16_hhm_short-768-512x512_bs20_50k_adamw_2e-4/best_model.pth \
+                                                dataset.test.split val \
+                                                test.log_iter 1 \
+                                                test.save_results False \
+                                                test.postprocessing True
+
+# Test AIM-500
+python -m tools.main --dist --gpus 4 --config configs/AIM-500/mgm.yaml --eval-only \
+                                                model.weights output/HHM/mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
+
+python -m tools.main --dist --gpus 4 --config configs/AIM-500/mgmdk_8x8.yaml --eval-only \
+                                                model.weights output/HHM/mgmdk_8x8_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
+
+python -m tools.main --dist --gpus 4 --config configs/AIM-500/mgm_atten-dec.yaml --eval-only \
+                                                model.weights output/HHM/mgm_atten-dec_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
+
+# Test AM-200
+python -m tools.main --dist --gpus 4 --config configs/AM-2K/mgm.yaml --eval-only \
+                                                model.weights output/HHM/mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
+
+python -m tools.main --dist --gpus 4 --config configs/AM-2K/mgmdk_8x8.yaml --eval-only \
+                                                model.weights output/HHM/mgmdk_8x8_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
+
+python -m tools.main --dist --gpus 4 --config configs/AM-2K/mgm_atten-dec.yaml --eval-only \
+                                                model.weights output/HHM/mgm_atten-dec_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
+
+# Test HIM
+python -m tools.main --dist --gpus 4 --config configs/HIM/mgm_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
+                                                name mgm_him_short-768-512x512_bs32_50k_adamw_2e-4 \
+                                                model.weights output/HIM/mgm_him_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.save_dir output/HIM/mgm_him_short-768-512x512_bs32_50k_adamw_2e-4/vis_natural

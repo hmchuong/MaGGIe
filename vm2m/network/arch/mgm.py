@@ -9,6 +9,8 @@ from torch.nn import functional as F
 from vm2m.network.module.aspp import ASPP
 from vm2m.network.decoder import *
 from vm2m.network.loss import LapLoss, loss_comp, loss_dtSSD
+from vm2m.network.backbone.resnet_enc import ResMaskEmbedShortCut_D
+from vm2m.network.decoder.resnet_embed_atten_dec import ResShortCut_EmbedAtten_Dec
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
@@ -46,6 +48,11 @@ class MGM(nn.Module):
 
         self.aspp = ASPP(in_channel=512, out_channel=512)
         self.decoder = decoder
+        
+        if isinstance(self.encoder, ResMaskEmbedShortCut_D) and isinstance(self.decoder, ResShortCut_EmbedAtten_Dec):
+            self.decoder.refine_OS1.query_embed = self.encoder.mask_embed
+            self.decoder.refine_OS4.query_embed = self.encoder.mask_embed
+            self.decoder.refine_OS8.query_embed = self.encoder.mask_embed
 
         # Some weights for loss
         self.loss_alpha_w = cfg.loss_alpha_w
@@ -115,7 +122,7 @@ class MGM(nn.Module):
         if bg is not None:
             bg = bg.view(-1, 3, h, w)
        
-        embedding, mid_fea = self.encoder(inp)
+        embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
         embedding = self.aspp(embedding)
         pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks)
         
@@ -146,9 +153,19 @@ class MGM(nn.Module):
             alphas = alphas.view(-1, n_i, h, w)
             trans_gt = trans_gt.view(-1, n_i, h, w)
             iter = batch['iter']
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, (b, n_f, 1, h, w))
+            
+            # maskout padding masks
+            valid_masks = trans_gt.sum((2, 3), keepdim=True) > 0
+            valid_masks = valid_masks.float()
+            for k, v in pred.items():
+                pred[k] = v * valid_masks
+
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, (b, n_f, n_i, h, w))
             return output, loss_dict
 
+        # import pdb; pdb.set_trace()
+        for k, v in output.items():
+            output[k] = v[:, :, :n_i]
         return output
 
     @staticmethod

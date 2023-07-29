@@ -16,4 +16,4 @@ mv train bg
 # Start training
 echo "Starting training..."
 cd $ROOT_DIR
-python -m tools.main --config configs/HIM/mgm_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --override --dist --gpus 8
+python -m tools.main --config configs/HIM/mgm_samdec_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --override --dist --gpus 8

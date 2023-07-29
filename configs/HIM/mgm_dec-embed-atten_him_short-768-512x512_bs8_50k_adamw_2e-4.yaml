@@ -1,4 +1,4 @@
-name: 'mgm_him_short-768-512x512_bs8_50k_adamw_2e-4_fixval'
+name: 'mgm_dec-embed-atten_him_short-768-512x512_bs8_50k_adamw_2e-4'
 output_dir: 'output/HIM'
 train:
   batch_size: 16 #16
@@ -25,9 +25,14 @@ model:
   backbone: 'res_shortcut_encoder_29'
   backbone_args:
     num_mask: 10
-  decoder: 'res_shortcut_decoder_22'
+  decoder: 'res_shortcut_embed_attention_decoder_22'
   decoder_args:
     max_inst: 10
+    final_channel: 32
+    atten_dims: [32, 32, 32]
+    atten_strides: [4, 2, 2]
+    atten_blocks: [2, 2, 2]
+    atten_heads: [1, 1, 1]
   mgm:
     warmup_iter: 5000
   loss_dtSSD_w: 0.0

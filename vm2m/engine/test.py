@@ -30,12 +30,13 @@ def save_visualization(save_dir, image_names, alphas, transform_info, output):
         video_name, image_name = image_name.split('/')[-2:]
 
         # Save alpha pred
-        alpha_pred = (alphas[0, idx, 0] * 255).astype('uint8')
-
         alpha_pred_path = os.path.join(save_dir, 'alpha_pred', video_name)
         os.makedirs(alpha_pred_path, exist_ok=True)
-        if not os.path.isfile(os.path.join(alpha_pred_path, image_name)):
-            cv2.imwrite(os.path.join(alpha_pred_path, image_name), alpha_pred)
+        alpha_pred = (alphas[0, idx] * 255).astype('uint8')
+        for inst_id in range(alpha_pred.shape[0]):
+            postfix = '_inst%d' % inst_id if alpha_pred.shape[0] > 1 else ''
+            if not os.path.isfile(os.path.join(alpha_pred_path, image_name[:-4] + postfix + image_name[-4:])):    
+                cv2.imwrite(os.path.join(alpha_pred_path, image_name[:-4] + postfix + image_name[-4:]), alpha_pred[inst_id])
 
         if trans_preds is not None:
             # Save trans pred
@@ -55,7 +56,7 @@ def save_visualization(save_dir, image_names, alphas, transform_info, output):
                 cv2.imwrite(os.path.join(inc_bin_path, image_name), inc_bin_pred)
 
 @torch.no_grad()
-def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, callback=None):
+def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None):
     
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
@@ -96,7 +97,8 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             current_metrics = {}
             for k, v in val_error_dict.items():
                 logging.debug(f"updating {k}...")
-                current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=trimap[:, skip:])
+                current_trimap = trimap[:, skip:] if use_trimap else None
+                current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap)
                 logging.debug(f"Done {k}!")
 
             # Logging
@@ -167,7 +169,7 @@ def test(cfg, rank=0, is_dist=False):
 
     batch_time, data_time = val(model, val_loader, device, cfg.test.log_iter, \
                                 val_error_dict, do_postprocessing=cfg.test.postprocessing, \
-                                    callback=callback_vis)
+                                    callback=callback_vis, use_trimap=cfg.test.use_trimap)
     
     logging.info("Testing done!")
 

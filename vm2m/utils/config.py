@@ -51,6 +51,7 @@ CONFIG.test.postprocessing = True
 # CONFIG.test.metrics = ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'SAD', 'MSE', 'Conn', 'Grad']
 CONFIG.test.metrics = ['MAD', 'MSE', 'SAD', 'Conn', 'Grad', 'dtSSD', 'MESSDdt']
 CONFIG.test.log_iter = 50
+CONFIG.test.use_trimap = True
 
 # ------------------------ Model ------------------------
 CONFIG.model = CN({})
@@ -133,6 +134,7 @@ dataset.train.random_state = 2023
 dataset.train.crop = [512, 512] # (h, w)
 dataset.train.flip_prob = 0.5
 dataset.train.max_inst = 3
+dataset.train.padding_inst = 10
 
 # For video augmentation
 dataset.train.max_step_size = 2

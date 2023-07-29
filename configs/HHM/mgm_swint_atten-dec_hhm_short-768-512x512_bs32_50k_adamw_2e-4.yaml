@@ -1,7 +1,7 @@
-name: 'mgm_swint_atten-dec_q-16_hhm_short-768-512x512_bs20_50k_adamw_2e-4'
+name: 'mgm_swint_atten-dec_hhm_short-768-512x512_bs18_50k_adamw_2e-4'
 output_dir: 'output/HHM'
 train:
-  batch_size: 18
+  batch_size: 20
   num_workers: 10
   max_iter: 50000
   optimizer:
@@ -17,10 +17,11 @@ train:
   log_iter: 50
 test:
   num_workers: 4
-  metrics: ['MAD', 'MSE', 'SAD']
+  metrics: ['MAD', 'MSE', 'SAD', 'Conn', 'Grad']
 model:
   arch: 'MGM'
   backbone: 'swin_shortcut_t'
+  # backbone: 'mit_shortcut_b2_li'
   backbone_args:
     num_mask: 0
   decoder: 'res_shortcut_attention_decoder_22'
@@ -30,7 +31,8 @@ model:
     atten_strides: [4, 2, 2]
     atten_blocks: [2, 2, 2]
     atten_heads: [1, 1, 1]
-    num_queries: [16, 16, 16]
+    num_queries: [0, 0, 0]
+    # num_queries: [5, 5, 5]
   mgm:
     warmup_iter: 5000
   loss_dtSSD_w: 0.0

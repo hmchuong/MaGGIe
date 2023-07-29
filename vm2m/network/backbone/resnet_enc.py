@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from   vm2m.network.ops import SpectralNorm
 from vm2m.network.module.base import conv1x1, conv3x3
-
+from vm2m.network.module.mask_matte_atten import MaskMatteAttenHead
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -175,7 +175,7 @@ class ResShortCut_D(ResNet_D):
             self._norm_layer(planes)
         )
 
-    def forward(self, x):
+    def forward(self, x, **kwargs):
 
         out = self.conv1(x)
         out = self.bn1(out)
@@ -199,7 +199,73 @@ class ResShortCut_D(ResNet_D):
         fea5 = self.shortcut[4](x4)
 
         return out, {'shortcut':(fea1, fea2, fea3, fea4, fea5), 'image':x[:,:3,...], 'backbone_feat': (x2, x3, x4, out)}
+
+class ResMaskAttenShortCut_D(ResShortCut_D):
+    def __init__(self, block, layers, num_mask=1, norm_layer=None, late_downsample=False, **kwargs):
+        super(ResMaskAttenShortCut_D, self).__init__(block, layers, 0, norm_layer, late_downsample=late_downsample, **kwargs)
+
+        self.attention = MaskMatteAttenHead(
+            input_dim=32,
+            atten_stride=1,
+            attention_dim=32,
+            n_block=2,
+            n_heads=1,
+            output_dim=32,
+            return_feat=True,
+            perform_pred=False
+        )
     
+    def forward(self, x, masks, **kwargs):
+        
+        # Extract image and mask
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.activation(out)
+        out = self.conv2(out)
+        out = self.bn2(out)
+        x1 = self.activation(out) # N x 32 x 256 x 256
+
+        # Perform attention here to get instance feature only
+        out, tokens = self.attention(x1, masks)
+
+        # import pdb; pdb.set_trace()
+        tokens = tokens.sum(0).reshape(out.shape[0], -1, 1, 1)
+        x1 = x1 * (tokens * 0)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+        out = self.activation(out)
+
+        x2 = self.layer1(out) # N x 64 x 128 x 128
+        x3= self.layer2(x2) # N x 128 x 64 x 64
+        x4 = self.layer3(x3) # N x 256 x 32 x 32
+        out = self.layer_bottleneck(x4) # N x 512 x 16 x 16
+
+        fea1 = self.shortcut[0](x) # input image and mask
+        fea2 = self.shortcut[1](x1)
+        fea3 = self.shortcut[2](x2)
+        fea4 = self.shortcut[3](x3)
+        fea5 = self.shortcut[4](x4)
+
+        return out, {'shortcut':(fea1, fea2, fea3, fea4, fea5), 'image':x[:,:3,...], 'backbone_feat': (x2, x3, x4, out)}
+
+class ResMaskEmbedShortCut_D(ResShortCut_D):
+    def __init__(self, block, layers, num_mask=1, norm_layer=None, late_downsample=False, **kwargs):
+        super(ResMaskEmbedShortCut_D, self).__init__(block, layers, 1, norm_layer, late_downsample=late_downsample, **kwargs)
+
+        self.mask_embed = nn.Embedding(num_mask + 1, 1)
+    
+    def forward(self, x, **kwargs):
+        masks = x[:, 3:, ...]
+        mask_ids = torch.arange(1, masks.shape[1]+1, device=masks.device)[None, :, None, None]
+        masks = (masks * mask_ids).max(1)[0]
+        masks = self.mask_embed(masks.long()).squeeze(-1).unsqueeze(1)
+
+        image = x[:, :3, ...]
+        inp = torch.cat([image, masks], dim=1)
+
+        return super().forward(inp, **kwargs)
+
 def res_encoder_29(**kwargs):
     model = ResNet_D(BasicBlock, [3, 4, 4, 2], **kwargs)
     state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
@@ -209,6 +275,14 @@ def res_encoder_29(**kwargs):
 
 def _res_shortcut_D(block, layers, **kwargs):
     model = ResShortCut_D(block, layers, **kwargs)
+    return model
+
+def _res_atten_shortcut_D(block, layers, **kwargs):
+    model = ResMaskAttenShortCut_D(block, layers, **kwargs)
+    return model
+
+def _res_embed_shortcut_D(block, layers, **kwargs):
+    model = ResMaskEmbedShortCut_D(block, layers, **kwargs)
     return model
 
 def res_shortcut_encoder_29(**kwargs):
@@ -222,6 +296,29 @@ def res_shortcut_encoder_29(**kwargs):
         del state_dict['conv1.module.weight_v']
         # state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
         # state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
+    model.load_state_dict(state_dict, strict=False)
+    return model
+
+def res_atten_shortcut_encoder_29(**kwargs):
+    """Constructs a resnet_encoder_25 model.
+    """
+    model = _res_atten_shortcut_D(BasicBlock, [3, 4, 4, 2], **kwargs)
+    state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
+    state_dict = {k[7:]: v for k, v in state_dict.items()}
+    if kwargs['num_mask'] > 0:
+        del state_dict['conv1.module.weight_bar']
+        del state_dict['conv1.module.weight_v']
+        # state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
+        # state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
+    model.load_state_dict(state_dict, strict=False)
+    return model
+
+def res_embed_shortcut_encoder_29(**kwargs):
+    model = _res_embed_shortcut_D(BasicBlock, [3, 4, 4, 2], **kwargs)
+    state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
+    state_dict = {k[7:]: v for k, v in state_dict.items()}
+    state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
+    state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
     model.load_state_dict(state_dict, strict=False)
     return model
 

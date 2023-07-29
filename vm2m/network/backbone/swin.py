@@ -646,7 +646,7 @@ class SwinShortcut(nn.Module):
             self._norm_layer(planes)
         )
     
-    def forward(self, x):
+    def forward(self, x, **kwargs):
         feats = self.backbone(x) # stage 2 to stage 5: 1/4, 1/8, 1/16, 1/32
 
         # out: 32
@@ -705,6 +705,13 @@ def swin_shortcut_t(num_mask=0, pretrained=True, **kawrgs):
     swin_backbone = build_swin_t(num_mask, **kawrgs)
     model = SwinShortcut(swin_backbone, [3 + num_mask, 32, 96, 192, 384, 768], [32, 32, 64, 128, 256, 512])
     if pretrained:
-        state_dict = torch.load("pretrain/upernet_swin_tiny_patch4_window7_512x512.pth", map_location='cpu')['state_dict']
-        _ = model.load_state_dict(state_dict, strict=False)
+        # state_dict = torch.load("pretrain/upernet_swin_tiny_patch4_window7_512x512.pth", map_location='cpu')['state_dict']
+        
+        state_dict = torch.load("pretrain/swin_tiny_patch4_window7_224.pth", map_location='cpu')['model']
+        for k in list(state_dict.keys()):
+            state_dict["backbone." + k] = state_dict[k]
+            del state_dict[k]
+
+        missing, unexpected = model.load_state_dict(state_dict, strict=False)
+        
     return model

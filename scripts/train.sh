@@ -25,3 +25,6 @@ python -m tools.main --config configs/VideoMatte240K/mgm_m-1_atten-dec_vid240_pr
 python -m tools.main --config configs/HHM/mgm_atten-dec_q-16_hhm_short-768-512x512_bs30_50k_adamw_2e-4.yaml --gpus 4 name debug wandb.use False \
                                 train.log_iter 1 train.vis_iter 25 train.val_iter 50 train.batch_size 15 \
                                 model.weights output/HHM/mgm_atten-dec_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
+
+python -m tools.main --config configs/HHM/mgm_enc-atten_dec-atten_hhm_short-768-512x512_bs32_50k_adamw_2e-4.yaml --gpus 4 name debug wandb.use False \
+                                train.log_iter 1 train.vis_iter 25 train.val_iter 50 train.batch_size 15
