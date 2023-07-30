@@ -19,6 +19,7 @@ class MaskMatteEmbAttenHead(nn.Module):
         
         # Linear layer to map input to attention_dim
         self.feat_proj = MLP(input_dim, attention_dim, attention_dim, 1)
+        # self.token_proj = MLP(input_dim, attention_dim, attention_dim, 1)
         
         self.sa_layers = nn.ModuleList()
         self.token_feat_ca_layers = nn.ModuleList()
@@ -66,11 +67,13 @@ class MaskMatteEmbAttenHead(nn.Module):
             normalize_before=False
         )
         self.final_mlp = MLP(attention_dim, attention_dim, output_dim, 1)
-        self.decoder_norm = nn.LayerNorm(attention_dim)
+        self.decoder_norm = nn.LayerNorm(output_dim)
 
+        self.n_temp_embed = self.pe_layer.temporal_num_pos_feats
+        self.n_id_embed = self.atten_dim - self.n_temp_embed
         self.query_feat = nn.Embedding(max_inst, attention_dim)
         # self.query_embed = nn.Embedding(max_inst, attention_dim)
-        self.query_embed = nn.Embedding(max_inst, 1)
+        self.id_embedding = nn.Embedding(max_inst + 1, self.n_id_embed)
 
         # Convolutions to smooth features
         self.conv = nn.Sequential(
@@ -81,6 +84,7 @@ class MaskMatteEmbAttenHead(nn.Module):
             nn.BatchNorm2d(output_dim),
             nn.LeakyReLU(0.2),
         )
+        # self.up_conv = nn.Conv2d(attention_dim * 2, attention_dim, kernel_size=1, stride=1, padding=0, bias=False)
         if return_feat:
             self.conv_out = nn.Conv2d(attention_dim, input_dim, kernel_size=1, stride=1, padding=0, bias=False)
         if self.atten_stride > 1.0:
@@ -106,28 +110,69 @@ class MaskMatteEmbAttenHead(nn.Module):
             ori_feat = self.ori_feat_proj(ori_feat)
 
         # Build tokens from mask and feat with MAP + Conv
+        scale_factor = feat.shape[-1] * 1.0 / mask.shape[-1] * 1.0
+        mask = resizeAnyShape(mask, scale_factor=scale_factor, use_max_pool=True) 
         b, n_f= mask.shape[:2]
         h, w = feat.shape[-2:]
 
         feat = feat.view(b, n_f, 1, -1, h * w)
         
-        feat_pos = self.pe_layer(b, n_f, h, w, device=feat.device)               # (b, c_atten, n_f, h, w)
-        feat_pos = feat_pos.permute(0, 2, 1, 3, 4).reshape(b, n_f, 1, -1, h * w) # (b, n_f, 1, c_atten, h * w)
+        # Compute n_channels for ID and temporal embedding
+        n_temp_embed = self.n_temp_embed
+        n_id_embed = self.n_id_embed
 
-        tokens = self.query_feat.weight[None, None].repeat(b, n_f, 1, 1) # (b, n_f, max_inst,  c_atten)
-        # Convert input embedding to token_pos
-        # import pdb; pdb.set_trace()
-        token_pos = self.query_embed.weight[None, None].repeat(b, n_f, 1, self.atten_dim) # (b, n_f, max_inst,  c_atten)
-        if token_pos.shape[2] > self.max_inst:
-            token_pos = token_pos[:, :, -self.max_inst:, :]
-        # token_pos = self.query_embed.weight[None, None].repeat(b, n_f, 1, 1) # (b, n_f, max_inst,  c_atten)
+        # Feat pos: ID embedding + Temporal position embedding
+        temp_feat_pos = self.pe_layer(b, n_f, 1, 1, device=feat.device)               # (b, c_atten, n_f, 1, 1)
+        temp_feat_pos = temp_feat_pos.repeat(1, 1, 1, h, w)                                # (b, c_atten, n_f, h, w)
+        temp_feat_pos = temp_feat_pos[:, :n_temp_embed] # (b, c_atten_temp, n_f, h, w)
+
+        # Adding ID embedding to feat_pos
+        id_feat_pos = torch.arange(1, mask.shape[2]+1, device=mask.device)[None, None, :, None, None] # (1, 1, n_i, 1, 1)
+        id_feat_pos = (mask * id_feat_pos).max(2)[0]
+        id_feat_pos = self.id_embedding(id_feat_pos.long()) # (b, n_f, h, w, c_atten_id)
+        # id_feat_pos = id_feat_pos[:, None].repeat(1, n_id_embed, 1, 1, 1) # (b, c_atten_id, n_f, h, w)
+        id_feat_pos = id_feat_pos.permute(0, 4, 1, 2, 3) # (b, c_atten_id, n_f h, w)
+
+        feat_pos = torch.cat([id_feat_pos, temp_feat_pos], dim=1) # (b, c_atten, n_f, h, w)
+        feat_pos = feat_pos.permute(0, 2, 1, 3, 4).reshape(b, n_f, 1, -1, h * w) # (b, n_f, 1, c_atten, h * w)
         
+
+        # Learnable Token feat
+        tokens = self.query_feat.weight[None, None].repeat(b, n_f, 1, 1) # (b, n_f, max_inst,  c_atten)
+        # mask = mask.view(b, n_f, -1, 1, h * w)
+        # tokens = (feat * mask).sum(dim=-1) / (mask.sum(dim=-1) + 1e-6) # (b, n_f, n_i, c)
+        # if tokens.shape[2] < self.max_inst:
+        #     tokens = F.pad(tokens, (0, 0, self.max_inst - tokens.shape[2], 0), mode='constant', value=0)
+
+
+        # Token pos: ID embedding + Temporal position embedding
+        id_token_pos = torch.arange(1, self.max_inst + 1, device=tokens.device)[None, None, :] # (1, 1, max_inst)
+        id_token_pos = self.id_embedding(id_token_pos.long()) # (1, 1, max_inst, c_atten_id)
+        id_token_pos = id_token_pos.repeat(b, n_f, 1, 1) # (b, n_f, max_inst, c_atten_id)
+        temp_token_pos = temp_feat_pos[:, :, :, None, 0, 0].permute(0, 2, 3, 1).repeat(1, 1, self.max_inst, 1) # (b, n_f, max_inst, c_atten_temp)
+        token_pos = torch.cat([id_token_pos, temp_token_pos], dim=-1) # (b, n_f, max_inst, c_atten)
+
+        # import pdb; pdb.set_trace()
+
         # Reshape feat to h * w, n_f * b, c
         feat = feat.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c)
         feat_pos = feat_pos.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c_atten)
+
+        # TODO: Test the similarity between token_pos and feat_pos
+        # mat1 = feat_pos.permute(1, 0, 2) # (n_f * b, h * w, c_atten)
+        # mat2 = token_pos.permute(0, 1, 3, 2).reshape(b * n_f, -1, self.max_inst) # (n_f * b, max_inst, c_atten)
+        # a_mat = torch.matmul(mat1, mat2) # (n_f * b, h * w, max_inst)
+        # a_mat = (a_mat - a_mat.min()) / (a_mat.max() - a_mat.min() + 1e-8)
+        # mask_valid_ids = mask.sum((3, 4))
+        # import cv2
+        # cv2.imwrite("test_mask.png", mask[1, 0, 5].detach().cpu().numpy() * 255)
+        # cv2.imwrite("test_amat.png", a_mat[1, :, :, 5].detach().cpu().numpy() * 255)
+        # feat_pos[0, 1].T @ toekn_pos[1, 0, 6]
+        # import pdb; pdb.set_trace()
         
         # FFN to reduce dimension of tokens and feats
         feat = self.feat_proj(feat) # (h * w, n_f * b, c_atten)
+        # tokens = self.token_proj(tokens) # (b, n_f, n_i, c_atten)
 
         # import pdb; pdb.set_trace()
         n_i = self.max_inst
@@ -153,6 +198,7 @@ class MaskMatteEmbAttenHead(nn.Module):
             # - tokens to feat attention (spatial attention)
             # Q: n_i, n_f * b, c_atten
             # KV: h * w, n_f * b, c_atten
+            # import pdb; pdb.set_trace()
             tokens = self.token_feat_ca_layers[i](
                 tokens, feat,
                 memory_mask=None,
@@ -192,12 +238,15 @@ class MaskMatteEmbAttenHead(nn.Module):
         if self.atten_stride > 1.0:
             feat = F.interpolate(feat, scale_factor=self.atten_stride, mode='bilinear', align_corners=True)
             feat = ori_feat + feat
-
-        feat = self.conv(feat) # (b * n_f, c_out, h, w)
+            # feat = torch.cat([ori_feat, feat], dim=1)
+            # feat = self.up_conv(feat)
 
         if self.return_feat:
             out_feat = self.conv_out(feat) # (b * n_f, c, h, w)
 
+        feat = self.conv(feat) # (b * n_f, c_out, h, w)
+
+        
         # MLP to build kernel
         tokens = self.final_mlp(tokens) # (n_i, n_f * b, c_out)
         tokens = tokens.reshape(n_i, n_f, b, -1)

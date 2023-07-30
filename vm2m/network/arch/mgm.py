@@ -49,10 +49,10 @@ class MGM(nn.Module):
         self.aspp = ASPP(in_channel=512, out_channel=512)
         self.decoder = decoder
         
-        if isinstance(self.encoder, ResMaskEmbedShortCut_D) and isinstance(self.decoder, ResShortCut_EmbedAtten_Dec):
-            self.decoder.refine_OS1.query_embed = self.encoder.mask_embed
-            self.decoder.refine_OS4.query_embed = self.encoder.mask_embed
-            self.decoder.refine_OS8.query_embed = self.encoder.mask_embed
+        # if isinstance(self.encoder, ResMaskEmbedShortCut_D) and isinstance(self.decoder, ResShortCut_EmbedAtten_Dec):
+        #     self.decoder.refine_OS1.id_embedding = self.encoder.mask_embed
+        #     self.decoder.refine_OS4.id_embedding = self.encoder.mask_embed
+        #     self.decoder.refine_OS8.id_embedding = self.encoder.mask_embed
 
         # Some weights for loss
         self.loss_alpha_w = cfg.loss_alpha_w
@@ -124,7 +124,7 @@ class MGM(nn.Module):
        
         embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
         embedding = self.aspp(embedding)
-        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks)
+        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0))
         
         # Fushion
         alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
@@ -211,6 +211,8 @@ class MGM(nn.Module):
 
         loss_dict = {}
         weight_os8 = torch.ones_like(weight_os1)
+        valid_mask = alphas.sum((2, 3), keepdim=True) > 0
+        weight_os8 = weight_os8 * valid_mask
 
         # Add padding to alphas and trans_gt
         n_i = alphas.shape[1]

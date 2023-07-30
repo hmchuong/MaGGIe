@@ -1,4 +1,5 @@
 import torch
+import random
 from torch import nn
 from torch.nn import functional as F
 from vm2m.network.ops import SpectralNorm
@@ -53,7 +54,8 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
             n_block=atten_blocks[1],
             n_head=atten_heads[1],
             output_dim=final_channel,
-            max_inst=max_inst
+            max_inst=max_inst,
+            return_feat=False,
         )
         
         ## 1/8 scale
@@ -64,7 +66,8 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
             n_block=atten_blocks[2],
             n_head=atten_heads[2],
             output_dim=final_channel,
-            max_inst=max_inst
+            max_inst=max_inst,
+            return_feat=False,
         )
 
         for m in self.modules():
@@ -108,7 +111,20 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
 
         return nn.Sequential(*layers)
 
-    def forward(self, x, mid_fea, b, n_f, n_i, masks, **kwargs):
+    def compute_next_input_mask(self, input_masks, prev_masks, iter):
+        # warmup = 5000
+
+        # if not self.training:
+        #     import pdb; pdb.set_trace()
+        # prev_masks = prev_masks.reshape(*input_masks.shape[:-2], *prev_masks.shape[-2:])
+        # if self.training and (iter < warmup or (iter < warmup * 3 and random.randint(0,1) == 0)):
+        #     # Use masks from the input
+        #     prev_masks = input_masks
+        
+        # return prev_masks
+        return input_masks
+
+    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, **kwargs):
         '''
         masks: [b * n_f * n_i, 1, H, W]
         '''
@@ -122,23 +138,29 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         x = self.layer2(x) + fea4
         
         # import pdb; pdb.set_trace() 
-        x_os8, x = self.refine_OS8(x, masks) # 200MB
+        # x_os8, x = self.refine_OS8(x, masks)
+        x_os8 = self.refine_OS8(x, masks)
+        x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
+        x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
 
         x = self.layer3(x) + fea3
-        x_os4, x = self.refine_OS4(x, masks) # 258MB
+
+        # Compute new masks from the x_os8
+        prev_mask = self.compute_next_input_mask(masks, x_os8, iter)
+        # x_os4, x = self.refine_OS4(x, prev_mask)
+        x_os4 = self.refine_OS4(x, prev_mask)
+        x_os4 = F.interpolate(x_os4, scale_factor=4.0, mode='bilinear', align_corners=False)
+        x_os4 = (torch.tanh(x_os4) + 1.0) / 2.0
 
         x = self.layer4(x) + fea2
         x = self.conv1(x)
         x = self.bn1(x)
         x = self.leaky_relu(x) + fea1
-        x_os1 = self.refine_OS1(x, masks) # 1.140GB, 7.776GB
 
-        x_os4 = F.interpolate(x_os4, scale_factor=4.0, mode='bilinear', align_corners=False)
-        x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
-        
+        # Compute new masks from the x_os4
+        prev_mask = self.compute_next_input_mask(masks, x_os4, iter)
+        x_os1 = self.refine_OS1(x, prev_mask)
         x_os1 = (torch.tanh(x_os1) + 1.0) / 2.0
-        x_os4 = (torch.tanh(x_os4) + 1.0) / 2.0
-        x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
 
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
