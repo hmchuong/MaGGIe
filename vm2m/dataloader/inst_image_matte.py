@@ -18,7 +18,11 @@ class ComposedInstImageMatteDataset(Dataset):
     def __init__(self, root_dir, split, bg_dir, max_inst=10, padding_inst=10, short_size=768, crop=(512, 512), random_seed=2023):
         super().__init__()
         self.root_dir = os.path.join(root_dir, split)
-        self.load_image_alphas()
+        if os.path.exists("vm2m/dataloader/invalid_him.txt"):
+            self.load_valid_image_alphas()
+        else:
+            self.load_image_alphas()
+         # import pdb; pdb.set_trace()
         self.bg_images = self.load_bg(bg_dir)
         self.max_inst = max_inst
         self.padding_inst = padding_inst
@@ -35,6 +39,17 @@ class ComposedInstImageMatteDataset(Dataset):
                                  std=[0.229, 0.224, 0.225])
         ])
     
+    def load_valid_image_alphas(self):
+        invalid_names = []
+        with open("vm2m/dataloader/invalid_him.txt", "r") as f:
+            for line in f:
+                invalid_names.append(line.strip())
+        invalid_names = set(invalid_names)
+        images = sorted(glob.glob(os.path.join(self.root_dir, "images", "*.jpg")))
+        images = [image_path for image_path in images if os.path.basename(image_path) not in invalid_names]
+        alphas = [image_path.replace("images", "alphas").replace(".jpg", ".png") for image_path in images]
+        self.data = list(zip(images, alphas))
+
     def load_image_alphas(self):
         images = sorted(glob.glob(os.path.join(self.root_dir, "images", "*.jpg")))
         alphas = sorted(glob.glob(os.path.join(self.root_dir, "alphas", "*.png")))
@@ -66,7 +81,8 @@ class ComposedInstImageMatteDataset(Dataset):
 
         # Resize fg
         h, w = image.shape[:2]
-        scale = self.random.rand() * 0.5 + 0.5
+        scale = self.random.rand() * 0.75 + 0.25
+        scale = min(max_h, max_w, h, w) * scale / min(h, w)
         new_w, new_h = int(w * scale), int(h * scale)
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
         alpha = cv2.resize(alpha, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
@@ -123,7 +139,7 @@ class ComposedInstImageMatteDataset(Dataset):
     def __getitem__(self, index):
         
         # Choose no. of instances
-        no_instances = self.random.choice(range(1, self.max_inst + 1))
+        no_instances = self.random.choice(range(2, self.max_inst + 1))
 
         # Load images and alphas
         images = []
@@ -139,7 +155,7 @@ class ComposedInstImageMatteDataset(Dataset):
             if len(alpha.shape) == 3:
                 alpha = alpha[:, :, 0]
             alphas.append(alpha)
-
+        
         # Choose bg image: from the first image or from bg_dir
         using_bg = self.random.choice([True, False])
         bg_image = images[0]
@@ -156,6 +172,22 @@ class ComposedInstImageMatteDataset(Dataset):
         max_h, max_w = bg_image.shape[:2] # max width and height to resize
         for i in range(0 if using_bg else 1, no_instances):
             images[i], alphas[i] = self.prepare_fg(images[i], alphas[i], max_w, max_h)
+
+        # Sort based on alphas
+        areas = np.array([(a>0).sum() for a in alphas])
+        sort_ids = np.argsort(areas)[::-1]
+        new_images = []
+        new_alphas = []
+        if not using_bg:
+            new_images.append(images[0])
+            new_alphas.append(alphas[0])
+        for i in sort_ids:
+            if i == 0 and not using_bg:
+                continue
+            new_images.append(images[i])
+            new_alphas.append(alphas[i])
+        images = new_images
+        alphas = new_alphas
 
         # Compose images and alphas
         composed_image = np.zeros_like(bg_image)
@@ -240,7 +272,7 @@ class ComposedInstImageMatteDataset(Dataset):
         return out
     
 if __name__ == "__main__":
-    train_dataset = ComposedInstImageMatteDataset(root_dir='/mnt/localssd/HHM', split='train', bg_dir='/mnt/localssd/bg', max_inst=3, short_size=768, crop=(512, 512), random_seed=2023)
+    train_dataset = ComposedInstImageMatteDataset(root_dir='/mnt/localssd/HHM', split='train', bg_dir='/mnt/localssd/bg', max_inst=5, short_size=576, crop=(512, 512), random_seed=2023)
     # 
     for batch in train_dataset:
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch["transition"]

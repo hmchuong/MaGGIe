@@ -74,6 +74,8 @@ class MaskMatteEmbAttenHead(nn.Module):
         self.query_feat = nn.Embedding(max_inst, attention_dim)
         # self.query_embed = nn.Embedding(max_inst, attention_dim)
         self.id_embedding = nn.Embedding(max_inst + 1, self.n_id_embed)
+        nn.init.xavier_uniform_(self.id_embedding.weight)
+        nn.init.xavier_uniform_(self.query_feat.weight)
 
         # Convolutions to smooth features
         self.conv = nn.Sequential(
@@ -84,11 +86,21 @@ class MaskMatteEmbAttenHead(nn.Module):
             nn.BatchNorm2d(output_dim),
             nn.LeakyReLU(0.2),
         )
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.xavier_uniform_(m.weight)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
         # self.up_conv = nn.Conv2d(attention_dim * 2, attention_dim, kernel_size=1, stride=1, padding=0, bias=False)
         if return_feat:
             self.conv_out = nn.Conv2d(attention_dim, input_dim, kernel_size=1, stride=1, padding=0, bias=False)
+            nn.init.xavier_uniform_(self.conv_out.weight)
+
         if self.atten_stride > 1.0:
             self.ori_feat_proj = nn.Conv2d(input_dim, attention_dim, kernel_size=1, stride=1, padding=0, bias=False)
+            nn.init.xavier_uniform_(self.ori_feat_proj.weight)
 
 
     def forward(self, ori_feat, mask):
@@ -181,6 +193,17 @@ class MaskMatteEmbAttenHead(nn.Module):
         tokens = tokens.permute(2, 1, 0, 3).reshape(-1, b, self.atten_dim)
         token_pos = token_pos.permute(2, 1, 0, 3).reshape(-1, b, self.atten_dim)
 
+        # atten_padding_mask = n_f * b, h * w, n_i
+        atten_padding_m = mask.permute(1, 0, 2, 3, 4)
+        atten_padding_m = atten_padding_m.reshape(n_f * b, -1, h * w)
+        if atten_padding_m.shape[1] < n_i:
+            atten_padding_m = torch.cat([atten_padding_m, torch.zeros((n_f * b, n_i - atten_padding_m.shape[1], h * w), device=atten_padding_m.device)], dim=1)
+        atten_padding_m = atten_padding_m > 0
+        invalid_m = atten_padding_m.sum(-1) == 0
+        invalid_m = invalid_m[:, :, None].repeat(1, 1, h * w)
+        atten_padding_m[invalid_m] = True
+        atten_padding_m = ~atten_padding_m
+        
         # For each iteration:
         for i in range(self.n_block):
             
@@ -199,12 +222,28 @@ class MaskMatteEmbAttenHead(nn.Module):
             # Q: n_i, n_f * b, c_atten
             # KV: h * w, n_f * b, c_atten
             # import pdb; pdb.set_trace()
-            tokens = self.token_feat_ca_layers[i](
+            
+            # import pdb; pdb.set_trace()
+            tokens, _ = self.token_feat_ca_layers[i](
                 tokens, feat,
-                memory_mask=None,
+                memory_mask=atten_padding_m,
                 memory_key_padding_mask=None,
                 pos=feat_pos, query_pos=token_pos
             )
+
+            # atten_mat = atten_mat.reshape(b, n_i, h, w)
+            # valid_mask = mask.sum((3, 4)) > 0
+            # import cv2
+            # cv2.imwrite("test_mask.png", mask[0, 0, 5].detach().cpu().numpy() * 255)
+            # vis_atten = atten_mat[0, 0].detach().cpu().numpy()
+            # vis_atten = (vis_atten - vis_atten.min()) / (vis_atten.max() - vis_atten.min() + 1e-8)
+            # cv2.imwrite("test_atten_mask.png", vis_atten * 255)
+            # pos_atten = torch.einsum('nbc,sbc->nsb', token_pos, feat_pos)
+            # vis_pos = pos_atten[5, :, 0]
+            # vis_pos = (vis_pos - vis_pos.min()) / (vis_pos.max() - vis_pos.min() + 1e-8)
+            # vis_pos = vis_pos.reshape(h, w)
+            # cv2.imwrite("test_pos_mask.png", vis_pos.detach().cpu().numpy() * 255)
+            # import pdb; pdb.set_trace()
 
             # - MLP to smooth tokens
             tokens = self.mlp_layers[i](tokens)
@@ -212,7 +251,7 @@ class MaskMatteEmbAttenHead(nn.Module):
             # - feat to token attention
             # Q: h * w, n_f * b, c_atten
             # KV: n_i, n_f * b, c_atten
-            feat = self.feat_token_ca_layers[i](
+            feat, _ = self.feat_token_ca_layers[i](
                 feat, tokens,
                 memory_mask=None,
                 memory_key_padding_mask=None,
@@ -222,9 +261,9 @@ class MaskMatteEmbAttenHead(nn.Module):
         # tokens to features attention
         # Q: n_i, n_f * b, c_atten
         # KV: h * w, n_f * b, c_atten
-        tokens = self.final_token_feat_ca(
+        tokens, _ = self.final_token_feat_ca(
             tokens, feat,
-            memory_mask=None,
+            memory_mask=atten_padding_m,
             memory_key_padding_mask=None,
             pos=feat_pos, query_pos=token_pos
         )

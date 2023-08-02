@@ -1,9 +1,9 @@
-name: 'mgm_enc-embed_him_short-768-512x512_bs8_50k_adamw_2e-4_fixval'
+name: 'mgm_him_enc-embed_max-3-inst_bs12_30k_adamw_2.0e-4'
 output_dir: 'output/HIM'
 train:
-  batch_size: 16 #16
+  batch_size: 12
   num_workers: 4
-  max_iter: 50000
+  max_iter: 30000
   optimizer:
     lr: 2.0e-4
     name: adamw
@@ -13,13 +13,13 @@ train:
   val_metrics: ['MAD', 'MSE', 'SAD']
   val_best_metric: 'MAD'
   val_iter: 1000
-  vis_iter: 200
-  log_iter: 50
-  seed: 1105
+  vis_iter: 50
+  log_iter: 20
+  seed: 1234
 test:
   num_workers: 4
   metrics: ['MAD', 'MSE', 'SAD']
-  log_iter: 1
+  log_iter: 10
 model:
   arch: 'MGM'
   backbone: 'res_embed_shortcut_encoder_29'
@@ -38,6 +38,7 @@ dataset:
     root_dir: '/mnt/localssd/HHM'
     bg_dir: '/mnt/localssd/bg'
     split: 'train'
+    max_inst: 2
   test:
     name: 'HIM'
     root_dir: '/mnt/localssd/HIM2K'

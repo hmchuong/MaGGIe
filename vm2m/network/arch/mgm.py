@@ -59,6 +59,7 @@ class MGM(nn.Module):
         self.loss_comp_w = cfg.loss_comp_w
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
         self.loss_dtSSD_w = cfg.loss_dtSSD_w
+        self.loss_multi_inst_w = cfg.loss_multi_inst_w
         self.lap_loss = LapLoss()
 
         need_init_weights = [self.aspp, self.decoder]
@@ -124,7 +125,7 @@ class MGM(nn.Module):
        
         embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
         embedding = self.aspp(embedding)
-        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0))
+        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, gt_alphas=alphas)
         
         # Fushion
         alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
@@ -274,6 +275,23 @@ class MGM(nn.Module):
             loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8
             loss_dict['loss_dtSSD'] = dtSSD_loss
             total_loss += dtSSD_loss * self.loss_dtSSD_w
+
+        if self.loss_multi_inst_w > 0:
+            # multi_inst_os1 = self.regression_loss(alpha_pred_os1.sum(1), alphas.sum(1), loss_type=self.cfg.loss_alpha_type)
+            # multi_inst_os4 = self.regression_loss(alpha_pred_os4.sum(1), alphas.sum(1), loss_type=self.cfg.loss_alpha_type)
+            alpha_multi_os8 = alpha_pred_os8 * valid_mask
+            pred = alpha_multi_os8.sum(1)
+            mask = (pred > 1.0).float()
+            # multi_inst_os8 = F.l1_loss((pred * mask), mask, reduction='sum')
+            multi_inst_os8 = F.smooth_l1_loss((pred * mask), mask, reduction='none', beta=0.5)
+            multi_inst_os8 = multi_inst_os8.sum() / (mask.sum() + 1e-6)
+            # print(multi_inst_os8)
+            # multi_inst_loss = (multi_inst_os1 * 2 + multi_inst_os4 * 1 + multi_inst_os8 * 1) / 5.0
+            # loss_dict['loss_multi_inst_os1'] = multi_inst_os1
+            # loss_dict['loss_multi_inst_os4'] = multi_inst_os4
+            # loss_dict['loss_multi_inst_os8'] = multi_inst_os8
+            loss_dict['loss_multi_inst'] = multi_inst_os8
+            total_loss += multi_inst_os8 * self.loss_multi_inst_w
 
         loss_dict['total'] = total_loss
         return loss_dict

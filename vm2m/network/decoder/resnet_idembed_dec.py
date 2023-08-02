@@ -5,14 +5,13 @@ from torch.nn import functional as F
 from vm2m.network.ops import SpectralNorm
 from .resnet_dec import BasicBlock
 from vm2m.network.module.base import conv1x1
-from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead
+from vm2m.network.module.mask_id_atten import MaskIDAttention
 
-class ResShortCut_EmbedAtten_Dec(nn.Module):
+class ResShortCut_IDEmbed_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
-                 late_downsample=False, final_channel=32,
-                 atten_dims=[32, 64, 128], atten_blocks=[2, 2, 2], 
-                 atten_heads=[1, 2, 4], atten_strides=[2, 1, 1], max_inst=10, **kwargs):
-        super(ResShortCut_EmbedAtten_Dec, self).__init__()
+                 late_downsample=False, atten_dim=255, atten_block=2, 
+                 atten_head=4, max_inst=10, **kwargs):
+        super(ResShortCut_IDEmbed_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -58,32 +57,35 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         #     return_feat=False,
         # )
         
-        middle_channel = 32
+        self.id_aggregation = MaskIDAttention(
+            input_dim=512,
+            attention_dim=atten_dim,
+            n_block=atten_block,
+            n_head=atten_head,
+            max_inst=max_inst
+        )
+
         ## 1 scale
         self.refine_OS1 = nn.Sequential(
-            nn.Conv2d(32, middle_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
-            norm_layer(middle_channel),
+            nn.Conv2d(32, 32, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+            norm_layer(32),
             self.leaky_relu,
-            nn.Conv2d(middle_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2),)
+            nn.Conv2d(32, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2),)
         
         ## 1/4 scale
         self.refine_OS4 = nn.Sequential(
-            nn.Conv2d(64, middle_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
-            norm_layer(middle_channel),
+            nn.Conv2d(64, 32, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+            norm_layer(32),
             self.leaky_relu,
-            nn.Conv2d(middle_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2),)
+            nn.Conv2d(32, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2),)
         
         ## 1/8 scale
-        self.refine_OS8 = MaskMatteEmbAttenHead(
-            input_dim=128,
-            atten_stride=atten_strides[2],
-            attention_dim=atten_dims[2],
-            n_block=atten_blocks[2],
-            n_head=atten_heads[2],
-            output_dim=final_channel,
-            max_inst=max_inst,
-            return_feat=True,
-        )
+        self.refine_OS8 = nn.Sequential(
+            nn.Conv2d(128, 32, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+            norm_layer(32),
+            self.leaky_relu,
+            nn.Conv2d(32, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2),)
+        
         for module in [self.conv1, self.refine_OS1, self.refine_OS4]:
             if not isinstance(module, nn.Sequential):
                 module = [self.conv1]
@@ -151,11 +153,16 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
 
         ret = {}
         fea1, fea2, fea3, fea4, fea5 = mid_fea['shortcut']
+        
+        # Embed mask id into the feature
+        # import pdb; pdb.set_trace()
+        x = self.id_aggregation(x, masks)
+        
         x = self.layer1(x) + fea5
         x = self.layer2(x) + fea4
         
         # import pdb; pdb.set_trace() 
-        x_os8, x = self.refine_OS8(x, masks)
+        x_os8 = self.refine_OS8(x)
         # x_os8 = self.refine_OS8(x, masks)
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
@@ -187,96 +194,6 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
 
         return ret
 
-class ResS_EmbedAttenProdMask_Dec(ResShortCut_EmbedAtten_Dec):
-    def compute_unknown(self, masks, k_size):
-        masks = masks.clone()
-        masks[masks < 1.0/255.0] = 0.0
-        masks[masks > 1 - 1.0/255.0] = 0.0
-        dilated_m = F.max_pool2d(masks, kernel_size=k_size, stride=1, padding=k_size // 2)
-        # erosion_m = F.max_pool2d(1 - masks, kernel_size=k_size, stride=1, padding=k_size // 2)
-        dilated_m = dilated_m[:, :, :masks.shape[2], :masks.shape[3]]
-        # import pdb; pdb.set_trace()
-        # unk_m = dilated_m - erosion_m
-        # unk_m = unk_m[:, :, :masks.shape[2], :masks.shape[3]]
-        return dilated_m #unk_mdilated
-    
-    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, warmup_iter, gt_alphas, **kwargs):
-        '''
-        masks: [b * n_f * n_i, 1, H, W]
-        '''
 
-        # Reshape masks
-        masks = masks.reshape(b, n_f, n_i, masks.shape[2], masks.shape[3])
-
-        ret = {}
-        fea1, fea2, fea3, fea4, fea5 = mid_fea['shortcut']
-        x = self.layer1(x) + fea5
-        x = self.layer2(x) + fea4
-        
-        # import pdb; pdb.set_trace() 
-        # x_os8, x = self.refine_OS8(x, masks)
-        x_os8 = self.refine_OS8(x, masks)
-        x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
-        x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
-
-        x = self.layer3(x) + fea3
-
-        # Compute new masks from the x_os8
-        prev_mask = x_os8
-        if self.training and (iter < warmup_iter or (iter < warmup_iter * 3 and random.randint(0,1) == 0)):
-            # Use masks from the input
-            prev_mask = gt_alphas.reshape(b * n_f, n_i, *gt_alphas.shape[-2:])
-            prev_mask = (prev_mask > 0.0).float()
-        if prev_mask.shape[1] < x_os8.shape[1]:
-            prev_mask = torch.cat([prev_mask, torch.zeros_like(x_os8[:, prev_mask.shape[1]:])], dim=1)
-
-        # import pdb; pdb.set_trace()
-        # os4_masks = self.compute_unknown(prev_mask, k_size=30)
-        os4_masks = prev_mask
-        os4_masks = os4_masks.reshape(b, n_f, -1, *os4_masks.shape[-2:])
-
-        x_os4 = self.refine_OS4(x, os4_masks)
-        x_os4 = F.interpolate(x_os4, scale_factor=4.0, mode='bilinear', align_corners=False)
-        x_os4 = (torch.tanh(x_os4) + 1.0) / 2.0
-
-        x = self.layer4(x) + fea2
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.leaky_relu(x) + fea1
-
-        # Compute new masks from the x_os8
-        prev_mask = x_os4
-        if self.training and (iter < warmup_iter or (iter < warmup_iter * 3 and random.randint(0,1) == 0)):
-            # Use masks from the input
-            prev_mask = gt_alphas.reshape(b * n_f, n_i, *gt_alphas.shape[-2:])
-            prev_mask = (prev_mask > 0.0).float()
-        else:
-            # OS8 masks + OS4 masks
-            uncertainty = x_os8.clone()
-            prev_mask = x_os8.clone()
-            uncertainty[prev_mask < 1.0/255.0] = 0.0
-            uncertainty[prev_mask > 1 - 1.0/255.0] = 0.0
-            uncertainty = F.max_pool2d(uncertainty, kernel_size=15, stride=1, padding=15 // 2)
-            prev_mask[uncertainty > 0.0] = x_os4[uncertainty > 0.0]
-
-        if prev_mask.shape[1] < x_os4.shape[1]:
-            prev_mask = torch.cat([prev_mask, torch.zeros_like(x_os4[:, prev_mask.shape[1]:])], dim=1)
-
-        os1_masks = prev_mask
-        # os1_masks = self.compute_unknown(prev_mask, k_size=15)
-        os1_masks = os1_masks.reshape(b, n_f, -1, *os1_masks.shape[-2:])
-
-        x_os1 = self.refine_OS1(x, os1_masks)
-        x_os1 = (torch.tanh(x_os1) + 1.0) / 2.0
-
-        ret['alpha_os1'] = x_os1
-        ret['alpha_os4'] = x_os4
-        ret['alpha_os8'] = x_os8
-
-        return ret
-
-def res_shortcut_embed_attention_decoder_22(**kwargs):
-    return ResShortCut_EmbedAtten_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)
-
-def res_shortcut_embed_attention_proma_decoder_22(**kwargs):
-    return ResS_EmbedAttenProdMask_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)
+def res_shortcut_id_embed_decoder_22(**kwargs):
+    return ResShortCut_IDEmbed_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)

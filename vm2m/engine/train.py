@@ -264,7 +264,7 @@ def train(cfg, rank, is_dist=False):
                 model.eval()
                 val_model = model.module if is_dist else model
                 _ = [v.reset() for v in val_error_dict.values()]
-                _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, False, True, None)
+                _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, False, False, None)
 
                 if is_dist:
                     logging.info("Gathering metrics...")

@@ -1,5 +1,6 @@
 import glob
 import os
+import numpy as np
 from PIL import Image
 import torch
 import torch.nn as nn
@@ -13,13 +14,26 @@ except:
     from utils import gen_transition_gt
 
 class HIMDataset(Dataset):
-    def __init__(self, root_dir, split, padding_inst=10, short_size=768):
+    def __init__(self, root_dir, split, padding_inst=10, short_size=768, is_train=False, random_seed=2023, crop=(512, 512), **kwargs):
         super().__init__()
         self.root_dir = root_dir
         self.split = split
         self.short_size = short_size
         self.padding_inst = padding_inst
+        self.random = np.random.RandomState(random_seed)
         self.load_image_alphas()
+
+        # self.transforms = [
+        #     T.Load(),
+        #     T.ResizeShort(short_size, transform_alphas=False),
+        #     T.PaddingMultiplyBy(32, transform_alphas=False),
+        #     T.Stack(),
+        #     T.MasksFromBinarizedAlpha() if is_train else T.RandomBinarizeAlpha(self.random, 30),
+        #     T.ToTensor(),
+        #     T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        # ]
+        # if is_train: 
+        #     self.transforms = self.transforms[:3] + [T.RandomCropByAlpha(crop, self.random)] + self.transforms[3:]
 
         self.transforms = [
             T.Load(),
@@ -30,7 +44,9 @@ class HIMDataset(Dataset):
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ]
+        
         self.transforms = T.Compose(self.transforms)
+        self.is_train = is_train
     
     def load_image_alphas(self):
         images = sorted(glob.glob(os.path.join(self.root_dir, "images", self.split, "*.jpg")))

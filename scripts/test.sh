@@ -402,12 +402,28 @@ python -m tools.main --dist --gpus 4 --config configs/AIM-500/mgm.yaml --eval-on
 python -m tools.main --dist --gpus 4 --config configs/AIM-500/mgmdk_8x8.yaml --eval-only \
                                                 model.weights output/HHM/mgmdk_8x8_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
 
+
+python -m tools.main --dist --gpus 4 --config configs/AIM-500/mgm_multiinst.yaml --eval-only \
+                                                model.weights output/HIM/tuning_mgm_filtered/best_model.pth
+
+python -m tools.main --dist --gpus 4 --config configs/AIM-500/mgm_atten_embed.yaml --eval-only \
+                                                name mgm_atten_embed \
+                                                model.weights output/HIM/tuning_enc-dec-os8-conv_filtered_multi-inst/best_model.pth
+
 python -m tools.main --dist --gpus 4 --config configs/AIM-500/mgm_atten-dec.yaml --eval-only \
                                                 model.weights output/HHM/mgm_atten-dec_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
 
 # Test AM-200
 python -m tools.main --dist --gpus 4 --config configs/AM-2K/mgm.yaml --eval-only \
                                                 model.weights output/HHM/mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
+
+python -m tools.main --dist --gpus 4 --config configs/AM-2K/mgm_multiinst.yaml --eval-only \
+                                                name mgm_multi-inst \
+                                                model.weights output/HIM/tuning_mgm_filtered/best_model.pth
+
+python -m tools.main --dist --gpus 4 --config configs/AM-2K/mgm_atten_embed.yaml --eval-only \
+                                                name mgm_atten_embed \
+                                                model.weights output/HIM/tuning_enc-dec-os8-conv_filtered_multi-inst/best_model.pth
 
 python -m tools.main --dist --gpus 4 --config configs/AM-2K/mgmdk_8x8.yaml --eval-only \
                                                 model.weights output/HHM/mgmdk_8x8_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth
@@ -418,8 +434,51 @@ python -m tools.main --dist --gpus 4 --config configs/AM-2K/mgm_atten-dec.yaml -
 # Test HIM
 python -m tools.main --dist --gpus 4 --config configs/HIM/mgm_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
                                                 name mgm_him_short-768-512x512_bs32_50k_adamw_2e-4 \
-                                                model.weights output/HIM/mgm_him_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth \
+                                                model.weights output/HIM/mgm_him_max-3-inst_bs12_30k_adamw_2.0e-4/best_model.pth \
                                                 dataset.test.split natural \
                                                 test.save_results True \
                                                 test.postprocessing False \
-                                                test.save_dir output/HIM/mgm_him_short-768-512x512_bs32_50k_adamw_2e-4/vis_natural
+                                                test.save_dir output/HIM/mgm_him_max-3-inst_bs12_30k_adamw_2.0e-4/vis_natural
+
+python -m tools.main --dist --gpus 4 --config configs/HIM/mgm_enc-embed_dec-embed-atten_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
+                                                name mgm_him_enc-dec-embed_no-inst-loss_max-3-inst_bs12_30k_adamw_2.0e-4 \
+                                                model.weights output/HIM/mgm_him_enc-dec-embed_no-inst-loss_max-3-inst_bs12_30k_adamw_2.0e-4/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.save_dir output/HIM/mgm_him_enc-dec-embed_no-inst-loss_max-3-inst_bs12_30k_adamw_2.0e-4/vis_natural
+
+python -m tools.main --dist --gpus 4 --config configs/HIM/mgm_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
+                                                name mtuning_mgm_filtered \
+                                                model.weights output/HIM/tuning_mgm_filtered/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.use_trimap False \
+                                                test.save_dir output/HIM/tuning_mgm_filtered/vis_natural_best_final
+
+python -m tools.main --gpus 1 --config configs/HIM/mgm_enc-embed_dec-id-embed_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
+                                                name tuning_enc-dec-id-embed_filtered \
+                                                model.weights output/HIM/tuning_enc-dec-id-embed_filtered_multi-inst/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing True \
+                                                test.use_trimap False \
+                                                test.save_dir output/HIM/tuning_enc-dec-id-embed_filtered/vis_natural_multi-inst_best_new1
+
+python -m tools.main --dist --gpus 4 --config configs/HIM/mgm_enc-embed_dec-embed-atten_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
+                                                name tuning_enc-dec-os8-conv_filtered_multi-inst \
+                                                model.weights output/HIM/tuning_enc-dec-os8-conv_filtered_multi-inst/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.use_trimap False \
+                                                test.save_dir output/HIM/tuning_enc-dec-os8-conv_filtered_multi-inst/vis_natural_7k5
+
+CUDA_VISIBLE_DEVICES=2,3 python -m tools.main --dist --gpus 2 --config configs/HIM/mgm_enc-embed_dec-embed-atten_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
+                                                name tuning_enc-dec_filtered \
+                                                model.weights output/HIM/tuning_enc-dec_filtered/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.save_dir output/HIM/tuning_enc-dec_filtered/vis_natural

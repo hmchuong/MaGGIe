@@ -16,6 +16,6 @@ mv train bg
 # Start training
 echo "Starting training..."
 cd $ROOT_DIR
-python -m tools.main --config configs/HIM/mgm_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --override --dist --gpus 4 \
-                        name mgm_him_no-inst-loss_max-3-inst_bs12_30k_adamw_2.0e-4 \
-                        model.loss_multi_inst_w 0.0
+python -m tools.main --config configs/HIM/mgm_enc-embed_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --override --dist --gpus 4 \
+                    name mgm_him_enc-embed_no-inst-loss_max-3-inst_bs12_30k_adamw_2.0e-4 \
+                    model.loss_multi_inst_w 0.0

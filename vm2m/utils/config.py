@@ -89,6 +89,8 @@ CONFIG.model.loss_atten_w = 1.0
 CONFIG.model.loss_comp_w = 0.25
 CONFIG.model.loss_dtSSD_w = 1.0
 
+CONFIG.model.loss_multi_inst_w = 0.0
+
 CONFIG.model.aspp = CN({})
 CONFIG.model.aspp.in_channels = 512
 CONFIG.model.aspp.out_channels = 512

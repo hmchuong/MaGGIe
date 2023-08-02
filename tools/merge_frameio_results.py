@@ -16,23 +16,23 @@ dirs = [
     f"/mnt/localssd/frame.io/images/{video_name}",
     f"/mnt/localssd/frame.io/coarses/{video_name}/{argparse_args.instance}",
     f"{root_dir}/mgm/{video_name}/{argparse_args.instance}",
-    f"{root_dir}/mgm_wild/{video_name}/{argparse_args.instance}",
+    # f"{root_dir}/mgm_wild/{video_name}/{argparse_args.instance}",
     # f"{root_dir}/tcvom/{video_name}/{argparse_args.instance}",
     f"{root_dir}/sftm/{video_name}/{argparse_args.instance}",
-    f"{root_dir}/samdec/{video_name}/{argparse_args.instance}", # TODO: change this to atten-dec
+    # f"{root_dir}/samdec/{video_name}/{argparse_args.instance}", # TODO: change this to atten-dec
 ]
 desc = [
     "image",
     "input mask",
     "MGM",
-    "MGM Wild",
+    # "MGM Wild",
     # "MGM + TCVOM",
-    "MGM + SFTM",
-    "MGM + SAM Dec",
+    "Ours",
+    # "MGM + SAM Dec",
 ]
-dst_dir = f"{root_dir}/{video_name}_inst{argparse_args.instance}"
+dst_dir = f"{root_dir}/{video_name}_inst{argparse_args.instance}_0801"
 n_rows = 2
-n_cols = 5
+n_cols = 3
 
 # create destination directory if it doesn't exist
 if not os.path.exists(dst_dir):
@@ -68,9 +68,9 @@ for image_filename in tqdm(image_filenames):
             alpha = image * 1.0 / 255.0
             composed_img = (1.0 - alpha) * composed_img + alpha * ori_image
             composed_img = composed_img.astype(np.uint8)
-            cv2.putText(composed_img, text, (6, 60), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 255), 5)
+            cv2.putText(composed_img, text, (6, 120), cv2.FONT_HERSHEY_SIMPLEX, 4, (255, 0, 255), 10)
             images.append(composed_img)
-        cv2.putText(image, text, (6, 60), cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 255), 5)
+        cv2.putText(image, text, (6, 120), cv2.FONT_HERSHEY_SIMPLEX, 4, (255, 0, 255), 10)
         images.append(image)
             
         

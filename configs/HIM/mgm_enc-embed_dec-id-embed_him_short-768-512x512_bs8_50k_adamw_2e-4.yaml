@@ -1,4 +1,4 @@
-name: 'mgm_dec-embed_him_max-3-inst_bs12_30k_adamw_2.0e-4'
+name: 'mgm_him_enc-dec-embed_max-3-inst_bs12_30k_adamw_2.0e-4'
 output_dir: 'output/HIM'
 train:
   batch_size: 12
@@ -19,20 +19,18 @@ train:
 test:
   num_workers: 4
   metrics: ['MAD', 'MSE', 'SAD']
-  log_iter: 1
+  log_iter: 10
 model:
   arch: 'MGM'
-  backbone: 'res_shortcut_encoder_29'
+  backbone: 'res_embed_shortcut_encoder_29'
   backbone_args:
     num_mask: 10
-  decoder: 'res_shortcut_embed_attention_decoder_22'
+  decoder: 'res_shortcut_id_embed_decoder_22'
   decoder_args:
     max_inst: 10
-    final_channel: 32
-    atten_dims: [32, 32, 32]
-    atten_strides: [4, 2, 2]
-    atten_blocks: [2, 2, 2]
-    atten_heads: [1, 1, 1]
+    atten_dim: 256
+    atten_block: 2
+    atten_head: 4
   mgm:
     warmup_iter: 5000
   loss_dtSSD_w: 0.0
@@ -43,8 +41,10 @@ dataset:
     root_dir: '/mnt/localssd/HHM'
     bg_dir: '/mnt/localssd/bg'
     split: 'train'
-    max_inst: 2
+    max_inst: 3
+    short_size: 576
   test:
     name: 'HIM'
     root_dir: '/mnt/localssd/HIM2K'
     split: 'comp'
+    short_size: 576

@@ -97,11 +97,10 @@ class CrossAttentionLayer(nn.Module):
             # import pdb; pdb.set_trace()
             # set_trace()
             raise ValueError("Mask is empty")
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
+        tgt2, atten_mat = self.multihead_attn(query=self.with_pos_embed(tgt, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
-        self.multihead_attn(query=self.with_pos_embed(tgt, query_pos), key=self.with_pos_embed(memory, pos), value=memory, attn_mask=memory_mask, key_padding_mask=memory_key_padding_mask)[0]
+                                   key_padding_mask=memory_key_padding_mask)
         # if torch.isnan(tgt2).any():
         #     import pdb; pdb.set_trace()
             # raise ValueError("Mask is empty")
@@ -111,7 +110,7 @@ class CrossAttentionLayer(nn.Module):
         tgt = self.norm(tgt)
         # if torch.isnan(tgt).any():
         #     import pdb; pdb.set_trace()
-        return tgt
+        return tgt, atten_mat
 
     def forward_pre(self, tgt, memory,
                     memory_mask: Optional[Tensor] = None,
@@ -119,13 +118,13 @@ class CrossAttentionLayer(nn.Module):
                     pos: Optional[Tensor] = None,
                     query_pos: Optional[Tensor] = None):
         tgt2 = self.norm(tgt)
-        tgt2 = self.multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
+        tgt2, atten_mat = self.multihead_attn(query=self.with_pos_embed(tgt2, query_pos),
                                    key=self.with_pos_embed(memory, pos),
                                    value=memory, attn_mask=memory_mask,
-                                   key_padding_mask=memory_key_padding_mask)[0]
+                                   key_padding_mask=memory_key_padding_mask)
         tgt = tgt + self.dropout(tgt2)
 
-        return tgt
+        return tgt, atten_mat
 
     def forward(self, tgt, memory,
                 memory_mask: Optional[Tensor] = None,
