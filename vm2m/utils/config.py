@@ -90,6 +90,8 @@ CONFIG.model.loss_comp_w = 0.25
 CONFIG.model.loss_dtSSD_w = 1.0
 
 CONFIG.model.loss_multi_inst_w = 0.0
+CONFIG.model.loss_multi_inst_type = 'l1' # 'l2', 'smooth_l1_0.5'
+CONFIG.model.loss_multi_inst_warmup = 0 
 
 CONFIG.model.aspp = CN({})
 CONFIG.model.aspp.in_channels = 512
@@ -131,6 +133,8 @@ dataset.train.root_dir = ''
 dataset.train.split = 'train'
 dataset.train.clip_length = 8
 dataset.train.short_size = 768
+dataset.train.use_single_instance_only = True
+
 # For augmentation
 dataset.train.random_state = 2023
 dataset.train.crop = [512, 512] # (h, w)

@@ -15,10 +15,10 @@ except ImportError:
     from utils import gen_transition_gt
 
 class ComposedInstImageMatteDataset(Dataset):
-    def __init__(self, root_dir, split, bg_dir, max_inst=10, padding_inst=10, short_size=768, crop=(512, 512), random_seed=2023):
+    def __init__(self, root_dir, split, bg_dir, max_inst=10, padding_inst=10, short_size=768, crop=(512, 512), random_seed=2023, use_single_instance_only=True):
         super().__init__()
         self.root_dir = os.path.join(root_dir, split)
-        if os.path.exists("vm2m/dataloader/invalid_him.txt"):
+        if os.path.exists("vm2m/dataloader/invalid_him.txt") and use_single_instance_only:
             self.load_valid_image_alphas()
         else:
             self.load_image_alphas()

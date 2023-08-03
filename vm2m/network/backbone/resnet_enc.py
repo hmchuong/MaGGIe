@@ -250,19 +250,28 @@ class ResMaskAttenShortCut_D(ResShortCut_D):
         return out, {'shortcut':(fea1, fea2, fea3, fea4, fea5), 'image':x[:,:3,...], 'backbone_feat': (x2, x3, x4, out)}
 
 class ResMaskEmbedShortCut_D(ResShortCut_D):
-    def __init__(self, block, layers, num_mask=1, norm_layer=None, late_downsample=False, **kwargs):
-        super(ResMaskEmbedShortCut_D, self).__init__(block, layers, 1, norm_layer, late_downsample=late_downsample, **kwargs)
+    def __init__(self, block, layers, num_mask=1, num_embed=1, norm_layer=None, late_downsample=False, **kwargs):
+        super(ResMaskEmbedShortCut_D, self).__init__(block, layers, num_embed, norm_layer, late_downsample=late_downsample, **kwargs)
 
-        self.mask_embed = nn.Embedding(num_mask + 1, 1)
+        self.num_embed = num_embed
+        if self.num_embed > 0:
+            self.mask_embed_layer = nn.Embedding(num_mask + 1, num_embed)
     
     def forward(self, x, **kwargs):
-        masks = x[:, 3:, ...]
-        mask_ids = torch.arange(1, masks.shape[1]+1, device=masks.device)[None, :, None, None]
-        masks = (masks * mask_ids).max(1)[0]
-        masks = self.mask_embed(masks.long()).squeeze(-1).unsqueeze(1)
+        inp = x[:, :3, ...]
 
-        image = x[:, :3, ...]
-        inp = torch.cat([image, masks], dim=1)
+        if self.num_embed > 0:
+            masks = x[:, 3:, ...]
+            mask_ids = torch.arange(1, masks.shape[1]+1, device=masks.device)[None, :, None, None]
+            # masks = (masks * mask_ids).max(1)[0]
+            # masks = masks.sum(1) / (masks > 0).sum(1)
+            masks = (masks * mask_ids).long()
+            mask_embed = self.mask_embed_layer(masks.long())
+            mask_embed = mask_embed * (masks > 0).float().unsqueeze(-1)
+            mask_embed = mask_embed.sum(1) / ((masks > 0).float().unsqueeze(-1).sum(1) + 1e-6)
+            mask_embed = mask_embed.permute(0, 3, 1, 2)
+            
+            inp = torch.cat([inp, mask_embed], dim=1)
 
         return super().forward(inp, **kwargs)
 
@@ -317,8 +326,11 @@ def res_embed_shortcut_encoder_29(**kwargs):
     model = _res_embed_shortcut_D(BasicBlock, [3, 4, 4, 2], **kwargs)
     state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
     state_dict = {k[7:]: v for k, v in state_dict.items()}
-    state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
-    state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
+    if kwargs['num_mask'] > 0:
+        del state_dict['conv1.module.weight_bar']
+        del state_dict['conv1.module.weight_v']
+    # state_dict['conv1.module.weight_v'] = torch.cat([state_dict['conv1.module.weight_v'], state_dict['conv1.module.weight_v'][:9]])
+    # state_dict['conv1.module.weight_bar'] = torch.cat([state_dict['conv1.module.weight_bar'], state_dict['conv1.module.weight_bar'][:, :1]], dim=1)
     model.load_state_dict(state_dict, strict=False)
     return model
 

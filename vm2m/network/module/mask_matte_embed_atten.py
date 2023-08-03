@@ -7,7 +7,7 @@ from .mask_attention import MLP, SelfAttentionLayer, CrossAttentionLayer, FFNLay
 
 class MaskMatteEmbAttenHead(nn.Module):
     def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_head=4, 
-                 output_dim=32, return_feat=True, max_inst=10):
+                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True):
         super().__init__()
         
         self.n_block = n_block
@@ -69,7 +69,7 @@ class MaskMatteEmbAttenHead(nn.Module):
         self.final_mlp = MLP(attention_dim, attention_dim, output_dim, 1)
         self.decoder_norm = nn.LayerNorm(output_dim)
 
-        self.n_temp_embed = self.pe_layer.temporal_num_pos_feats
+        self.n_temp_embed = self.pe_layer.temporal_num_pos_feats if use_temp_pe else 0
         self.n_id_embed = self.atten_dim - self.n_temp_embed
         self.query_feat = nn.Embedding(max_inst, attention_dim)
         # self.query_embed = nn.Embedding(max_inst, attention_dim)
@@ -131,12 +131,14 @@ class MaskMatteEmbAttenHead(nn.Module):
         
         # Compute n_channels for ID and temporal embedding
         n_temp_embed = self.n_temp_embed
-        n_id_embed = self.n_id_embed
+        # n_id_embed = self.n_id_embed
 
         # Feat pos: ID embedding + Temporal position embedding
-        temp_feat_pos = self.pe_layer(b, n_f, 1, 1, device=feat.device)               # (b, c_atten, n_f, 1, 1)
-        temp_feat_pos = temp_feat_pos.repeat(1, 1, 1, h, w)                                # (b, c_atten, n_f, h, w)
-        temp_feat_pos = temp_feat_pos[:, :n_temp_embed] # (b, c_atten_temp, n_f, h, w)
+        temp_feat_pos = None
+        if n_temp_embed > 0:
+            temp_feat_pos = self.pe_layer(b, n_f, 1, 1, device=feat.device)               # (b, c_atten, n_f, 1, 1)
+            temp_feat_pos = temp_feat_pos.repeat(1, 1, 1, h, w)                                # (b, c_atten, n_f, h, w)
+            temp_feat_pos = temp_feat_pos[:, :n_temp_embed] # (b, c_atten_temp, n_f, h, w)
 
         # Adding ID embedding to feat_pos
         id_feat_pos = torch.arange(1, mask.shape[2]+1, device=mask.device)[None, None, :, None, None] # (1, 1, n_i, 1, 1)
@@ -145,7 +147,10 @@ class MaskMatteEmbAttenHead(nn.Module):
         # id_feat_pos = id_feat_pos[:, None].repeat(1, n_id_embed, 1, 1, 1) # (b, c_atten_id, n_f, h, w)
         id_feat_pos = id_feat_pos.permute(0, 4, 1, 2, 3) # (b, c_atten_id, n_f h, w)
 
-        feat_pos = torch.cat([id_feat_pos, temp_feat_pos], dim=1) # (b, c_atten, n_f, h, w)
+        if temp_feat_pos is not None:
+            feat_pos = torch.cat([id_feat_pos, temp_feat_pos], dim=1) # (b, c_atten, n_f, h, w)
+        else:
+            feat_pos = id_feat_pos
         feat_pos = feat_pos.permute(0, 2, 1, 3, 4).reshape(b, n_f, 1, -1, h * w) # (b, n_f, 1, c_atten, h * w)
         
 
@@ -161,9 +166,12 @@ class MaskMatteEmbAttenHead(nn.Module):
         id_token_pos = torch.arange(1, self.max_inst + 1, device=tokens.device)[None, None, :] # (1, 1, max_inst)
         id_token_pos = self.id_embedding(id_token_pos.long()) # (1, 1, max_inst, c_atten_id)
         id_token_pos = id_token_pos.repeat(b, n_f, 1, 1) # (b, n_f, max_inst, c_atten_id)
-        temp_token_pos = temp_feat_pos[:, :, :, None, 0, 0].permute(0, 2, 3, 1).repeat(1, 1, self.max_inst, 1) # (b, n_f, max_inst, c_atten_temp)
-        token_pos = torch.cat([id_token_pos, temp_token_pos], dim=-1) # (b, n_f, max_inst, c_atten)
-
+        if temp_feat_pos is not None:
+            temp_token_pos = temp_feat_pos[:, :, :, None, 0, 0].permute(0, 2, 3, 1).repeat(1, 1, self.max_inst, 1) # (b, n_f, max_inst, c_atten_temp)
+            token_pos = torch.cat([id_token_pos, temp_token_pos], dim=-1) # (b, n_f, max_inst, c_atten)
+        else:
+            token_pos = id_token_pos
+            
         # import pdb; pdb.set_trace()
 
         # Reshape feat to h * w, n_f * b, c

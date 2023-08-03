@@ -3,6 +3,7 @@ import argparse
 import logging
 import torch
 import numpy as np
+from yacs.config import _assert_with_logging, _check_and_coerce_cfg_value_type
 
 import wandb
 import torch.distributed as dist
@@ -57,7 +58,37 @@ def main(rank, cfg, dist_url=None, world_size=8, eval_only=False):
     
     if dist_url is not None:
         dist.destroy_process_group()
-        
+
+def merge_from_list(config, cfg_list):
+    """Merge config (keys, values) in a list (e.g., from command line) into
+    this CfgNode. For example, `cfg_list = ['FOO.BAR', 0.5]`.
+    """
+    _assert_with_logging(
+        len(cfg_list) % 2 == 0,
+        "Override list has odd length: {}; it must be a list of pairs".format(
+            cfg_list
+        ),
+    )
+    root = config
+    for full_key, v in zip(cfg_list[0::2], cfg_list[1::2]):
+        if root.key_is_deprecated(full_key):
+            continue
+        if root.key_is_renamed(full_key):
+            root.raise_key_rename_error(full_key)
+        key_list = full_key.split(".")
+        d = config
+        for subkey in key_list[:-1]:
+            _assert_with_logging(
+                subkey in d, "Non-existent key: {}".format(full_key)
+            )
+            d = d[subkey]
+        subkey = key_list[-1]
+        _assert_with_logging(subkey in d, "Non-existent key: {}".format(full_key))
+        value = config._decode_cfg_value(v)
+        if type(value) != type(d[subkey]):
+            value = type(d[subkey])(value)
+        value = _check_and_coerce_cfg_value_type(value, d[subkey], subkey, full_key)
+        d[subkey] = value
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser("Video Mask To Matte")
@@ -72,7 +103,17 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     CONFIG.merge_from_file(args.config)
-    CONFIG.merge_from_list(args.opts)
+    new_opts = []
+    for opt in args.opts:
+        if opt.startswith('--'):
+            new_opts.append(opt[2:])
+        elif '=' in opt:
+            key, value = opt.split('=')
+            new_opts.append(key)
+            new_opts.append(value)
+        else:
+            new_opts.append(opt)
+    merge_from_list(CONFIG, new_opts)
 
     # Random seed in case seed is not provided in config file.
     seed = CONFIG.train.seed

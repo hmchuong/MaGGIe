@@ -1,9 +1,9 @@
-name: 'mgm_him_enc-dec-embed_max-3-inst_bs12_30k_adamw_2.0e-4'
+name: 'sweep'
 output_dir: 'output/HIM'
 train:
   batch_size: 12
   num_workers: 4
-  max_iter: 30000
+  max_iter: 10000
   optimizer:
     lr: 2.0e-4
     name: adamw
@@ -12,9 +12,9 @@ train:
     warmup_iters: 1000
   val_metrics: ['MAD', 'MSE', 'SAD']
   val_best_metric: 'MAD'
-  val_iter: 1000
-  vis_iter: 50
-  log_iter: 20
+  val_iter: 500
+  vis_iter: 100
+  log_iter: 10
   seed: 1234
 test:
   num_workers: 4
@@ -25,15 +25,17 @@ model:
   backbone: 'res_embed_shortcut_encoder_29'
   backbone_args:
     num_mask: 10
+    num_embed: 3
   decoder: 'res_shortcut_embed_attention_decoder_22'
   decoder_args:
     max_inst: 10
     final_channel: 64
     # atten_dims: [32, 32, 32]
-    atten_dims: [64, 64, 128]
-    atten_strides: [4, 2, 1]
-    atten_blocks: [2, 2, 2]
-    atten_heads: [1, 1, 1]
+    atten_dim: 128
+    atten_stride: 1
+    atten_block: 2
+    atten_head: 1
+    head_channel: 32 
   mgm:
     warmup_iter: 5000
   loss_dtSSD_w: 0.0

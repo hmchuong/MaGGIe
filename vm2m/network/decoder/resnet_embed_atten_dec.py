@@ -6,12 +6,13 @@ from vm2m.network.ops import SpectralNorm
 from .resnet_dec import BasicBlock
 from vm2m.network.module.base import conv1x1
 from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead
+from vm2m.network.module.instance_matte_head import InstanceMatteHead
 
 class ResShortCut_EmbedAtten_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
-                 atten_dims=[32, 64, 128], atten_blocks=[2, 2, 2], 
-                 atten_heads=[1, 2, 4], atten_strides=[2, 1, 1], max_inst=10, **kwargs):
+                 atten_dim=128, atten_block=2, 
+                 atten_head=1, atten_stride=1, head_channel=32, max_inst=10, **kwargs):
         super(ResShortCut_EmbedAtten_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -58,32 +59,40 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         #     return_feat=False,
         # )
         
-        middle_channel = 32
-        ## 1 scale
-        self.refine_OS1 = nn.Sequential(
-            nn.Conv2d(32, middle_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
-            norm_layer(middle_channel),
-            self.leaky_relu,
-            nn.Conv2d(middle_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2),)
-        
-        ## 1/4 scale
-        self.refine_OS4 = nn.Sequential(
-            nn.Conv2d(64, middle_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
-            norm_layer(middle_channel),
-            self.leaky_relu,
-            nn.Conv2d(middle_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2),)
-        
         ## 1/8 scale
         self.refine_OS8 = MaskMatteEmbAttenHead(
             input_dim=128,
-            atten_stride=atten_strides[2],
-            attention_dim=atten_dims[2],
-            n_block=atten_blocks[2],
-            n_head=atten_heads[2],
+            atten_stride=atten_stride,
+            attention_dim=atten_dim,
+            n_block=atten_block,
+            n_head=atten_head,
             output_dim=final_channel,
             max_inst=max_inst,
             return_feat=True,
+            use_temp_pe=False
         )
+
+        group = max_inst if head_channel % max_inst == 0 else 1
+
+        ## 1 scale
+        self.refine_OS1 = nn.Sequential(
+            nn.Conv2d(32, head_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+            norm_layer(head_channel),
+            self.leaky_relu,
+            nn.Conv2d(head_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, groups=group)
+        )
+        # self.refine_OS1 = InstanceMatteHead(self.refine_OS8.query_feat, 32, hidden_channel=2, k_out_channel=4)
+        
+        ## 1/4 scale
+        self.refine_OS4 = nn.Sequential(
+            nn.Conv2d(64, head_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+            norm_layer(head_channel),
+            self.leaky_relu,
+            nn.Conv2d(head_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, groups=group)
+        )
+        # self.refine_OS4 = InstanceMatteHead(self.refine_OS8.query_feat, 64, hidden_channel=8, k_out_channel=4)
+        
+        
         for module in [self.conv1, self.refine_OS1, self.refine_OS4]:
             if not isinstance(module, nn.Sequential):
                 module = [self.conv1]

@@ -1,3 +1,4 @@
+from functools import partial
 import logging
 import numpy as np
 import cv2
@@ -8,7 +9,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 from vm2m.network.module.aspp import ASPP
 from vm2m.network.decoder import *
-from vm2m.network.loss import LapLoss, loss_comp, loss_dtSSD
+from vm2m.network.loss import LapLoss, loss_comp, loss_dtSSD, GradientLoss
 from vm2m.network.backbone.resnet_enc import ResMaskEmbedShortCut_D
 from vm2m.network.decoder.resnet_embed_atten_dec import ResShortCut_EmbedAtten_Dec
 
@@ -59,8 +60,21 @@ class MGM(nn.Module):
         self.loss_comp_w = cfg.loss_comp_w
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
         self.loss_dtSSD_w = cfg.loss_dtSSD_w
-        self.loss_multi_inst_w = cfg.loss_multi_inst_w
+        self.loss_alpha_grad_w = cfg.loss_alpha_grad_w
         self.lap_loss = LapLoss()
+        self.grad_loss = GradientLoss()
+
+        # For multi-inst loss
+        self.loss_multi_inst_w = cfg.loss_multi_inst_w
+        self.loss_multi_inst_warmup = cfg.loss_multi_inst_warmup
+        if cfg.loss_multi_inst_type == 'l1':
+            self.loss_multi_inst_func = F.l1_loss
+        elif cfg.loss_multi_inst_type == 'l2':
+            self.loss_multi_inst_func = F.mse_loss
+        elif cfg.loss_multi_inst_type.startswith('smooth_l1'):
+            beta = float(cfg.loss_multi_inst_type.split('_')[-1])
+            self.loss_multi_inst_func = partial(F.smooth_l1_loss, beta=beta)
+
 
         need_init_weights = [self.aspp, self.decoder]
 
@@ -260,6 +274,17 @@ class MGM(nn.Module):
             loss_dict['loss_lap'] = lap_loss
             total_loss += lap_loss * self.loss_alpha_lap_w
         
+        if self.loss_alpha_grad_w > 0:
+            grad_loss_os1 = self.grad_loss(alpha_pred_os1, alphas, weight_os1)
+            grad_loss_os4 = self.grad_loss(alpha_pred_os4, alphas, weight_os4)
+            grad_loss_os8 = self.grad_loss(alpha_pred_os8, alphas, weight_os8)
+            grad_loss = (grad_loss_os1 * 2 + grad_loss_os4 * 1 + grad_loss_os8 * 1) / 5.0
+            loss_dict['loss_grad_os1'] = grad_loss_os1
+            loss_dict['loss_grad_os4'] = grad_loss_os4
+            loss_dict['loss_grad_os8'] = grad_loss_os8
+            loss_dict['loss_grad'] = grad_loss
+            total_loss += grad_loss * self.loss_alpha_grad_w
+
         if self.loss_dtSSD_w > 0:
             alpha_pred_os8 = alpha_pred_os8.reshape(*alpha_shape)
             alpha_pred_os4 = alpha_pred_os4.reshape(*alpha_shape)
@@ -276,14 +301,15 @@ class MGM(nn.Module):
             loss_dict['loss_dtSSD'] = dtSSD_loss
             total_loss += dtSSD_loss * self.loss_dtSSD_w
 
-        if self.loss_multi_inst_w > 0:
+        if self.loss_multi_inst_w > 0 and iter >= self.loss_multi_inst_warmup:
             # multi_inst_os1 = self.regression_loss(alpha_pred_os1.sum(1), alphas.sum(1), loss_type=self.cfg.loss_alpha_type)
             # multi_inst_os4 = self.regression_loss(alpha_pred_os4.sum(1), alphas.sum(1), loss_type=self.cfg.loss_alpha_type)
             alpha_multi_os8 = alpha_pred_os8 * valid_mask
             pred = alpha_multi_os8.sum(1)
             mask = (pred > 1.0).float()
             # multi_inst_os8 = F.l1_loss((pred * mask), mask, reduction='sum')
-            multi_inst_os8 = F.smooth_l1_loss((pred * mask), mask, reduction='none', beta=0.5)
+            # multi_inst_os8 = F.smooth_l1_loss((pred * mask), mask, reduction='none', beta=0.5)
+            multi_inst_os8 = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
             multi_inst_os8 = multi_inst_os8.sum() / (mask.sum() + 1e-6)
             # print(multi_inst_os8)
             # multi_inst_loss = (multi_inst_os1 * 2 + multi_inst_os4 * 1 + multi_inst_os8 * 1) / 5.0
@@ -292,6 +318,8 @@ class MGM(nn.Module):
             # loss_dict['loss_multi_inst_os8'] = multi_inst_os8
             loss_dict['loss_multi_inst'] = multi_inst_os8
             total_loss += multi_inst_os8 * self.loss_multi_inst_w
+
+       
 
         loss_dict['total'] = total_loss
         return loss_dict
