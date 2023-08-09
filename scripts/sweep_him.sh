@@ -16,4 +16,4 @@ mv train bg
 # Start training
 echo "Starting training..."
 cd $ROOT_DIR
-wandb agent research-dmo/video-maskg-matting/lsxo1khw
+wandb agent research-dmo/video-maskg-matting/iqk5l7gy

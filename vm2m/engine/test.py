@@ -37,6 +37,7 @@ def save_visualization(save_dir, image_names, alphas, transform_info, output):
             postfix = '_inst%d' % inst_id if alpha_pred.shape[0] > 1 else ''
             if not os.path.isfile(os.path.join(alpha_pred_path, image_name[:-4] + postfix + image_name[-4:])):    
                 cv2.imwrite(os.path.join(alpha_pred_path, image_name[:-4] + postfix + image_name[-4:]), alpha_pred[inst_id])
+                
 
         if trans_preds is not None:
             # Save trans pred
@@ -56,7 +57,7 @@ def save_visualization(save_dir, image_names, alphas, transform_info, output):
                 cv2.imwrite(os.path.join(inc_bin_path, image_name), inc_bin_pred)
 
 @torch.no_grad()
-def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None):
+def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
     
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
@@ -65,6 +66,11 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
     model.eval()
     
     with torch.no_grad():
+        memory_frames = []
+        processed_frames = 0
+        memory_interval = 5
+        prev_embedding = None
+        video_name = None
         for i, batch in enumerate(val_loader):
 
             data_time.update(time.time() - end_time)
@@ -78,15 +84,35 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             trimap = batch.pop('trimap').numpy()
             alpha_gt = batch.pop('alpha').numpy()
             skip = batch.pop('skip').numpy()[0]
+            
+            # Reset if new video
+            if image_names[0][0].split('/')[-2] != video_name:
+                video_name = image_names[0][0].split('/')[-2]
+                memory_frames = []
+                processed_frames = 0
+                # print("Switch to new video:", video_name)
 
             batch = {k: v.to(device) for k, v in batch.items()}
 
             end_time = time.time()
             if batch['mask'].sum() == 0:
                 continue
-            output = model(batch)
-            batch_time.update(time.time() - end_time)
+            # Adding prev_feat
+            prev_feat = None
+            if len(memory_frames) >= 2 and use_temp:
+                prev_feat = torch.stack([memory_frames[0], memory_frames[-1]], dim=1)
+            output = model(batch, prev_feat=prev_feat)
 
+            batch_time.update(time.time() - end_time)
+            processed_frames += 1
+
+            # Save memory frames
+            if 'embedding' in output:
+                memory_frames.append(output['embedding'])
+                if len(memory_frames) > memory_interval:
+                    memory_frames = memory_frames[-memory_interval:]
+                    # print("Cut down memory frames")
+                
             
             alpha = output['refined_masks']
             alpha = alpha #.cpu().numpy()
@@ -169,7 +195,7 @@ def test(cfg, rank=0, is_dist=False):
 
     batch_time, data_time = val(model, val_loader, device, cfg.test.log_iter, \
                                 val_error_dict, do_postprocessing=cfg.test.postprocessing, \
-                                    callback=callback_vis, use_trimap=cfg.test.use_trimap)
+                                    callback=callback_vis, use_trimap=cfg.test.use_trimap, use_temp=cfg.test.temp_aggre)
     
     logging.info("Testing done!")
 

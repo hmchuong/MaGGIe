@@ -28,3 +28,13 @@ python -m tools.main --config configs/HHM/mgm_atten-dec_q-16_hhm_short-768-512x5
 
 python -m tools.main --config configs/HHM/mgm_enc-atten_dec-atten_hhm_short-768-512x512_bs32_50k_adamw_2e-4.yaml --gpus 4 name debug wandb.use False \
                                 train.log_iter 1 train.vis_iter 25 train.val_iter 50 train.batch_size 15
+
+python -m tools.main --config configs/HIM/mgm_enc-embed_dec-embed-atten_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --dist --gpus 2 --precision 16 \
+                    name mgm_enc-dec_him_bs8_3gpus_best0804 \
+                    dataset.train.max_inst=5 \
+                    dataset.train.use_single_instance_only=True \
+                    model.backbone_args.num_embed=3 model.decoder_args.head_channel=50 \
+                    model.loss_alpha_grad_w=0.25 model.loss_multi_inst_type=l1 \
+                    model.loss_multi_inst_w=0 model.loss_multi_inst_warmup=4000 \
+                    model.mgm.warmup_iter=2000 train.optimizer.lr=0.0001 train.scheduler.warmup_iters=1500 \
+                    train.max_iter=30000 train.num_workers=4 train.batch_size=12 wandb.use True

@@ -12,7 +12,7 @@ import torch.multiprocessing as mp
 from vm2m.utils import CONFIG
 from vm2m.engine import train, test
 
-def main(rank, cfg, dist_url=None, world_size=8, eval_only=False):
+def main(rank, cfg, dist_url=None, world_size=8, eval_only=False, precision=32, is_sweep=False):
 
     # Set up logger
     logFormatter = logging.Formatter("%(asctime)s [rank " + str(rank) + "] [%(levelname)-5.5s]  %(message)s")
@@ -44,17 +44,18 @@ def main(rank, cfg, dist_url=None, world_size=8, eval_only=False):
             # try:
             #     wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"))
             # except:
-            wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"), force=True)
-            if cfg.wandb.id == '':
-                wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, name=cfg.name)
-            else:
-                wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, 
-                           name=cfg.name, id=cfg.wandb.id, resume='must')
+            # wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"), force=True)
+            if not is_sweep:
+                if cfg.wandb.id == '':
+                    wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, name=cfg.name)
+                else:
+                    wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, 
+                            name=cfg.name, id=cfg.wandb.id, resume='must')
             wandb.config.update(cfg, allow_val_change=True)
     if eval_only:
         test(cfg, rank, dist_url is not None)
     else:
-        train(cfg, rank, dist_url is not None)
+        train(cfg, rank, dist_url is not None, precision)
     
     if dist_url is not None:
         dist.destroy_process_group()
@@ -96,7 +97,9 @@ if __name__ == "__main__":
     parser.add_argument("--override", action="store_true", help="Override the experiment")
     parser.add_argument("--dist", action="store_true", help="Use distributed training")
     parser.add_argument("--gpus", type=int, default=8, help="Number of GPUs for distributed training")
+    parser.add_argument("--precision", type=int, default=32, help="Precision for distributed training")
     parser.add_argument("--dist-url", type=str, default="tcp://127.0.0.1:23456", help="Distributed training URL")
+    parser.add_argument("--sweep-job", action='store_true', help="Whether this is a sweep job")
     parser.add_argument("--eval-only", action="store_true", help="Only evaluate the model")
     parser.add_argument('opts', default=None, nargs=argparse.REMAINDER,
                         help='modify config file from terminal')
@@ -141,8 +144,7 @@ if __name__ == "__main__":
     np.random.seed(seed)
 
     os.environ["WANDB_START_METHOD"] = "thread"
-
     if args.dist:
-        mp.spawn(main, nprocs=args.gpus, args=(CONFIG, args.dist_url, args.gpus, args.eval_only))
+        mp.spawn(main, nprocs=args.gpus, args=(CONFIG, args.dist_url, args.gpus, args.eval_only, args.precision, args.sweep_job))
     else:
-        main(0, CONFIG, None, 1, args.eval_only)
+        main(0, CONFIG, None, 1, args.eval_only, args.precision, args.sweep_job)

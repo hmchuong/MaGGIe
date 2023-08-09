@@ -1,0 +1,53 @@
+name: 'mgm_enc-dec_temp'
+output_dir: 'output/VideoMatte240K'
+train:
+  batch_size: 4
+  num_workers: 4
+  max_iter: 50000
+  optimizer:
+    lr: 1.0e-4
+    name: adamw
+  scheduler:
+    name: cosine
+    warmup_iters: 250
+  val_metrics: ['MAD', 'MSE', 'dtSSD']
+  val_best_metric: 'dtSSD'
+  val_iter: 1000
+  vis_iter: 50
+  log_iter: 20
+  seed: 1234
+test:
+  num_workers: 4
+  metrics: ['MAD', 'MSE', 'dtSSD']
+  log_iter: 10
+model:
+  arch: 'MGM'
+  backbone: 'res_embed_shortcut_encoder_29'
+  backbone_args:
+    num_mask: 10
+    num_embed: 3
+  decoder: 'res_shortcut_temp_embed_atten_decoder_22'
+  decoder_args:
+    max_inst: 10
+    head_channel: 50
+  mgm:
+    warmup_iter: 0
+  loss_multi_inst_w: 0.0
+  loss_dtSSD_w: 1.0
+  loss_comp_w: 0.0
+  loss_alpha_grad_w: 0.25
+  loss_alpha_w: 0.25
+
+dataset:
+  train:
+    root_dir: '/mnt/localssd/VideoMatte240K'
+    bg_dir: '/mnt/localssd/bg'
+    short_size: 576
+    crop: [512, 512]
+    clip_length: 3
+  test:
+    root_dir: '/mnt/localssd/VideoMatte240K'
+    split: 'valid'
+    short_size: 576
+    clip_length: 3
+    clip_overlap: 1

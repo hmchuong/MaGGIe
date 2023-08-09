@@ -457,6 +457,48 @@ python -m tools.main --dist --gpus 4 --config configs/HIM/mgm_him_short-768-512x
                                                 test.use_trimap False \
                                                 test.save_dir output/HIM/tuning_mgm_filtered/vis_natural_best_final
 
+python -m tools.main --dist --gpus 4 --config configs/HIM/mgm_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
+                                                name mgm_cvpr23 \
+                                                model.weights pretrain/wild_matting_converted.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.use_trimap False \
+                                                model.arch MGM_SingInst \
+                                                model.backbone_args.num_mask 1 \
+                                                model.decoder_args.max_inst 1 \
+                                                test.save_dir output/HIM/mgm_cvpr23/vis_natural
+
+python -m tools.main --dist --gpus 4 --config configs/HIM/mgm_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
+                                                name mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4 \
+                                                model.weights output/HHM/mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.use_trimap False \
+                                                model.arch MGM_SingInst \
+                                                model.backbone_args.num_mask 1 \
+                                                model.decoder_args.max_inst 1 \
+                                                test.save_dir output/HIM/mgm_hhm_short-768-512x512_bs32_50k_adamw_2e-4/vis_natural
+
+python -m tools.main --dist --gpus 4 --config output/HIM/mgm_enc-dec_multi-inst_him_bs12_2gpus_best0804/config.yaml --eval-only \
+                                                name mgm_enc-dec_ft-hhm_short-768-512x512_bs48_50k_adamw_5.0e-5 \
+                                                model.weights output/HHM/mgm_enc-dec_ft-hhm_short-768-512x512_bs48_50k_adamw_5.0e-5/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.use_trimap False \
+                                                test.save_dir output/HIM/mgm_enc-dec_ft-hhm_short-768-512x512_bs48_50k_adamw_5.0e-5/vis_natural
+
+python -m tools.main --dist --gpus 4 --config output/HIM/mgm_enc-dec_multi-inst_him_bs12_2gpus_best0804/config.yaml --eval-only \
+                                                name mgm_enc-dec_ft-hhm_short-768-512x512_bs48_50k_adamw_5.0e-5 \
+                                                model.weights output/HHM/mgm_enc-dec_ft-hhm_short-768-512x512_bs48_50k_adamw_5.0e-5/best_model.pth \
+                                                dataset.test.split natural \
+                                                test.save_results True \
+                                                test.postprocessing False \
+                                                test.use_trimap False \
+                                                test.save_dir output/HIM/mgm_enc-dec_ft-hhm_short-768-512x512_bs48_50k_adamw_5.0e-5/vis_natural
+
 python -m tools.main --gpus 1 --config configs/HIM/mgm_enc-embed_dec-id-embed_him_short-768-512x512_bs8_50k_adamw_2e-4.yaml --eval-only \
                                                 name tuning_enc-dec-id-embed_filtered \
                                                 model.weights output/HIM/tuning_enc-dec-id-embed_filtered_multi-inst/best_model.pth \

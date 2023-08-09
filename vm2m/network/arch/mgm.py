@@ -3,6 +3,7 @@ import logging
 import numpy as np
 import cv2
 import random
+import copy
 
 import torch
 import torch.nn as nn
@@ -12,6 +13,7 @@ from vm2m.network.decoder import *
 from vm2m.network.loss import LapLoss, loss_comp, loss_dtSSD, GradientLoss
 from vm2m.network.backbone.resnet_enc import ResMaskEmbedShortCut_D
 from vm2m.network.decoder.resnet_embed_atten_dec import ResShortCut_EmbedAtten_Dec
+from vm2m.network.module.temporal_nn import TemporalNN
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
@@ -64,6 +66,8 @@ class MGM(nn.Module):
         self.lap_loss = LapLoss()
         self.grad_loss = GradientLoss()
 
+        self.train_temporal = False #cfg.decoder in ['res_shortcut_attention_spconv_temp_decoder_22']
+
         # For multi-inst loss
         self.loss_multi_inst_w = cfg.loss_multi_inst_w
         self.loss_multi_inst_warmup = cfg.loss_multi_inst_warmup
@@ -83,7 +87,38 @@ class MGM(nn.Module):
             for p in module.parameters():
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
+        
+        if self.train_temporal:
+            self.freeze_to_train_temporal()
     
+    def freeze_to_train_temporal(self):
+        # Freeze the encoder
+        self.encoder.eval()
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+        
+        # Freeze the ASPP
+        self.aspp.eval()
+        for param in self.aspp.parameters():
+            param.requires_grad = False
+        
+        # Unfreeze the decoder
+        self.decoder.train()
+        for param in self.decoder.parameters():
+            param.requires_grad = True
+        
+        # Train the temporal module
+        # self.decoder.temp_module.train()
+        # for param in self.decoder.temp_module.parameters():
+        #     param.requires_grad = True
+
+    
+    def train(self, mode: bool = True):
+        super().train(mode=mode)
+        if mode and self.train_temporal:
+            self.freeze_to_train_temporal()
+
+
     def fushion(self, pred):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
@@ -96,7 +131,7 @@ class MGM(nn.Module):
 
         return alpha_pred, weight_os4, weight_os1
 
-    def forward(self, batch, return_ctx=False):
+    def forward(self, batch, return_ctx=False, prev_feat=None):
         '''
         x: b, n_f, 3, h, w, image tensors
         masks: b, n_frames, n_instances, h//8, w//8, coarse masks
@@ -116,18 +151,38 @@ class MGM(nn.Module):
 
         x = x.view(-1, 3, h, w)
         if masks.shape[-1] != w:
-            masks = masks.view(-1, n_i, h//8, w//8)
+            masks = masks.flatten(0,1)
             masks = F.interpolate(masks, size=(h, w), mode="nearest")
         else:
             masks = masks.view(-1, n_i, h, w)
         
+        chosen_ids = None
         if self.num_masks > 0:
-            inp = torch.cat([x, masks], dim=1)  
+            inp_masks = masks
             if self.num_masks - n_i > 0:
-                padding = torch.zeros((b*n_f, self.num_masks - n_i, h, w), device=x.device)
-                inp = torch.cat([inp, padding], dim=1)
+                if not self.training:
+                    padding = torch.zeros((b*n_f, self.num_masks - n_i, h, w), device=x.device)
+                    inp_masks = torch.cat([masks, padding], dim=1)
+                else:
+                    # Pad randomly: input masks, trans_gt, alphas
+                    chosen_ids = np.random.choice(self.num_masks, n_i, replace=False)
+                    inp_masks = torch.zeros((b*n_f, self.num_masks, h, w), device=x.device)
+                    inp_masks[:, chosen_ids, :, :] = masks
+                    masks = inp_masks
+                    if alphas is not None:
+                        new_alphas = torch.zeros((b, n_f, self.num_masks, h, w), device=x.device)
+                        new_alphas[:, :, chosen_ids, :, :] = alphas
+                        alphas = new_alphas
+                    if trans_gt is not None:
+                        new_trans_gt = torch.zeros((b, n_f, self.num_masks, h, w), device=x.device)
+                        new_trans_gt[:, :, chosen_ids, :, :] = trans_gt
+                        trans_gt = new_trans_gt
+                    n_i = self.num_masks
+
+            inp = torch.cat([x, inp_masks], dim=1)
         else:
             inp = x
+
         if alphas is not None:
             alphas = alphas.view(-1, n_i, h, w)
         if trans_gt is not None:
@@ -136,17 +191,23 @@ class MGM(nn.Module):
             fg = fg.view(-1, 3, h, w)
         if bg is not None:
             bg = bg.view(-1, 3, h, w)
-       
-        embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
-        embedding = self.aspp(embedding)
-        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, gt_alphas=alphas)
+
+        if self.train_temporal:
+            with torch.no_grad():
+                embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
+                embedding = self.aspp(embedding)
+        else:
+            embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
+            embedding = self.aspp(embedding)
+
+        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, gt_alphas=alphas, prev_feat=prev_feat)
         
         # Fushion
         alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
 
         
         output = {}
-        if self.num_masks > 0:
+        if self.num_masks > 0 and self.training:
             output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, self.num_masks, h, w)
             output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
             output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, self.num_masks, h, w)
@@ -156,9 +217,8 @@ class MGM(nn.Module):
             output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, n_i, h, w)
         if 'ctx' in pred:
             output['ctx'] = pred['ctx']
-
         # Reshape the output
-        if self.num_masks > 0:
+        if self.num_masks > 0 and self.training:
             alpha_pred = alpha_pred.view(b, n_f, self.num_masks, h, w)
         else:
             alpha_pred = alpha_pred.view(b, n_f, n_i, h, w)
@@ -175,16 +235,22 @@ class MGM(nn.Module):
             for k, v in pred.items():
                 pred[k] = v * valid_masks
 
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, (b, n_f, n_i, h, w))
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+
+            if not chosen_ids is None:
+                for k, v in output.items():
+                    output[k] = v[:, :, chosen_ids, :, :]
             return output, loss_dict
 
         # import pdb; pdb.set_trace()
         for k, v in output.items():
             output[k] = v[:, :, :n_i]
+        if 'embedding' in pred:
+            output['embedding'] = pred['embedding']
         return output
 
     @staticmethod
-    def regression_loss(logit, target, loss_type='l1', weight=None):
+    def regression_loss(logit, target, loss_type='l1', weight=None, topk=-1):
         """
         Alpha reconstruction loss
         :param logit:
@@ -202,9 +268,15 @@ class MGM(nn.Module):
                 raise NotImplementedError("NotImplemented loss type {}".format(loss_type))
         else:
             if loss_type == 'l1':
-                return F.l1_loss(logit * weight, target * weight, reduction='sum') / (torch.sum(weight) + 1e-8)
+                loss = F.l1_loss(logit * weight, target * weight, reduction='none') 
+                if topk > 0:
+                    topk = int(weight.sum() * 0.5)
+                    loss, _ = torch.topk(loss.view(-1), topk)
+                    return loss.sum() / (topk + 1e-8)
+                else:
+                    return loss.sum() / (torch.sum(weight) + 1e-8)
             elif loss_type == 'l2':
-                return F.mse_loss(logit * weight, target * weight, reduction='sum') / (torch.sum(weight) + 1e-8)
+                loss = F.mse_loss(logit * weight, target * weight, reduction='sum') / (torch.sum(weight) + 1e-8)
             else:
                 raise NotImplementedError("NotImplemented loss type {}".format(loss_type))
        
@@ -239,6 +311,7 @@ class MGM(nn.Module):
         # Reg loss
         total_loss = 0
         if self.loss_alpha_w > 0:
+            logging.debug("Computing alpha loss")
             ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
             ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
             ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
@@ -263,6 +336,7 @@ class MGM(nn.Module):
 
         # Lap loss
         if self.loss_alpha_lap_w > 0:
+            logging.debug("Computing lap loss")
             h, w = alpha_pred_os1.shape[-2:]
             lap_loss_os1 = self.lap_loss(alpha_pred_os1.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os1.view(-1, 1, h, w))
             lap_loss_os4 = self.lap_loss(alpha_pred_os4.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os4.view(-1, 1, h, w))
@@ -285,23 +359,10 @@ class MGM(nn.Module):
             loss_dict['loss_grad'] = grad_loss
             total_loss += grad_loss * self.loss_alpha_grad_w
 
-        if self.loss_dtSSD_w > 0:
-            alpha_pred_os8 = alpha_pred_os8.reshape(*alpha_shape)
-            alpha_pred_os4 = alpha_pred_os4.reshape(*alpha_shape)
-            alpha_pred_os1 = alpha_pred_os1.reshape(*alpha_shape)
-            alphas = alphas.reshape(*alpha_shape)
-            trans_gt = trans_gt.reshape(*alpha_shape)
-            dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, trans_gt)
-            dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, trans_gt)
-            dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, trans_gt)
-            dtSSD_loss = (dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1) / 5.0
-            loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
-            loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
-            loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8
-            loss_dict['loss_dtSSD'] = dtSSD_loss
-            total_loss += dtSSD_loss * self.loss_dtSSD_w
+        
 
         if self.loss_multi_inst_w > 0 and iter >= self.loss_multi_inst_warmup:
+            logging.debug("Computing multi inst loss")
             # multi_inst_os1 = self.regression_loss(alpha_pred_os1.sum(1), alphas.sum(1), loss_type=self.cfg.loss_alpha_type)
             # multi_inst_os4 = self.regression_loss(alpha_pred_os4.sum(1), alphas.sum(1), loss_type=self.cfg.loss_alpha_type)
             alpha_multi_os8 = alpha_pred_os8 * valid_mask
@@ -319,9 +380,38 @@ class MGM(nn.Module):
             loss_dict['loss_multi_inst'] = multi_inst_os8
             total_loss += multi_inst_os8 * self.loss_multi_inst_w
 
-       
+        if self.loss_dtSSD_w > 0:
+            alpha_pred_os8 = alpha_pred_os8.reshape(*alpha_shape)
+            alpha_pred_os4 = alpha_pred_os4.reshape(*alpha_shape)
+            alpha_pred_os1 = alpha_pred_os1.reshape(*alpha_shape)
+            alphas = alphas.reshape(*alpha_shape)
+            trans_gt = trans_gt.reshape(*alpha_shape)
+            dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, trans_gt)
+            dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, trans_gt)
+            dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, trans_gt)
+            dtSSD_loss = (dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1) / 5.0
+            loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
+            loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
+            loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8
+            loss_dict['loss_dtSSD'] = dtSSD_loss
+            total_loss += dtSSD_loss * self.loss_dtSSD_w
 
         loss_dict['total'] = total_loss
         return loss_dict
 
 
+class MGM_SingInst(MGM):
+    def forward(self, batch, return_ctx=False):
+        masks = batch['mask']
+        n_i = masks.shape[2]
+        if self.num_masks == 1:
+            outputs = []
+            # interate one mask at a time
+            batch = copy.deepcopy(batch)
+            for i in range(n_i):
+                batch['mask'] = masks[:, :, i:i+1]
+                outputs.append(super().forward(batch, return_ctx))
+            for k in outputs[0].keys():
+                outputs[0][k] = torch.cat([o[k] for o in outputs], 2)
+            return outputs[0]
+        return super().forward(batch, return_ctx)

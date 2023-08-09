@@ -8,6 +8,7 @@ import logging
 import numpy as np
 import wandb
 from torch.utils import data as torch_data
+from torch.cuda.amp import autocast, GradScaler
 from vm2m.dataloader import build_dataset
 from vm2m.network import build_model
 from vm2m.utils.dist import AverageMeter, reduce_dict
@@ -29,6 +30,7 @@ def wandb_log_image(batch, output, iter):
     inst_index = 0
     if valid_inst_index.sum() > 0:
         inst_index = torch.where(valid_inst_index)[0][0]
+    # import pdb; pdb.set_trace()
     image = batch['image'][0,index].cpu()
     image = image * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
     image = (image * 255).permute(1, 2, 0).numpy().astype(np.uint8)
@@ -72,7 +74,25 @@ def wandb_log_image(batch, output, iter):
         log_images.append(log_alpha(output['alpha_os8'], 'alpha_os8_pred', index, inst_index))
     wandb.log({"examples/all": log_images}, step=iter, commit=True)
 
-def train(cfg, rank, is_dist=False):
+def load_state_dict(model, state_dict):
+    current_state_dict = model.state_dict()
+    missing_keys = []
+    unexpected_keys = []
+    mismatch_keys = []
+    for name, param in state_dict.items():
+        if name not in current_state_dict:
+            unexpected_keys.append(name)
+        elif param.shape != current_state_dict[name].shape:
+            mismatch_keys.append(name)
+        else:
+            current_state_dict[name].copy_(param)
+    for name in current_state_dict.keys():
+        if name not in state_dict:
+            missing_keys.append(name)
+    
+    return missing_keys, unexpected_keys, mismatch_keys
+
+def train(cfg, rank, is_dist=False, precision=32):
     
     device = f'cuda:{rank}'
 
@@ -132,14 +152,17 @@ def train(cfg, rank, is_dist=False):
     if os.path.isfile(cfg.model.weights):
         logging.info("Loading pretrained model from {}".format(cfg.model.weights))
         state_dict = torch.load(cfg.model.weights, map_location=device)
-        if is_dist:
-            missing_keys, unexpected_keys = model.module.load_state_dict(state_dict, strict=False)
-        else:
-            missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        # if is_dist:
+        #     missing_keys, unexpected_keys = model.module.load_state_dict(state_dict, strict=False)
+        # else:
+        #     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        missing_keys, unexpected_keys, mismatch_keys = load_state_dict(model if not is_dist else model.module, state_dict)
         if len(missing_keys) > 0:
             logging.warn("Missing keys: {}".format(missing_keys))
         if len(unexpected_keys) > 0:
             logging.warn("Unexpected keys: {}".format(unexpected_keys))
+        if len(mismatch_keys) > 0:
+            logging.warn("Mismatch keys: {}".format(mismatch_keys))
 
     # Resume model from last checkpoint
     if cfg.train.resume != '':
@@ -179,10 +202,11 @@ def train(cfg, rank, is_dist=False):
     model.train()
     logging.debug("Iter: {}, len dataloader: {}".format(iter, len(train_loader)))
     epoch =  iter // len(train_loader)
+    scaler = GradScaler() if precision == 16 else None
     while iter < cfg.train.max_iter:
         
         for _, batch in enumerate(train_loader):
-            logging.debug("Loaded data")
+            
             if is_dist:
                 train_sampler.set_epoch(epoch)
 
@@ -195,24 +219,22 @@ def train(cfg, rank, is_dist=False):
             batch = {k: v.to(device) for k, v in batch.items()}
             batch['iter'] = iter
             optimizer.zero_grad()
-            # try:
-                # if iter == 85 and rank == 0:
-                #     from pudb.remote import set_trace
-                #     set_trace()
-            output, loss = model(batch)
+            if precision == 16:
+                with autocast():
+                    output, loss = model(batch)
+            else:
+                output, loss = model(batch)
             if loss is None:
                 logging.error("Loss is None!")
                 continue
-            # except ValueError as e:
-            #     logging.error("ValueError: {}".format(e))
-            #     continue
-            logging.debug("Reducing loss")
+
             loss_reduced = loss #reduce_dict(loss)
 
-            logging.debug("Backwarding")
-            loss['total'].backward()
+            if precision == 16:
+                scaler.scale(loss['total']).backward()
+            else:
+                loss['total'].backward()
 
-            logging.debug("Storing log metrics")
             # Store to log_metrics
             for k, v in loss_reduced.items():
                 if k not in log_metrics:
@@ -222,14 +244,20 @@ def train(cfg, rank, is_dist=False):
             logging.debug("Optimizing")
             
             # Clip norm
+            if precision == 16:
+                scaler.unscale_(optimizer)
             all_params = itertools.chain(*[x["params"] for x in optimizer.param_groups])
             torch.nn.utils.clip_grad_norm_(all_params, 0.01)
             
-            optimizer.step()
+            # Update
+            logging.debug("Updating")
+            if precision == 16:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
 
-            logging.debug("Updating lr scheduler")
             lr_scheduler.step()
-            logging.debug("Done batch")
             batch_time.update(time.time() - end_time)
 
             # Logging
@@ -275,12 +303,7 @@ def train(cfg, rank, is_dist=False):
                     log_str = "Validation:"
                     for k, v in val_error_dict.items():
                         log_str += "{}: {:.4f}, ".format(k, v.average())
-                    if cfg.wandb.use:
-                        for k, v in val_error_dict.items():
-                            wandb.log({"val/" + k: v.average()}, commit=False)
-                        wandb.log({"val/epoch": epoch}, commit=False)
-                        wandb.log({"val/iter": iter}, commit=True)
-                    
+                    logging.info(log_str)
                     # Save best model
                     total_error = val_error_dict[cfg.train.val_best_metric].average()
                     if total_error < best_score:
@@ -293,7 +316,12 @@ def train(cfg, rank, is_dist=False):
                             for k, v in val_error_dict.items():
                                 f.write("{}: {:.4f}\n".format(k, v.average()))
                         torch.save(val_model.state_dict(), save_path)
-                    
+                    if cfg.wandb.use:
+                        for k, v in val_error_dict.items():
+                            wandb.log({"val/" + k: v.average()}, commit=False)
+                        wandb.log({"val/epoch": epoch}, commit=False)
+                        wandb.log({"val/best_error": best_score}, commit=False)
+                        wandb.log({"val/iter": iter}, commit=True)
                     logging.info("Saving last model...")
                     save_dict = {
                         'optimizer': optimizer.state_dict(),
@@ -310,12 +338,3 @@ def train(cfg, rank, is_dist=False):
             end_time = time.time()
             logging.debug("Loading data")
         epoch += 1
-
-
-
-
-    # TODO: Implement training
-    # TODO: Implement validation
-    # import pdb; pdb.set_trace()
-
-

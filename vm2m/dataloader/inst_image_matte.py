@@ -23,7 +23,8 @@ class ComposedInstImageMatteDataset(Dataset):
         else:
             self.load_image_alphas()
          # import pdb; pdb.set_trace()
-        self.bg_images = self.load_bg(bg_dir)
+        if max_inst > 1:
+            self.bg_images = self.load_bg(bg_dir)
         self.max_inst = max_inst
         self.padding_inst = padding_inst
 
@@ -81,7 +82,8 @@ class ComposedInstImageMatteDataset(Dataset):
 
         # Resize fg
         h, w = image.shape[:2]
-        scale = self.random.rand() * 0.75 + 0.25
+        # scale = self.random.rand() * 0.75 + 0.25
+        scale = self.random.rand() * 0.5 + 0.7
         scale = min(max_h, max_w, h, w) * scale / min(h, w)
         new_w, new_h = int(w * scale), int(h * scale)
         image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
@@ -96,7 +98,8 @@ class ComposedInstImageMatteDataset(Dataset):
             alpha = alpha[:, ::-1]
 
         # Blur fg
-        if self.random.choice([True, False]):
+        if self.random.rand() < 0.2:
+        # if self.random.choice([True, False]):
             kernel_size = self.random.choice([5, 15, 25])
             sigma = self.random.choice([1.0, 1.5, 3.0, 5.0])
             image = cv2.GaussianBlur(image, (kernel_size, kernel_size), sigma)
@@ -139,12 +142,18 @@ class ComposedInstImageMatteDataset(Dataset):
     def __getitem__(self, index):
         
         # Choose no. of instances
-        no_instances = self.random.choice(range(2, self.max_inst + 1))
-
+        if self.max_inst == 1:
+            no_instances = 1
+        else:
+            no_instances = self.random.choice(range(1, self.max_inst + 1))
+        # print(no_instances)
         # Load images and alphas
         images = []
         alphas = []
-        idx = self.random.choice(range(0, len(self.data)), size=no_instances, replace=False)
+        if self.max_inst == 1:
+            idx = [index]
+        else:
+            idx = self.random.choice(range(0, len(self.data)), size=no_instances, replace=False)
         data = [self.data[i] for i in idx]
 
         for image_path, alpha_path in data:
@@ -157,7 +166,7 @@ class ComposedInstImageMatteDataset(Dataset):
             alphas.append(alpha)
         
         # Choose bg image: from the first image or from bg_dir
-        using_bg = self.random.choice([True, False])
+        using_bg = self.random.choice([True, False]) if self.max_inst > 1 else False
         bg_image = images[0]
         if using_bg:
             bg_image = self.random.choice(self.bg_images)
@@ -190,9 +199,8 @@ class ComposedInstImageMatteDataset(Dataset):
         alphas = new_alphas
 
         # Compose images and alphas
-        composed_image = np.zeros_like(bg_image)
+        composed_image = bg_image
         composed_alpha = np.zeros((no_instances, max_h, max_w), dtype=np.float32)
-
         # import pdb; pdb.set_trace()
         for i in range(no_instances):
             if i == 0 and not using_bg:
@@ -219,18 +227,25 @@ class ComposedInstImageMatteDataset(Dataset):
                 composed_alpha[i, y: y + h, x: x+w] = alphas[i]
                 composed_alpha[:i, y: y + h, x: x+w] *= (1 - alphas[i][None])
 
-        roi_region = composed_alpha.sum(axis=0) > 0.5
-        if roi_region.sum() == 0:
-            return self.__getitem__(0)
+        
         
         # Crop images and alphas (random crop)
         ratio = self.short_size / min(bg_image.shape[:2])
         composed_image = cv2.resize(composed_image, (int(bg_image.shape[1] * ratio), int(bg_image.shape[0] * ratio)), interpolation=cv2.INTER_CUBIC)
-        composed_alpha = np.stack([cv2.resize(a, (composed_image.shape[1], composed_image.shape[0]), interpolation=cv2.INTER_CUBIC) for a in composed_alpha], axis=0)
+        composed_alpha = np.stack([cv2.resize(a, (composed_image.shape[1], composed_image.shape[0]), interpolation=cv2.INTER_LINEAR_EXACT) for a in composed_alpha], axis=0)
 
         x, y = self.random.randint(0, composed_image.shape[1] - self.crop[0]), self.random.randint(0, composed_image.shape[0] - self.crop[1])
         composed_image = composed_image[y: y + self.crop[1], x: x + self.crop[0]]
         composed_alpha = composed_alpha[:, y: y + self.crop[1], x: x + self.crop[0]]
+
+        roi_region = composed_alpha.sum(axis=0) > 0.5
+        # print(roi_region.sum())
+        if roi_region.sum() == 0:
+            return self.__getitem__(0)
+        
+        if self.max_inst == 1:
+            no_instances = 2
+            composed_alpha = np.concatenate([composed_alpha, 1.0 - composed_alpha], axis=0)
 
         # Binarize alpha to have input masks
         masks = np.stack([self.binarized_alpha(alpha) for alpha in composed_alpha], axis=0)
@@ -272,7 +287,7 @@ class ComposedInstImageMatteDataset(Dataset):
         return out
     
 if __name__ == "__main__":
-    train_dataset = ComposedInstImageMatteDataset(root_dir='/mnt/localssd/HHM', split='train', bg_dir='/mnt/localssd/bg', max_inst=5, short_size=576, crop=(512, 512), random_seed=2023)
+    train_dataset = ComposedInstImageMatteDataset(root_dir='/mnt/localssd/HHM', split='train', bg_dir='/mnt/localssd/bg', max_inst=2, short_size=576, crop=(512, 512), random_seed=2023)
     # 
     for batch in train_dataset:
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch["transition"]

@@ -1,0 +1,70 @@
+name: 'mgm_enc-dec-spconv'
+output_dir: 'output/VideoMatte240K'
+train:
+  batch_size: 3
+  num_workers: 4
+  max_iter: 20000
+  optimizer:
+    lr: 5.0e-5
+    name: adamw
+  scheduler:
+    name: cosine
+    warmup_iters: 1000
+  val_metrics: ['MAD', 'MSE', 'SAD', 'dtSSD']
+  val_best_metric: 'dtSSD'
+  val_iter: 500
+  vis_iter: 50
+  log_iter: 10
+  seed: 1105
+test:
+  num_workers: 4
+  metrics: ['MAD', 'MSE', 'SAD']
+model:
+  arch: 'MGM'
+  weights: output/HIM/mgm_enc-dec-spconv_him_syn_short-576-512x512_bs48_20k_adamw_5.0e-5/best_model.pth
+  backbone: res_embed_shortcut_os8_encoder_29
+  backbone_args:
+    num_embed: 3
+    num_mask: 10
+    pretrained: true
+  decoder: res_shortcut_attention_spconv_decoder_22
+  decoder_args:
+    atten_block: 2
+    atten_dim: 128
+    atten_head: 1
+    atten_stride: 1
+    final_channel: 64
+    head_channel: 120
+    max_inst: 10
+  mgm:
+    warmup_iter: 10000
+  loss_alpha_grad_w: 0.0
+  loss_alpha_lap_w: 1.0
+  loss_alpha_type: l1
+  loss_alpha_w: 1.0
+  loss_atten_w: 0.0
+  loss_comp_w: 0.0
+  loss_dtSSD_w: 1.0
+  loss_multi_inst_w: 0.25
+  loss_multi_inst_type: smooth_l1_0.5
+  loss_multi_inst_warmup: 0
+dataset:
+  train:
+    name: 'InstVM240K'
+    root_dir: '/mnt/localssd/VideoMatte240K'
+    bg_dir: '/mnt/localssd/bg'
+    split: 'train'
+    short_size: 576
+    max_inst: 2
+    clip_length: 3
+    max_step_size: 5
+    padding_inst: 10
+    random_state: 2023
+  test:
+    name: 'VideoMatte240K'
+    root_dir: '/mnt/localssd/VideoMatte240K'
+    split: 'valid'
+    short_size: 576
+    clip_length: 3
+    clip_overlap: 2
+    use_thresh_mask: True

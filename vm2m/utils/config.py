@@ -52,6 +52,7 @@ CONFIG.test.postprocessing = True
 CONFIG.test.metrics = ['MAD', 'MSE', 'SAD', 'Conn', 'Grad', 'dtSSD', 'MESSDdt']
 CONFIG.test.log_iter = 50
 CONFIG.test.use_trimap = True
+CONFIG.test.temp_aggre = False
 
 # ------------------------ Model ------------------------
 CONFIG.model = CN({})

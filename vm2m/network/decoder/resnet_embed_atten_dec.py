@@ -1,3 +1,4 @@
+import logging
 import torch
 import random
 from torch import nn
@@ -7,6 +8,7 @@ from .resnet_dec import BasicBlock
 from vm2m.network.module.base import conv1x1
 from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead
 from vm2m.network.module.instance_matte_head import InstanceMatteHead
+from vm2m.network.module.temporal_nn import TemporalNN
 
 class ResShortCut_EmbedAtten_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
@@ -73,24 +75,43 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         )
 
         group = max_inst if head_channel % max_inst == 0 else 1
-
-        ## 1 scale
-        self.refine_OS1 = nn.Sequential(
-            nn.Conv2d(32, head_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
-            norm_layer(head_channel),
-            self.leaky_relu,
-            nn.Conv2d(head_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, groups=group)
-        )
-        # self.refine_OS1 = InstanceMatteHead(self.refine_OS8.query_feat, 32, hidden_channel=2, k_out_channel=4)
+        self.use_sep_head = False
+        if self.use_sep_head:
+            head_channel = 32
+            ## 1 scale
+            self.refine_OS1 = nn.Sequential(
+                nn.Conv2d(32 + 1, head_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+                # norm_layer(head_channel),
+                nn.GroupNorm(4, head_channel),
+                self.leaky_relu,
+                # nn.Conv2d(head_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, groups=group)
+                nn.Conv2d(head_channel, 1, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2)
+            )
+                ## 1/4 scale
+            self.refine_OS4 = nn.Sequential(
+                nn.Conv2d(64 + 1, head_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+                # norm_layer(head_channel),
+                nn.GroupNorm(4, head_channel),
+                self.leaky_relu,
+                nn.Conv2d(head_channel, 1, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2)
+            )
+        else:
+            self.refine_OS1 = nn.Sequential(
+                nn.Conv2d(32, head_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+                norm_layer(head_channel),
+                self.leaky_relu,
+                nn.Conv2d(head_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, groups=group)
+            )
+            # self.refine_OS1 = InstanceMatteHead(self.refine_OS8.query_feat, 32, hidden_channel=32, k_out_channel=8)
         
-        ## 1/4 scale
-        self.refine_OS4 = nn.Sequential(
-            nn.Conv2d(64, head_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
-            norm_layer(head_channel),
-            self.leaky_relu,
-            nn.Conv2d(head_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, groups=group)
-        )
-        # self.refine_OS4 = InstanceMatteHead(self.refine_OS8.query_feat, 64, hidden_channel=8, k_out_channel=4)
+            ## 1/4 scale
+            self.refine_OS4 = nn.Sequential(
+                nn.Conv2d(64, head_channel, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
+                norm_layer(head_channel),
+                self.leaky_relu,
+                nn.Conv2d(head_channel, max_inst, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, groups=group)
+            )
+        # self.refine_OS4 = InstanceMatteHead(self.refine_OS8.query_feat, 64, hidden_channel=32, k_out_channel=8)
         
         
         for module in [self.conv1, self.refine_OS1, self.refine_OS4]:
@@ -150,6 +171,57 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         # return prev_masks
         return input_masks
 
+    def predict_detail(self, head, x, input_masks, prev_masks):
+        '''
+        x: b*n_f x c x h x w, detailed feature
+        prev_masks: b*n_f x n_i x h x w, previous masks
+        '''
+        padding_size = int(30 / prev_masks.shape[-1] * x.shape[-1])
+        divisible_size = int(32 / prev_masks.shape[-1] * x.shape[-1])
+
+        # scale prev_masks to match x
+        prev_masks = F.interpolate(prev_masks, size=x.shape[-2:], mode='bilinear', align_corners=False)
+        input_masks = F.interpolate(input_masks, size=x.shape[-2:], mode='bilinear', align_corners=False)
+
+        # for each mask, get coordinates, crop and extend to be divisible by 32, then predict
+        logging.debug(f"prev_masks: {prev_masks.shape} {prev_masks.sum(dim=[2,3])}")
+        valid_mask = torch.nonzero(input_masks.sum(dim=[2,3]) > 1.0/255.0)
+        output_logit = torch.full(size=(x.shape[0], prev_masks.shape[1], x.shape[2], x.shape[3]), fill_value=-5, device=x.device, dtype=x.dtype)
+        logging.debug("Start predicting")
+        for b_i, inst_i in valid_mask:
+            feat = x[b_i]
+            logging.debug(f"Processing: {b_i}, {inst_i}")
+            coords = torch.nonzero(input_masks[b_i, inst_i] > 0.5)
+            y_min, x_min = coords.min(dim=0)[0]
+            y_max, x_max = coords.max(dim=0)[0]
+            # extend to have padding_size
+            x_min = max(0, x_min - padding_size)
+            y_min = max(0, y_min - padding_size)
+            x_max = min(x_max + padding_size, feat.shape[-1] - 1)
+            y_max = min(y_max + padding_size, feat.shape[-2] - 1)
+            
+            # extend to have multiply by 32
+            x_min = torch.div(x_min, divisible_size, rounding_mode='floor') * divisible_size
+            y_min = torch.div(y_min, divisible_size, rounding_mode='floor') * divisible_size
+            x_max = (torch.div(x_max, divisible_size, rounding_mode='floor') + 1) * divisible_size
+            y_max = (torch.div(y_max, divisible_size, rounding_mode='floor') + 1) * divisible_size
+
+            # crop feat
+            feat = feat[:, y_min:y_max, x_min:x_max]
+            mask = prev_masks[b_i, inst_i, y_min:y_max, x_min:x_max]
+
+            # Stack mask and feat
+            feat = torch.cat([feat, mask.unsqueeze(0)], dim=0)
+
+            # predict
+            pred = head(feat.unsqueeze(0))
+            # paste back
+            output_logit[b_i, inst_i, y_min:y_max, x_min:x_max] = output_logit[b_i, inst_i, y_min:y_max, x_min:x_max] * 0 + pred[0, 0]
+        
+            logging.debug("done processing")
+        return output_logit
+
+
     def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, **kwargs):
         '''
         masks: [b * n_f * n_i, 1, H, W]
@@ -157,17 +229,24 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
 
         # Reshape masks
         masks = masks.reshape(b, n_f, n_i, masks.shape[2], masks.shape[3])
+        valid_masks = masks.flatten(0,1).sum((2, 3), keepdim=True) > 0
+
 
         ret = {}
         fea1, fea2, fea3, fea4, fea5 = mid_fea['shortcut']
         x = self.layer1(x) + fea5
         x = self.layer2(x) + fea4
         
+        logging.debug("forwarding os8")
         # import pdb; pdb.set_trace() 
         x_os8, x = self.refine_OS8(x, masks)
         # x_os8 = self.refine_OS8(x, masks)
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
+        if self.training:
+            x_os8 = x_os8 * valid_masks
+        else:
+            x_os8[:, n_i:] = 0.0
 
         x = self.layer3(x) + fea3
 
@@ -175,9 +254,18 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         # prev_mask = self.compute_next_input_mask(masks, x_os8, iter)
         # x_os4, x = self.refine_OS4(x, prev_mask)
         # x_os4 = self.refine_OS4(x, prev_mask)
-        x_os4 = self.refine_OS4(x)
+        if not self.use_sep_head:
+            x_os4 = self.refine_OS4(x)
+        else:
+            logging.debug("forwarding os4")
+            x_os4 = self.predict_detail(self.refine_OS4, x, masks.flatten(0,1), x_os8)
         x_os4 = F.interpolate(x_os4, scale_factor=4.0, mode='bilinear', align_corners=False)
         x_os4 = (torch.tanh(x_os4) + 1.0) / 2.0
+        # x_os4 = x_os4 * valid_masks
+        if self.training:
+            x_os4 = x_os4 * valid_masks
+        else:
+            x_os4[:, n_i:] = 0.0
 
         x = self.layer4(x) + fea2
         x = self.conv1(x)
@@ -187,7 +275,11 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         # Compute new masks from the x_os4
         # prev_mask = self.compute_next_input_mask(masks, x_os4, iter)
         # x_os1 = self.refine_OS1(x, prev_mask)
-        x_os1 = self.refine_OS1(x)
+        if not self.use_sep_head:
+            x_os1 = self.refine_OS1(x)
+        else:
+            logging.debug("forwarding os1")
+            x_os1 = self.predict_detail(self.refine_OS1, x, masks.flatten(0, 1), x_os8)
         x_os1 = (torch.tanh(x_os1) + 1.0) / 2.0
 
         ret['alpha_os1'] = x_os1
@@ -195,6 +287,20 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         ret['alpha_os8'] = x_os8
 
         return ret
+
+class ResShortCut_TempEmbedAtten_Dec(ResShortCut_EmbedAtten_Dec):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.temp_module = TemporalNN(512)
+    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, **kwargs):
+        
+        # Perform temporal aggregation
+        x = x.reshape(b, 3, *x.shape[1:])
+        x = self.temp_module(x)
+        x = x.reshape(b * 3, -1, *x.shape[-2:])
+
+        return super().forward(x, mid_fea, b, n_f, n_i, masks, iter, **kwargs)
+        
 
 class ResS_EmbedAttenProdMask_Dec(ResShortCut_EmbedAtten_Dec):
     def compute_unknown(self, masks, k_size):
@@ -289,3 +395,6 @@ def res_shortcut_embed_attention_decoder_22(**kwargs):
 
 def res_shortcut_embed_attention_proma_decoder_22(**kwargs):
     return ResS_EmbedAttenProdMask_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)
+
+def res_shortcut_temp_embed_atten_decoder_22(**kwargs):
+    return ResShortCut_TempEmbedAtten_Dec(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)
