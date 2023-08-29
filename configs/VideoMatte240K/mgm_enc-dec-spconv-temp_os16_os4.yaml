@@ -1,7 +1,7 @@
-name: 'mgm_enc-dec-spconv-temp_stm-os8_atten-loss'
+name: 'mgm_enc-dec-spconv-temp_stm-os16_queries-os8_spconv-os4_atten-loss'
 output_dir: 'output/VideoMatte240K'
 train:
-  batch_size: 1
+  batch_size: 5
   num_workers: 4
   max_iter: 50000
   optimizer:

@@ -11,26 +11,26 @@ parser.add_argument("--instance", "-i", type=str, default="0")
 argparse_args = parser.parse_args()
 video_name = argparse_args.video_name
 
-root_dir = "output/frame.io"
+root_dir = "data/frame.io"
 dirs = [
     f"/mnt/localssd/frame.io/images/{video_name}",
     f"/mnt/localssd/frame.io/coarses/{video_name}/{argparse_args.instance}",
-    f"{root_dir}/mgm/{video_name}/{argparse_args.instance}",
+    f"{root_dir}/ours_0823/notemp/{video_name}/{argparse_args.instance}",
     # f"{root_dir}/mgm_wild/{video_name}/{argparse_args.instance}",
     # f"{root_dir}/tcvom/{video_name}/{argparse_args.instance}",
-    f"{root_dir}/sftm/{video_name}/{argparse_args.instance}",
+    f"{root_dir}/ours_0823/temp/{video_name}/{argparse_args.instance}",
     # f"{root_dir}/samdec/{video_name}/{argparse_args.instance}", # TODO: change this to atten-dec
 ]
 desc = [
     "image",
     "input mask",
-    "MGM",
+    "Frame-by-frame",
     # "MGM Wild",
     # "MGM + TCVOM",
-    "Ours",
+    "+Memory",
     # "MGM + SAM Dec",
 ]
-dst_dir = f"{root_dir}/{video_name}_inst{argparse_args.instance}_0801"
+dst_dir = f"{root_dir}/ours_0823/{video_name}_inst{argparse_args.instance}"
 n_rows = 2
 n_cols = 3
 
@@ -60,7 +60,9 @@ for image_filename in tqdm(image_filenames):
         # import pdb; pdb.set_trace()
         if text == 'image':
             ori_image = image.copy()
-        
+        elif image.shape[0] != ori_image.shape[0]:
+            image = cv2.resize(image, (ori_image.shape[1], ori_image.shape[0]))
+
         composed_img = None
         if text != "input mask" and text != "image":
             composed_img = np.zeros_like(image)

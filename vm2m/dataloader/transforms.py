@@ -1,4 +1,4 @@
-from typing import Any
+import math
 import numpy as np
 import cv2
 import torch
@@ -50,6 +50,7 @@ class ResizeShort(object):
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
+        input_dict["ori_alphas"] = alphas
         transform_info = input_dict["transform_info"]
         h, w = frames[0].shape[:2]
         ratio = self.short_size * 1.0 / min(w, h) 
@@ -58,8 +59,7 @@ class ResizeShort(object):
             if masks is not None:
                 masks = [cv2.resize(mask, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_NEAREST) for mask in masks]
             # import pdb; pdb.set_trace()
-            if self.transform_alphas:
-                alphas = [cv2.resize(alpha, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_LINEAR) for alpha in alphas]
+            alphas = [cv2.resize(alpha, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_LINEAR) for alpha in alphas]
         transform_info.append({'name': 'resize', 'ori_size': (h, w), 'ratio': ratio})
         
         input_dict["frames"] = frames
@@ -86,8 +86,7 @@ class PaddingMultiplyBy(object):
         frames = [cv2.copyMakeBorder(frame, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for frame in frames]
         if masks is not None:
             masks = [cv2.copyMakeBorder(mask, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for mask in masks]
-        if self.transform_alphas:
-            alphas = [cv2.copyMakeBorder(alpha, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for alpha in alphas]
+        alphas = [cv2.copyMakeBorder(alpha, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for alpha in alphas]
         transform_info.append({'name': 'padding', 'pad_size': (h_pad, w_pad)})
         
         input_dict["frames"] = frames
@@ -338,6 +337,23 @@ class RandomBinarizeAlpha(object):
 
         return input_dict
 
+class RandomBinarizedMask(RandomBinarizeAlpha):
+    def __call__(self, input_dict: dict):
+        '''
+        Args:
+        frames: (T, H, W, C)
+        alphas: (T, H, W)
+        masks: (T, H, W) or None
+        
+        Args:
+        frames: (T, H, W, C)
+        alphas: (T, H, W)
+        masks: (T, H, W) from alphas
+        '''
+        masks = input_dict["masks"]
+        input_dict["masks"] = np.stack([self._gen_single_mask(alpha) for alpha in masks], axis=0)
+        return input_dict
+
 class GenMaskFromAlpha(object):
     def __init__(self, threshold=0.5):
         self.threshold = 0.5
@@ -351,6 +367,174 @@ class GenMaskFromAlpha(object):
         input_dict["masks"] = np.stack([cv2.resize(m, (w, h), cv2.INTER_NEAREST) for m in new_masks], axis=0)
 
         return input_dict
+    
+class DownUpMask(object):
+    def __init__(self, random, ratio, p=0.5):
+        self.random = random
+        self.ratio = ratio
+        self.p = p
+
+    def downup(self, mask):
+        if self.random.rand() < self.p:
+            h, w = mask.shape[:2]
+            mask = cv2.resize(mask, (0, 0), fx=self.ratio, fy=self.ratio, interpolation=cv2.INTER_LINEAR)
+            mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_LINEAR)
+            mask = (mask > 127).astype('uint8') * 255
+        return mask
+    def __call__(self, input_dict: dict):
+        masks = input_dict["masks"]
+        input_dict["masks"] = np.stack([self.downup(m) for m in masks], axis=0)
+
+        return input_dict
+
+def get_random_structure(size):
+    # The provided model is trained with 
+    #   choice = np.random.randint(4)
+    # instead, which is a bug that we fixed here
+    choice = np.random.randint(1, 5)
+
+    if choice == 1:
+        return cv2.getStructuringElement(cv2.MORPH_RECT, (size, size))
+    elif choice == 2:
+        return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size))
+    elif choice == 3:
+        return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size//2))
+    elif choice == 4:
+        return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size//2, size))
+
+def random_dilate(seg, min=3, max=10):
+    size = np.random.randint(min, max)
+    kernel = get_random_structure(size)
+    seg = cv2.dilate(seg,kernel,iterations = 1)
+    return seg
+
+def random_erode(seg, min=3, max=10):
+    size = np.random.randint(min, max)
+    kernel = get_random_structure(size)
+    seg = cv2.erode(seg,kernel,iterations = 1)
+    return seg
+
+def compute_iou(seg, gt):
+    intersection = seg*gt
+    union = seg+gt
+    return (np.count_nonzero(intersection) + 1e-6) / (np.count_nonzero(union) + 1e-6)
+
+def perturb_seg(gt, iou_target=0.6):
+    h, w = gt.shape
+    seg = gt.copy()
+
+    _, seg = cv2.threshold(seg, 127, 255, 0)
+
+    # Rare case
+    if h <= 2 or w <= 2:
+        print('GT too small, returning original')
+        return seg
+
+    # Do a bunch of random operations
+    for _ in range(250):
+        for _ in range(4):
+            lx, ly = np.random.randint(w), np.random.randint(h)
+            lw, lh = np.random.randint(lx+1,w+1), np.random.randint(ly+1,h+1)
+
+            # Randomly set one pixel to 1/0. With the following dilate/erode, we can create holes/external regions
+            if np.random.rand() < 0.25:
+                cx = int((lx + lw) / 2)
+                cy = int((ly + lh) / 2)
+                seg[cy, cx] = np.random.randint(2) * 255
+
+            if np.random.rand() < 0.5:
+                seg[ly:lh, lx:lw] = random_dilate(seg[ly:lh, lx:lw])
+            else:
+                seg[ly:lh, lx:lw] = random_erode(seg[ly:lh, lx:lw])
+
+        if compute_iou(seg, gt) < iou_target:
+            break
+
+    return seg
+
+class ModifyMaskBoundary(object):
+    def __init__(self, random, regional_sample_rate=0.1, sample_rate=0.1, move_rate=0.0):
+        self.random = random
+        self.regional_sample_rate = regional_sample_rate
+        self.sample_rate = sample_rate
+        self.move_rate = move_rate
+    
+    def modify_mask(self, image):
+        iou_target = self.random.rand() * 0.2 + 0.8
+
+        if int(cv2.__version__[0]) >= 4:
+            contours, _ = cv2.findContours(image, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        else:
+            _, contours, _ = cv2.findContours(image, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+
+        #only modified contours is needed actually. 
+        sampled_contours = []   
+        modified_contours = [] 
+
+        for contour in contours:
+            if contour.shape[0] < 10:
+                continue
+            M = cv2.moments(contour)
+
+            #remove region of contour
+            number_of_vertices = contour.shape[0]
+            number_of_removes = int(number_of_vertices * self.regional_sample_rate)
+            
+            idx_dist = []
+            for i in range(number_of_vertices - number_of_removes):
+                idx_dist.append([i, np.sum((contour[i] - contour[i+number_of_removes])**2)])
+                
+            idx_dist = sorted(idx_dist, key=lambda x:x[1])
+            candidates = idx_dist[:math.ceil(0.1*len(idx_dist))]
+            remove_start = candidates[self.random.choice(np.arange(len(candidates)))][0]
+            
+            new_contour = np.concatenate([contour[:remove_start], contour[remove_start+number_of_removes:]], axis=0)
+            contour = new_contour
+            
+
+            #sample contours
+            number_of_vertices = contour.shape[0]
+            indices = self.random.choice(range(number_of_vertices), int(number_of_vertices * self.sample_rate), replace=False)
+            indices.sort()
+            sampled_contour = contour[indices]
+            sampled_contours.append(sampled_contour)
+
+            modified_contour = np.copy(sampled_contour)
+            if (M['m00'] != 0):
+                center = round(M['m10'] / M['m00']), round(M['m01'] / M['m00'])
+
+                #modify contours
+                for idx, coor in enumerate(modified_contour):
+
+                    change = np.random.normal(0, self.move_rate) # 0.1 means change position of vertex to 10 percent farther from center
+                    x,y = coor[0]
+                    new_x = x + (x-center[0]) * change
+                    new_y = y + (y-center[1]) * change
+
+                    modified_contour[idx] = [new_x,new_y]
+            modified_contours.append(modified_contour)
+            
+
+        #draw boundary
+        gt = np.copy(image)
+        image = np.zeros_like(image)
+
+        modified_contours = [cont for cont in modified_contours if len(cont) > 0]
+        if len(modified_contours) == 0:
+            image = gt.copy()
+        else:
+            image = cv2.drawContours(image, modified_contours, -1, (255, 0, 0), -1)
+
+        image = perturb_seg(image, iou_target)
+        
+        return image
+
+    def __call__(self, input_dict: dict):
+        masks = input_dict["masks"]
+        input_dict["masks"] = np.stack([self.modify_mask(m) for m in masks], axis=0)
+
+        return input_dict
+
 
 class ToTensor(object):
     def __init__(self):
@@ -364,24 +548,33 @@ class ToTensor(object):
 
         Returns:
         frames: (T, C, H, W)
-        alphas: (T, 1, H, W)
-        masks: (T, 1, H, W) or None
+        alphas: (T, n_ints, H, W)
+        masks: (T, n_ints, H, W) or None
         '''
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
 
         frames = torch.from_numpy(np.ascontiguousarray(frames)).permute(0, 3, 1, 2).contiguous().float()        
-        alphas = torch.from_numpy(np.ascontiguousarray(alphas)).unsqueeze(1).contiguous()
+        alphas = torch.from_numpy(np.ascontiguousarray(alphas)).contiguous()
+        n_insts = alphas.shape[0] // frames.shape[0]
+        alphas = alphas.view(frames.shape[0], n_insts, *alphas.shape[1:])
         alphas[alphas < 5] = 0
 
         if masks is not None:
-            masks = torch.from_numpy(np.ascontiguousarray(masks).astype('uint8')).unsqueeze(1).contiguous()
+            masks = torch.from_numpy(np.ascontiguousarray(masks).astype('uint8')).contiguous()
+            masks = masks.view(frames.shape[0], n_insts, *masks.shape[1:])
 
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
         input_dict["masks"] = masks
         
+        if "ori_alphas" in input_dict:
+            ori_alphas = input_dict["ori_alphas"]
+            ori_alphas = torch.from_numpy(np.ascontiguousarray(ori_alphas)).contiguous()
+            ori_alphas = ori_alphas.view(frames.shape[0], n_insts, *ori_alphas.shape[1:])
+            input_dict["ori_alphas"] = ori_alphas
+
         if "fg" in input_dict:
             input_dict["fg"] = torch.from_numpy(np.ascontiguousarray(input_dict["fg"])).permute(0, 3, 1, 2).contiguous().float()
         if "bg" in input_dict:
@@ -508,13 +701,13 @@ class JpegCompression(object):
         aug = self.jpeg_aug.to_deterministic()
         for i in range(frames.shape[0]):
             frames[i] = aug.augment_image(np.uint8(frames[i]))
-            alphas[i] = aug.augment_image(np.uint8(alphas[i]))
 
             if fg is not None:
                 fg[i] = frames[i]
             if bg is not None:
                 bg[i] = aug.augment_image(np.uint8(bg[i]))
-
+        for i in range(alphas.shape[0]):
+            alphas[i] = aug.augment_image(np.uint8(alphas[i]))
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
         if fg is not None:
@@ -542,9 +735,10 @@ class RandomAffine(object):
         
         list_trans_FM = random_transform(list_FM, self.random, rt=10, sh=5, zm=[0.95,1.05], sc= [1, 1], cs=0.03*255., hf=False)
         n_f = len(frames)
+        n_alpha = len(alphas)
         frames = np.stack(list_trans_FM[:n_f], axis=0)
-        alphas = np.stack(list_trans_FM[n_f:2*n_f], axis=0)
-        ignore_regions = np.stack(list_trans_FM[2*n_f:3*n_f], axis=0)
+        alphas = np.stack(list_trans_FM[n_f: n_f + n_alpha], axis=0)
+        ignore_regions = np.stack(list_trans_FM[n_f + n_alpha: 2*n_f + n_alpha], axis=0)
         if bg is not None:
             bg = np.stack(list_trans_FM[3*n_f:], axis=0)
         
@@ -585,16 +779,22 @@ class MotionBlur(object):
             alphas = np.clip(alphas, 0, 255)
         else:
             if self.random.uniform(0, 1) < 0.9:
-                N_cat = np.concatenate([frames, alphas[:, :, :, None]], axis=-1) # T x H x W x 4
-                N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x 4 x T
-                N_cat = N_cat.reshape(*N_cat.shape[:2], -1) # H x W x 4T
-                N_cat_aug = self.motion_aug(image=N_cat)["image"] # H x W x 4T
-                N_cat_aug = N_cat_aug.reshape(*N_cat_aug.shape[:2], -1, frames.shape[0]) # H x W x 4 x T
-                N_cat_aug = N_cat_aug.transpose((3, 0, 1, 2)) # T x H x W x 4
+                # Transform alphas to T x H x W x n_inst
+                alphas = alphas.reshape(len(frames), -1, *alphas.shape[1:])
+                n_inst = alphas.shape[1]
+                alphas = alphas.transpose((0, 2, 3, 1)) # T x H x W x n_inst
+                N_cat = np.concatenate([frames, alphas], axis=-1) # T x H x W x (n_inst + 3)
+                N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x (n_inst + 3) x T
+                N_cat = N_cat.reshape(*N_cat.shape[:2], -1) # H x W x (n_inst + 3)T
+                N_cat_aug = self.motion_aug(image=N_cat)["image"] # H x W x (n_inst + 3)T
+                N_cat_aug = N_cat_aug.reshape(*N_cat_aug.shape[:2], -1, frames.shape[0]) # H x W x (n_inst + 3) x T
+                N_cat_aug = N_cat_aug.transpose((3, 0, 1, 2)) # T x H x W x (n_inst + 3)
                 frames = N_cat_aug[:, :, :, :3]
-                alphas = N_cat_aug[:, :, :, 3]
+                alphas = N_cat_aug[:, :, :, 3:]
                 frames = np.clip(frames, 0, 255)
                 alphas = np.clip(alphas, 0, 255)
+                alphas = alphas.transpose((0, 3, 1, 2)) # T x n_inst x H x W
+                alphas = alphas.reshape(-1, *alphas.shape[2:])
             if self.random.uniform(0, 1) < 0.3 and bg is not None:
                 N_cat = bg 
                 N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x 3 x T

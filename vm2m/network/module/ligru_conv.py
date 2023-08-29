@@ -33,12 +33,12 @@ class LiGRUConv(nn.Module):
         x: (b, c, h, w)
         h: (b, c, h, w)
         '''
-        z = F.sigmoid(self.conv1(x) + self.conv2(h))
+        z = torch.sigmoid(self.conv1(x) + self.conv2(h))
         h_temp = F.relu(self.conv3(x) + self.conv4(h))
         h = z * h + (1 - z) * h_temp
         return h
 
-    def forward(self, x):
+    def forward(self, x, **kwargs):
         '''
         x: (b, n_f, c, h, w)
         '''

@@ -12,12 +12,14 @@ CONFIG.train.seed = -1
 CONFIG.train.batch_size = 2
 CONFIG.train.num_workers = 16
 CONFIG.train.resume = ''
+CONFIG.train.resume_last = False
 CONFIG.train.max_iter = 100000
 CONFIG.train.log_iter = 50
 CONFIG.train.vis_iter = 500
 CONFIG.train.val_iter = 2000
 CONFIG.train.val_metrics = ['MAD', 'MSE', 'dtSSD']
 CONFIG.train.val_best_metric = 'MAD'
+CONFIG.train.val_dist = True
 
 optimizer = CN({})
 optimizer.name = 'sgd' # sgd
@@ -94,6 +96,8 @@ CONFIG.model.loss_multi_inst_w = 0.0
 CONFIG.model.loss_multi_inst_type = 'l1' # 'l2', 'smooth_l1_0.5'
 CONFIG.model.loss_multi_inst_warmup = 0 
 
+CONFIG.model.loss_atten_w = 0.1
+
 CONFIG.model.aspp = CN({})
 CONFIG.model.aspp.in_channels = 512
 CONFIG.model.aspp.out_channels = 512
@@ -135,6 +139,7 @@ dataset.train.split = 'train'
 dataset.train.clip_length = 8
 dataset.train.short_size = 768
 dataset.train.use_single_instance_only = True
+dataset.train.downscale_mask = True
 
 # For augmentation
 dataset.train.random_state = 2023
@@ -156,6 +161,8 @@ dataset.test.name = 'VideoMatte240K'
 dataset.test.root_dir = ''
 dataset.test.split = 'valid'
 dataset.test.use_thresh_mask = False
+dataset.test.downscale_mask = True
+dataset.test.alpha_dir_name = "alphas"
 
 # For video augmentation
 dataset.test.clip_length = 8

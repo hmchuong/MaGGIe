@@ -16,13 +16,13 @@ train:
   log_iter: 50
 model:
   arch: 'MGM'
-  weights: output/HIM/mgm_enc-dec-spconv_atten-loss_him_syn_short-576-512x512_bs128_20k_adamw_5.0e-5/best_model.pth
+  weights: output/HIM/mgm_enc-dec-spconv_him_syn_short-576-512x512_bs256_20k_adamw_5.0e-5/best_model.pth
   backbone: res_embed_shortcut_os8_encoder_29
   backbone_args:
     num_embed: 3
     num_mask: 10
     pretrained: true
-  decoder: res_shortcut_attention_spconv_temp_decoder_22
+  decoder: res_shortcut_attention_spconv_decoder_22
   decoder_args:
     atten_block: 2
     atten_dim: 128
@@ -31,7 +31,6 @@ model:
     final_channel: 64
     head_channel: 120
     max_inst: 10
-    embed_dim: 3
     use_atten_mask: false
   mgm:
     warmup_iter: 10000

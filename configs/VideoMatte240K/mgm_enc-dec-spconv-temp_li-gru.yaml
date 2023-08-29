@@ -1,9 +1,9 @@
-name: 'mgm_enc-dec-spconv-temp_stm-os8_atten-loss'
+name: 'mgm_enc-dec-spconv-temp_li-gru'
 output_dir: 'output/VideoMatte240K'
 train:
-  batch_size: 1
+  batch_size: 4
   num_workers: 4
-  max_iter: 50000
+  max_iter: 20000
   optimizer:
     lr: 5.0e-5
     name: adamw
@@ -15,14 +15,13 @@ train:
   val_iter: 500
   vis_iter: 50
   log_iter: 10
-  val_dist: True
   seed: 1105
 test:
   num_workers: 4
-  metrics: ['MAD', 'MSE', 'SAD', 'dtSSD']
+  metrics: ['MAD', 'MSE', 'SAD']
 model:
   arch: 'MGM'
-  weights: output/HIM/mgm_enc-dec-spconv_atten-loss_him_syn_short-576-512x512_bs128_20k_adamw_5.0e-5/best_model.pth
+  weights: output/HIM/mgm_enc-dec-spconv_him_syn_short-576-512x512_bs256_20k_adamw_5.0e-5/best_model.pth
   backbone: res_embed_shortcut_os8_encoder_29
   backbone_args:
     num_embed: 3
@@ -37,8 +36,6 @@ model:
     final_channel: 64
     head_channel: 120
     max_inst: 10
-    embed_dim: 3
-    use_atten_mask: false
   mgm:
     warmup_iter: 10000
   loss_alpha_grad_w: 0.0
@@ -59,7 +56,7 @@ dataset:
     split: 'train'
     short_size: 576
     max_inst: 2
-    clip_length: 5
+    clip_length: 4
     max_step_size: 5
     padding_inst: 10
     random_state: 2023
@@ -68,6 +65,6 @@ dataset:
     root_dir: '/mnt/localssd/VideoMatte240K'
     split: 'valid'
     short_size: 576
-    clip_length: 8
+    clip_length: 3
     clip_overlap: 2
-    use_thresh_mask: False
+    use_thresh_mask: True

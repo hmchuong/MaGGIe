@@ -51,7 +51,9 @@ class MGM(nn.Module):
 
         self.aspp = ASPP(in_channel=512, out_channel=512)
         self.decoder = decoder
-        
+        if hasattr(self.encoder, 'mask_embed_layer'):
+            if hasattr(self.decoder, 'temp_module_os16'):
+                self.decoder.temp_module_os16.mask_embed_layer = self.encoder.mask_embed_layer
         # if isinstance(self.encoder, ResMaskEmbedShortCut_D) and isinstance(self.decoder, ResShortCut_EmbedAtten_Dec):
         #     self.decoder.refine_OS1.id_embedding = self.encoder.mask_embed
         #     self.decoder.refine_OS4.id_embedding = self.encoder.mask_embed
@@ -63,6 +65,7 @@ class MGM(nn.Module):
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
         self.loss_dtSSD_w = cfg.loss_dtSSD_w
         self.loss_alpha_grad_w = cfg.loss_alpha_grad_w
+        self.loss_atten_w = cfg.loss_atten_w
         self.lap_loss = LapLoss()
         self.grad_loss = GradientLoss()
 
@@ -91,6 +94,11 @@ class MGM(nn.Module):
         if self.train_temporal:
             self.freeze_to_train_temporal()
     
+    def convert_syn_bn(self):
+        self.encoder = nn.SyncBatchNorm.convert_sync_batchnorm(self.encoder)
+        self.aspp = nn.SyncBatchNorm.convert_sync_batchnorm(self.aspp)
+        self.decoder.convert_syn_bn()
+
     def freeze_to_train_temporal(self):
         # Freeze the encoder
         self.encoder.eval()
@@ -119,19 +127,19 @@ class MGM(nn.Module):
             self.freeze_to_train_temporal()
 
 
-    def fushion(self, pred):
-        alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
+    # def fushion(self, pred):
+    #     alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
-        ### Progressive Refinement Module in MGMatting Paper
-        alpha_pred = alpha_pred_os8.clone().detach()
-        weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
-        alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
-        weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
-        alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
+    #     ### Progressive Refinement Module in MGMatting Paper
+    #     alpha_pred = alpha_pred_os8.clone().detach()
+    #     weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
+    #     alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
+    #     weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
+    #     alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
 
-        return alpha_pred, weight_os4, weight_os1
+    #     return alpha_pred, weight_os4, weight_os1
 
-    def forward(self, batch, return_ctx=False, prev_feat=None):
+    def forward(self, batch, return_ctx=False, mem_feat=[], mem_query=None, mem_details=None, **kwargs):
         '''
         x: b, n_f, 3, h, w, image tensors
         masks: b, n_frames, n_instances, h//8, w//8, coarse masks
@@ -197,14 +205,19 @@ class MGM(nn.Module):
                 embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
                 embedding = self.aspp(embedding)
         else:
+            # import pdb; pdb.set_trace()
             embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
             embedding = self.aspp(embedding)
-
-        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, gt_alphas=alphas, prev_feat=prev_feat)
+        
+        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, 
+                            masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, 
+                            gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details)
         
         # Fushion
-        alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
-
+        # alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
+        alpha_pred = pred.pop("refined_masks")
+        weight_os4 = pred.pop("weight_os4")
+        weight_os1 = pred.pop("weight_os1")
         
         output = {}
         if self.num_masks > 0 and self.training:
@@ -212,16 +225,16 @@ class MGM(nn.Module):
             output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
             output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, self.num_masks, h, w)
         else:
-            output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, n_i, h, w)
-            output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, n_i, h, w)
-            output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, n_i, h, w)
+            output['alpha_os1'] = pred['alpha_os1'][:, :n_i].view(b, n_f, n_i, h, w)
+            output['alpha_os4'] = pred['alpha_os4'][:, :n_i].view(b, n_f, n_i, h, w)
+            output['alpha_os8'] = pred['alpha_os8'][:, :n_i].view(b, n_f, n_i, h, w)
         if 'ctx' in pred:
             output['ctx'] = pred['ctx']
         # Reshape the output
         if self.num_masks > 0 and self.training:
             alpha_pred = alpha_pred.view(b, n_f, self.num_masks, h, w)
         else:
-            alpha_pred = alpha_pred.view(b, n_f, n_i, h, w)
+            alpha_pred = alpha_pred[:, :n_i].view(b, n_f, n_i, h, w)
         output['refined_masks'] = alpha_pred
 
         if self.training:
@@ -233,9 +246,17 @@ class MGM(nn.Module):
             valid_masks = trans_gt.sum((2, 3), keepdim=True) > 0
             valid_masks = valid_masks.float()
             for k, v in pred.items():
+                if 'loss' in k or 'mem_' in k:
+                    continue
                 pred[k] = v * valid_masks
 
             loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+
+            # Add loss max and min attention
+            if 'loss_max_atten' in pred and self.loss_atten_w > 0:
+                loss_dict['loss_max_atten'] = pred['loss_max_atten']
+                # loss_dict['loss_min_atten'] = pred['loss_min_atten']
+                loss_dict['total'] += loss_dict['loss_max_atten'] * self.loss_atten_w # + loss_dict['loss_min_atten']) * 0.1
 
             if not chosen_ids is None:
                 for k, v in output.items():
@@ -245,8 +266,15 @@ class MGM(nn.Module):
         # import pdb; pdb.set_trace()
         for k, v in output.items():
             output[k] = v[:, :, :n_i]
-        if 'embedding' in pred:
-            output['embedding'] = pred['embedding']
+        # if 'embedding' in pred:
+            # output['embedding'] = pred['embedding']
+        # if 'embedding_os8' in pred:
+            # output['embedding'] = {'os32': pred['embedding_os32'], 'os8': pred['embedding_os8']}
+            # output['embedding'] = {'os8': pred['embedding_os8']}
+        # output['prev_mask'] = alpha_pred
+        for k in pred:
+            if k.startswith("mem_"):
+                output[k] = pred[k]
         return output
 
     @staticmethod
@@ -401,17 +429,17 @@ class MGM(nn.Module):
 
 
 class MGM_SingInst(MGM):
-    def forward(self, batch, return_ctx=False):
+    def forward(self, batch, return_ctx=False, prev_feat={}, prev_mask=None):
         masks = batch['mask']
         n_i = masks.shape[2]
-        if self.num_masks == 1:
-            outputs = []
-            # interate one mask at a time
-            batch = copy.deepcopy(batch)
-            for i in range(n_i):
-                batch['mask'] = masks[:, :, i:i+1]
-                outputs.append(super().forward(batch, return_ctx))
-            for k in outputs[0].keys():
-                outputs[0][k] = torch.cat([o[k] for o in outputs], 2)
-            return outputs[0]
-        return super().forward(batch, return_ctx)
+        # if self.num_masks == 1:
+        outputs = []
+        # interate one mask at a time
+        batch = copy.deepcopy(batch)
+        for i in range(n_i):
+            batch['mask'] = masks[:, :, i:i+1]
+            outputs.append(super().forward(batch, return_ctx))
+        for k in outputs[0].keys():
+            outputs[0][k] = torch.cat([o[k] for o in outputs], 2)
+        return outputs[0]
+        # return super().forward(batch, return_ctx)

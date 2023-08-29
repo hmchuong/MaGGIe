@@ -101,15 +101,43 @@ class MaskMatteEmbAttenHead(nn.Module):
         if self.atten_stride > 1.0:
             self.ori_feat_proj = nn.Conv2d(input_dim, attention_dim, kernel_size=1, stride=1, padding=0, bias=False)
             nn.init.xavier_uniform_(self.ori_feat_proj.weight)
+    
+    def compute_atten_loss(self, b, n_f, guidance_mask, atten_mat):
+        # Compute loss on attention mat: max at guidance, min at non-guidance
+        # import pdb; pdb.set_trace()
+
+        # Compute max loss
+        atten_values = (guidance_mask * atten_mat).sum(2)
+        atten_gt = torch.ones_like(atten_values)
+        atten_gt[guidance_mask.sum(2) == 0] = 0
+        cur_max_loss = (atten_gt - atten_values).sum() / (n_f * b)
+
+        # Compute min loss
+        atten_values = ((1.0 - guidance_mask.float()) * atten_mat).sum(2)
+        valid_mask = guidance_mask.sum(2) > 0
+        cur_min_loss = (atten_values * valid_mask).sum() / (n_f * b)
 
 
-    def forward(self, ori_feat, mask):
+        # max_values = (guidance_mask * atten_mat).max(2)[0] # n_f * b, n_i
+        # cur_max_loss = torch.ones_like(max_values) - max_values
+        # cur_max_loss = (guidance_mask.sum(2) > 0).float() * cur_max_loss
+        # cur_max_loss = (cur_max_loss.sum()) / (n_f * b)
+
+        # # For each instance, min_mask = all other instance mask, max of min_mask --> 0
+        # union_mask = (guidance_mask.sum(1) > 0).float()
+        # min_mask = union_mask.unsqueeze(1) - guidance_mask.float()
+        # min_values = (min_mask * atten_mat).max(2)[0]
+        # cur_min_loss = (min_values.sum()) / (n_f * b)
+
+        return cur_max_loss, cur_min_loss
+
+    def forward(self, ori_feat, mask, prev_tokens=None, use_mask_atten=True, gt_mask=None):
         '''
         Params:
         -----
         feat: b * n_f, c, h, w
         mask: b, n_f, n_i, h, w
-
+        prev_tokens: b, n_i, c_atten
         Returns:
         -------
         matte: b, n_f, n_i, 1, h, w
@@ -201,17 +229,30 @@ class MaskMatteEmbAttenHead(nn.Module):
         tokens = tokens.permute(2, 1, 0, 3).reshape(-1, b, self.atten_dim)
         token_pos = token_pos.permute(2, 1, 0, 3).reshape(-1, b, self.atten_dim)
 
+        # combine with previous tokens
+        if prev_tokens is not None:
+            # prev_tokens = prev_tokens.permute(1, 0, 2).unsqueeze(1)  # n_i, 1, b, c_atten
+            # prev_tokens = prev_tokens.repeat(1, n_f, 1, 1)  # n_i, n_f, b, c_atten
+            # import pdb; pdb.set_trace()
+            tokens = tokens + prev_tokens #.flatten(0, 1)  # n_i * n_f, b, c_atten
+
+
         # atten_padding_mask = n_f * b, h * w, n_i
-        atten_padding_m = mask.permute(1, 0, 2, 3, 4)
-        atten_padding_m = atten_padding_m.reshape(n_f * b, -1, h * w)
-        if atten_padding_m.shape[1] < n_i:
-            atten_padding_m = torch.cat([atten_padding_m, torch.zeros((n_f * b, n_i - atten_padding_m.shape[1], h * w), device=atten_padding_m.device)], dim=1)
-        atten_padding_m = atten_padding_m > 0
-        invalid_m = atten_padding_m.sum(-1) == 0
-        invalid_m = invalid_m[:, :, None].repeat(1, 1, h * w)
-        atten_padding_m[invalid_m] = True
-        atten_padding_m = ~atten_padding_m
+        if self.training:
+            gt_mask = resizeAnyShape(gt_mask, scale_factor=scale_factor, use_max_pool=True)  if not use_mask_atten else mask
+            atten_padding_m = gt_mask.permute(1, 0, 2, 3, 4)
+            atten_padding_m = atten_padding_m.reshape(n_f * b, -1, h * w)
+            if atten_padding_m.shape[1] < n_i:
+                atten_padding_m = torch.cat([atten_padding_m, torch.zeros((n_f * b, n_i - atten_padding_m.shape[1], h * w), device=atten_padding_m.device)], dim=1)
+            atten_padding_m = atten_padding_m > 0
+            guidance_mask = atten_padding_m.clone()
+            invalid_m = atten_padding_m.sum(-1) == 0
+            invalid_m = invalid_m[:, :, None].repeat(1, 1, h * w)
+            atten_padding_m[invalid_m] = True
+            atten_padding_m = ~atten_padding_m
         
+        max_loss = 0
+        min_loss = 0
         # For each iteration:
         for i in range(self.n_block):
             
@@ -232,12 +273,17 @@ class MaskMatteEmbAttenHead(nn.Module):
             # import pdb; pdb.set_trace()
             
             # import pdb; pdb.set_trace()
-            tokens, _ = self.token_feat_ca_layers[i](
+            tokens, atten_mat = self.token_feat_ca_layers[i](
                 tokens, feat,
-                memory_mask=atten_padding_m,
+                memory_mask=atten_padding_m if use_mask_atten else None,
                 memory_key_padding_mask=None,
                 pos=feat_pos, query_pos=token_pos
             )
+
+            if self.training and not use_mask_atten:
+                cur_max_loss, cur_min_loss = self.compute_atten_loss(b, n_f, guidance_mask, atten_mat)
+                max_loss += cur_max_loss
+                min_loss += cur_min_loss
 
             # atten_mat = atten_mat.reshape(b, n_i, h, w)
             # valid_mask = mask.sum((3, 4)) > 0
@@ -266,15 +312,26 @@ class MaskMatteEmbAttenHead(nn.Module):
                 pos=token_pos, query_pos=feat_pos
             )
         
+        
+
         # tokens to features attention
         # Q: n_i, n_f * b, c_atten
         # KV: h * w, n_f * b, c_atten
-        tokens, _ = self.final_token_feat_ca(
+        tokens, atten_mat = self.final_token_feat_ca(
             tokens, feat,
-            memory_mask=atten_padding_m,
+            memory_mask=atten_padding_m if use_mask_atten else None,
             memory_key_padding_mask=None,
             pos=feat_pos, query_pos=token_pos
         )
+        mem_tokens = tokens
+
+        if self.training and not use_mask_atten:
+            cur_max_loss, cur_min_loss = self.compute_atten_loss(b, n_f, guidance_mask, atten_mat)
+            max_loss += cur_max_loss
+            min_loss += cur_min_loss
+        
+        max_loss = max_loss / (self.n_block + 1)
+        min_loss = min_loss / (self.n_block + 1)
 
         # Smooth feature with 2 Convs
         feat = feat.reshape(h, w, n_f, b, -1)
@@ -305,5 +362,5 @@ class MaskMatteEmbAttenHead(nn.Module):
         output_mask = torch.einsum('bqc,bchw->bqhw', tokens, feat) # (b * n_f, n_i, h, w)
         
         if self.return_feat:
-            return output_mask, out_feat
-        return output_mask
+            return output_mask, out_feat, mem_tokens, max_loss, min_loss
+        return output_mask, mem_tokens, max_loss, min_loss

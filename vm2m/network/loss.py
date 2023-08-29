@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 # from pudb.remote import set_trace
 
-def loss_dtSSD(pred, gt, mask):
+def _loss_dtSSD(pred, gt, mask):
     b, n_f, _, h, w = pred.shape
     dadt = pred[:, 1:] - pred[:, :-1]
     dgdt = gt[:, 1:] - gt[:, :-1]
@@ -12,6 +12,19 @@ def loss_dtSSD(pred, gt, mask):
     # import pdb; pdb.set_trace()
     diff = torch.sum(diff) / torch.sum(mask[:, 1:])
     return diff
+
+def loss_dtSSD(pred, gt, mask):
+    loss = _loss_dtSSD(pred, gt, mask) #+ _loss_dtSSD(torch.flip(pred, dims=(1,)), torch.flip(gt, dims=(1,)), torch.flip(mask, dims=(1,)))
+    return loss
+    # b, n_f, _, h, w = pred.shape
+    # import pdb; pdb.set_trace()
+    # dadt = pred[:, 1:] - pred[:, :-1]
+    # dgdt = gt[:, 1:] - gt[:, :-1]
+    # diff = (dadt - dgdt) ** 2
+    # diff = diff * mask[:, 1:]
+    # # import pdb; pdb.set_trace()
+    # diff = torch.sum(diff) / torch.sum(mask[:, 1:])
+    # return diff
     # metric = torch.sqrt(torch.sum((dadt - dgdt) ** 2, dim=(2, 3, 4)))
     # metric = torch.sum(metric)
     # count = ((n_f - 1) * b)

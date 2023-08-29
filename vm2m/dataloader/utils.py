@@ -14,9 +14,12 @@ def gen_transition_gt(alphas, masks=None, k_size=25, iterations=1):
     all_trans_map = torch.stack(all_trans_map).unsqueeze(1)
     
     if masks is not None:
-        upmasks = torch.repeat_interleave(masks, 8, dim=-1)
-        upmasks = torch.repeat_interleave(upmasks, 8, dim=-2)
-        diff = (alphas > 127) != (upmasks == 255)
+        if masks.shape[-1] != alphas.shape[-1]:
+            masks = torch.repeat_interleave(masks, 8, dim=-1)
+            masks = torch.repeat_interleave(masks, 8, dim=-2)
+        # upmasks = torch.repeat_interleave(masks, 8, dim=-1)
+        # upmasks = torch.repeat_interleave(upmasks, 8, dim=-2)
+        diff = (alphas > 127) != (masks == 255)
         all_trans_map[diff > 0] = 1.0
     
     return all_trans_map

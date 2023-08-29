@@ -92,7 +92,9 @@ def load_state_dict(model, state_dict):
     
     return missing_keys, unexpected_keys, mismatch_keys
 
-def train(cfg, rank, is_dist=False, precision=32):
+def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
+    if global_rank is None:
+        global_rank = rank
     
     device = f'cuda:{rank}'
 
@@ -119,7 +121,7 @@ def train(cfg, rank, is_dist=False, precision=32):
     # if rank == 0:
     logging.info("Creating val dataset...")
     val_dataset = build_dataset(cfg.dataset.test, is_train=False)
-    val_sampler = torch_data.DistributedSampler(val_dataset, shuffle=False) if is_dist else None
+    val_sampler = torch_data.DistributedSampler(val_dataset, shuffle=False) if (is_dist and cfg.train.val_dist) else None
     val_loader = torch_data.DataLoader(
         val_dataset, batch_size=cfg.test.batch_size, shuffle=False, pin_memory=True,
         sampler=val_sampler,
@@ -138,6 +140,7 @@ def train(cfg, rank, is_dist=False, precision=32):
 
     if is_dist:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        # model.convert_syn_bn()
         having_unused_params = False
         if cfg.model.arch in ['VM2M', 'VM2M0711']:
             having_unused_params = True
@@ -182,10 +185,35 @@ def train(cfg, rank, is_dist=False, precision=32):
             # Load epoch, iteration, best score
             iter = opt_dict['iter']
             best_score = opt_dict['best_score']
+            epoch =  iter // len(train_loader)
             logging.info("Resuming from epoch {}, iter {}, best score {}".format(epoch, iter, best_score))
         else:
             raise ValueError("Cannot resume model from {}".format(cfg.train.resume))
     
+    if cfg.train.resume_last:
+        if os.path.exists(os.path.join(cfg.output_dir, 'last_model.pth')):
+            logging.info("Resuming last model from {}".format(cfg.output_dir))
+            try:
+                state_dict = torch.load(os.path.join(cfg.output_dir, 'last_model.pth'), map_location=device)
+                opt_dict = torch.load(os.path.join(cfg.output_dir, 'last_opt.pth'), map_location=device)
+                if is_dist:
+                    model.module.load_state_dict(state_dict, strict=True)
+                else:
+                    model.load_state_dict(state_dict, strict=True)
+                
+                # Load optimizer and lr_scheduler
+                optimizer.load_state_dict(opt_dict['optimizer'])
+                lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
+
+                # Load epoch, iteration, best score
+                iter = opt_dict['iter']
+                best_score = opt_dict['best_score']
+                epoch =  iter // len(train_loader)
+                logging.info("Resuming from epoch {}, iter {}, best score {}".format(epoch, iter, best_score))
+            except:
+                logging.info("Cannot resume last model from {}".format(cfg.output_dir))
+
+
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
     
@@ -221,9 +249,9 @@ def train(cfg, rank, is_dist=False, precision=32):
             optimizer.zero_grad()
             if precision == 16:
                 with autocast():
-                    output, loss = model(batch)
+                    output, loss = model(batch, mem_feat=[])
             else:
-                output, loss = model(batch)
+                output, loss = model(batch, mem_feat=[])
             if loss is None:
                 logging.error("Loss is None!")
                 continue
@@ -234,7 +262,7 @@ def train(cfg, rank, is_dist=False, precision=32):
                 scaler.scale(loss['total']).backward()
             else:
                 loss['total'].backward()
-
+                
             # Store to log_metrics
             for k, v in loss_reduced.items():
                 if k not in log_metrics:
@@ -260,46 +288,47 @@ def train(cfg, rank, is_dist=False, precision=32):
             lr_scheduler.step()
             batch_time.update(time.time() - end_time)
 
-            # Logging
-            if iter % cfg.train.log_iter == 0 and rank == 0:
-                log_str = "Epoch: {}, Iter: {}/{}".format(epoch, iter, cfg.train.max_iter)
-                for k, v in log_metrics.items():
-                    log_str += ", {}: {:.4f}".format(k, v.avg)
-                log_str += ", lr: {:.6f}".format(lr_scheduler.get_last_lr()[0])
-                log_str += ", batch_time: {:.4f}s".format(batch_time.avg)
-                log_str += ", data_time: {:.4f}s".format(data_time.avg)
-
-                logging.info(log_str)
-
-                # TODO: log to wandb
-                if cfg.wandb.use:
+            if global_rank == 0:
+                # Logging
+                if iter % cfg.train.log_iter == 0:
+                    log_str = "Epoch: {}, Iter: {}/{}".format(epoch, iter, cfg.train.max_iter)
                     for k, v in log_metrics.items():
-                        wandb.log({"train/" + k: v.val}, commit=False)
-                    wandb.log({"train/lr": lr_scheduler.get_last_lr()[0]}, commit=False)
-                    wandb.log({"train/batch_time": batch_time.val}, commit=False)
-                    wandb.log({"train/data_time": data_time.val}, commit=False)
-                    wandb.log({"train/epoch": epoch}, commit=False)
-                    wandb.log({"train/iter": iter}, commit=True)
-            
-            # Visualization
-            if iter % cfg.train.vis_iter == 0 and rank == 0 and cfg.wandb.use:
-                # Visualize to wandb
-                wandb_log_image(batch, output, iter)  
-            
+                        log_str += ", {}: {:.4f}".format(k, v.avg)
+                    log_str += ", lr: {:.6f}".format(lr_scheduler.get_last_lr()[0])
+                    log_str += ", batch_time: {:.4f}s".format(batch_time.avg)
+                    log_str += ", data_time: {:.4f}s".format(data_time.avg)
+
+                    logging.info(log_str)
+
+                    # log to wandb
+                    if cfg.wandb.use:
+                        for k, v in log_metrics.items():
+                            wandb.log({"train/" + k: v.val}, commit=False)
+                        wandb.log({"train/lr": lr_scheduler.get_last_lr()[0]}, commit=False)
+                        wandb.log({"train/batch_time": batch_time.val}, commit=False)
+                        wandb.log({"train/data_time": data_time.val}, commit=False)
+                        wandb.log({"train/epoch": epoch}, commit=False)
+                        wandb.log({"train/iter": iter}, commit=True)
+                
+                # Visualization
+                if iter % cfg.train.vis_iter == 0 and cfg.wandb.use:
+                    # Visualize to wandb
+                    wandb_log_image(batch, output, iter)  
+                
             # Validation
-            if iter % cfg.train.val_iter == 0:
+            if iter % cfg.train.val_iter == 0 and (cfg.train.val_dist or (not cfg.train.val_dist and global_rank == 0)):
                 logging.info("Start validation...")
                 model.eval()
                 val_model = model.module if is_dist else model
                 _ = [v.reset() for v in val_error_dict.values()]
-                _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, False, False, None)
+                _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=(not cfg.train.val_dist) or not is_dist)
 
-                if is_dist:
+                if is_dist and cfg.train.val_dist:
                     logging.info("Gathering metrics...")
                     # Gather all metrics
                     for k, v in val_error_dict.items():
                         v.gather_metric(0)
-                if rank == 0:
+                if global_rank == 0:
                     log_str = "Validation:"
                     for k, v in val_error_dict.items():
                         log_str += "{}: {:.4f}, ".format(k, v.average())

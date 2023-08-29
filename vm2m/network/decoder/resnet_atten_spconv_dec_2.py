@@ -2,6 +2,8 @@ from functools import partial
 import logging
 import torch
 import random
+import cv2
+import numpy as np
 from torch import nn
 from torch.nn import functional as F
 import spconv.pytorch as spconv
@@ -12,15 +14,41 @@ from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead
 from vm2m.network.module.instance_matte_head import InstanceMatteHead
 from vm2m.network.module.temporal_nn import TemporalNN
 from vm2m.network.module.ligru_conv import LiGRUConv
-from vm2m.network.module.stm import STM
-
+from vm2m.network.module.stm_2 import STM
+from vm2m.network.module.detail_aggregation import DetailAggregation
 from .resnet_dec import BasicBlock
+
+Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
+def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
+    ### pred: N, 1 ,H, W 
+    N, C, H, W = pred.shape
+
+    device = pred.device
+    pred = pred.data.cpu().numpy()
+    uncertain_area = np.ones_like(pred, dtype=np.uint8)
+    uncertain_area[pred<1.0/255.0] = 0
+    uncertain_area[pred>1-1.0/255.0] = 0
+
+    for n in range(N):
+        uncertain_area_ = uncertain_area[n,0,:,:] # H, W
+        if train_mode:
+            width = np.random.randint(1, rand_width)
+        else:
+            width = rand_width // 2
+        uncertain_area_ = cv2.dilate(uncertain_area_, Kernels[width])
+        uncertain_area[n,0,:,:] = uncertain_area_
+
+    weight = np.zeros_like(uncertain_area)
+    weight[uncertain_area == 1] = 1
+    weight = torch.from_numpy(weight).to(device)
+
+    return weight
 
 class ResShortCut_AttenSpconv_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
                  atten_dim=128, atten_block=2, 
-                 atten_head=1, atten_stride=1, head_channel=32, max_inst=10, use_atten_mask=True, **kwargs):
+                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -31,6 +59,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         self.inplanes = 512 if layers[0] > 0 else 256
         self.late_downsample = late_downsample
         self.midplanes = 64 if late_downsample else 32
+        self.warmup_mask_atten_iter = warmup_mask_atten_iter
 
         self.leaky_relu = nn.LeakyReLU(0.2, inplace=True)
 
@@ -66,8 +95,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             output_dim=final_channel,
             max_inst=max_inst,
             return_feat=True,
-            use_temp_pe=False,
-            use_mask_atten=use_atten_mask
+            use_temp_pe=False
         )
         relu_layer = nn.ReLU(inplace=True)
         # Image low-level feature extractor
@@ -112,6 +140,12 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             spconv.SubMConv2d(32, 1, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2)
         )
 
+    def convert_syn_bn(self):
+        self.layer1 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer1)
+        self.layer2 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer2)
+        self.layer3 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer3)
+        self.refine_OS8 = nn.SyncBatchNorm.convert_sync_batchnorm(self.refine_OS8)
+
 
     def _make_layer(self, block, planes, blocks, stride=1):
         if blocks == 0:
@@ -137,11 +171,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         return nn.Sequential(*layers)
     
-    def predict_details(self, x, image, roi_masks, masks):
+    def aggregate_detail_mem(self, x, mem_details):
+        return x
+
+    def predict_details(self, x, image, roi_masks, masks, mem_details=None):
         '''
         x: [b, 64, h/4, w/4], os4 semantic features
         image: [b, 3, H, W], original image
         masks: [b, n_i, H, W], dilated guided masks from OS8 prediction
+        mem_details: SparseConvTensor, memory details
         '''
         # Stack masks and images
         b, n_i, H, W = masks.shape
@@ -159,7 +197,6 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         inp = inp.permute(0, 2, 3, 1).contiguous()
         inp = inp[coords]
         coords = torch.stack(coords, dim=1)
-        # print(coords.shape[0])
         inp = spconv.SparseConvTensor(inp, coords.int(), (H, W), b * n_i)
 
         # inp -> OS 1 --> OS 2 --> OS 4
@@ -176,6 +213,10 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
         x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
         x = Fsp.sparse_add(x, fea3)
+
+        if mem_details is not None:
+            x = self.aggregate_detail_mem(x, mem_details)
+        mem_details = x
 
         # Predict OS 4
         x_os4 = self.refine_OS4(x)
@@ -200,78 +241,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x_os1_out = x_os1_out - 99
         coords = x_os1.indices.long()
         x_os1_out[coords[:, 0], :, coords[:, 1], coords[:, 2]] += 99
-        
-        return x_os4_out, x_os1_out
-    
-    def new_predict_details(self, x, inp, roi_masks, masks):
-        '''
-        x: [b, 64, h/4, w/4], os4 semantic features
-        image: [b, 3, H, W], original image
-        masks: [b, n_i, H, W], dilated guided masks from OS8 prediction
-        '''
-        
 
-        # Stack masks and images
-        b, n_i, H, W = masks.shape
-        masks = masks.reshape(b * n_i, 1, H, W)
-        roi_masks = roi_masks.reshape(b * n_i, 1, H, W)
-        inp = inp.unsqueeze(1).repeat(1, n_i, 1, 1, 1).reshape(b * n_i, 3, H, W)
-        inp = torch.cat([inp, masks], dim=1)
-
-        # Prepare sparse tensor
-        coords = torch.where(roi_masks.squeeze(1) > 0)
-        # if self.training and len(coords[0]) > 1600000:
-        #     ids = torch.randperm(len(coords[0]))[:1600000]
-        #     coords = [i[ids] for i in coords]
-        
-        inp = inp.permute(0, 2, 3, 1).contiguous()
-        inp = inp[coords]
-        coords = torch.stack(coords, dim=1)
-        # print(coords.shape[0])
-        inp = spconv.SparseConvTensor(inp, coords.int(), (H, W), b * n_i)
-
-        # import pdb; pdb.set_trace()
-
-        # inp -> OS 1 --> OS 2 --> OS 4
-        inp = self.low_os1_module(inp)
-        fea2 = self.low_os2_module(inp)
-        fea3 = self.low_os4_module(fea2)
-
-        # Combine x with fea3
-        # Prepare sparse tensor of x
-        coords = fea3.indices.clone()
-        coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
-        coords = coords.long()
-        x = x.permute(0, 2, 3, 1).contiguous()
-        x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
-        x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
-        x = Fsp.sparse_add(x, fea3)
-
-        # Predict OS 4
-        x_os4 = self.refine_OS4(x)
-        coords = x_os4.indices.long()
-        x_os4 = x_os4.dense()
-        x_os4 = x_os4 - 99
-        x_os4[coords[:, 0], :, coords[:, 1], coords[:, 2]] += 99
-
-        # Combine with fea2
-        # - Upsample to OS 2
-        x = self.layer4(x)
-        x = Fsp.sparse_add(x, fea2)
-
-        # Combine with fea1
-        # - Upsample to OS 1
-        x = self.layer5(x)
-        x = Fsp.sparse_add(x, inp)
-
-        # Predict OS 1
-        x = self.refine_OS1(x)
-        coords = x.indices.long()
-        x = x.dense()
-        x = x - 99
-        x[coords[:, 0], :, coords[:, 1], coords[:, 2]] += 99
-        
-        return x_os4, x
+        return x_os4_out, x_os1_out, mem_details
 
     def compute_unknown(self, masks, k_size=30):
         h, w = masks.shape[-2:]
@@ -280,14 +251,49 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         dilated_m = dilated_m[:,:, :h, :w]
         return dilated_m
 
-    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, logit_output=False, temp_aggre_func=None, **kwargs):
+    def aggregate_mem(self, x, mem_feat):
+        '''
+        Update current feat with mem_feat
+        '''
+        return x
+
+    def update_mem(self, mem_feat, refined_masks):
+        '''
+        Update memory feature with refined masks
+        '''
+        return mem_feat
+
+    def update_detail_mem(self, mem_details, refined_masks):
+        return mem_details
+
+    def fushion(self, pred):
+        alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
+
+        ### Progressive Refinement Module in MGMatting Paper
+        alpha_pred = alpha_pred_os8.clone().detach()
+        
+        weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
+        weight_os4 = weight_os4.type(alpha_pred.dtype)
+        alpha_pred_os4 = alpha_pred_os4.type(alpha_pred.dtype)
+        alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
+        weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
+        weight_os1 = weight_os1.type(alpha_pred.dtype)
+        alpha_pred_os1 = alpha_pred_os1.type(alpha_pred.dtype)
+        alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
+
+        return alpha_pred, weight_os4, weight_os1
+    
+    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
         '''
         masks: [b * n_f * n_i, 1, H, W]
         '''
-
         # Reshape masks
         masks = masks.reshape(b, n_f, n_i, masks.shape[2], masks.shape[3])
         valid_masks = masks.flatten(0,1).sum((2, 3), keepdim=True) > 0
+        gt_masks = None
+        if self.training:
+            # In training, use gt_alphas to supervise the attention
+            gt_masks = (gt_alphas > 0).reshape(b, n_f, n_i, gt_alphas.shape[2], gt_alphas.shape[3])
 
         # OS32 -> OS 8
         ret = {}
@@ -296,155 +302,166 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         image = mid_fea['image']
         x = self.layer1(x) + fea5
         
-        if temp_aggre_func is not None:
-            x = temp_aggre_func(x)
-            if not self.training:
-                ret['embedding_os8'] = x
-
+        # Update with memory
+        x = self.aggregate_mem(x, mem_feat)
+        mem_feat = x
         x = self.layer2(x) + fea4
 
         # Predict OS8
-        x_os8, x, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks)
+        # use mask attention during warmup of training
+        use_mask_atten = iter < self.warmup_mask_atten_iter and self.training
+        x_os8, x, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
+                                                                            prev_tokens=mem_query, 
+                                                                            use_mask_atten=use_mask_atten, gt_mask=gt_masks)
+        # import pdb; pdb.set_trace()
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
         if self.training:
             x_os8 = x_os8 * valid_masks
         else:
-            # x_os8[:, n_i:] = 0.0
             x_os8 = x_os8[:, :n_i]
 
         x = self.layer3(x)
 
-        # Start from here
-        unknown_os8 = self.compute_unknown(x_os8)
-        if unknown_os8.sum() > 0:
-            x_os4, x_os1 = self.predict_details(x, image, unknown_os8, x_os8)
-            x_os4 = x_os4.reshape(b * n_f, x_os8.shape[1], *x_os4.shape[-2:])
-            x_os1 = x_os1.reshape(b * n_f, x_os8.shape[1], *x_os1.shape[-2:])
-            
-            if not logit_output:
-                x_os4 = F.interpolate(x_os4, scale_factor=4.0, mode='bilinear', align_corners=False)
-                x_os4 = (torch.tanh(x_os4) + 1.0) / 2.0
-                x_os1 = (torch.tanh(x_os1) + 1.0) / 2.0
+        # Warm-up - Using gt_alphas instead of x_os8 for later steps
+        guided_mask_os8 = x_os8
+        if self.training and (iter < self.warmup_mask_atten_iter or x_os8.sum() == 0):
+            guided_mask_os8 = gt_alphas.clone()
+            # if gt_alphas.max() == 0 and self.training:
+            #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
+            # print(guided_mask_os8.sum(), guided_mask_os8.max())
+
+        unknown_os8 = self.compute_unknown(guided_mask_os8)
+        if unknown_os8.max() == 0 and self.training:
+            unknown_os8[:, :, 200: 250, 200: 250] = 1.0
+
+        if unknown_os8.sum() > 0 or self.training:
+            # TODO: Combine with details memory
+            x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details)
+            x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
+            x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])
+
+            x_os4 = F.interpolate(x_os4, scale_factor=4.0, mode='bilinear', align_corners=False)
+            x_os4 = (torch.tanh(x_os4) + 1.0) / 2.0
+            x_os1 = (torch.tanh(x_os1) + 1.0) / 2.0
         else:
             x_os4 = torch.zeros((b * n_f, x_os8.shape[1], image.shape[2], image.shape[3]), device=x_os8.device)
             x_os1 = torch.zeros_like(x_os4)
-        
-
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
-        ret['loss_max_atten'] = loss_max_atten
-        ret['loss_min_atten'] = loss_min_atten
+
+        # if not self.training:
+        #     import pdb; pdb.set_trace()
+        # Update mem_feat
+        alpha_pred, weight_os4, weight_os1 = self.fushion(ret)
+        mem_feat = self.update_mem(mem_feat, alpha_pred)
+
+        # Update mem_details
+        mem_details = self.update_detail_mem(mem_details, alpha_pred)
+
+        ret['refined_masks'] = alpha_pred
+        ret['weight_os4'] = weight_os4
+        ret['weight_os1'] = weight_os1
+        if self.training and iter >= self.warmup_mask_atten_iter:
+            ret['loss_max_atten'] = loss_max_atten
+            ret['loss_min_atten'] = loss_min_atten
+        ret['mem_queries'] = queries
+        ret['mem_feat'] = mem_feat
+        ret['mem_details'] = mem_details
         return ret
 
 class ResShortCut_AttenSpconv_Temp_Dec(ResShortCut_AttenSpconv_Dec):
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        # self.temp_module = TemporalNN(512)
-        # self.temp_module_os8 = LiGRUConv(128)
-        # self.temp_module_o232 = STM(512, os=32, embedd_dim=kwargs["embed_dim"])
-        self.temp_module_os8 = STM(256, os=16, embedd_dim=kwargs["embed_dim"])
-        # self.detail_temp_os4 = nn.Sequential(
-        #     nn.PixelUnshuffle(2),
-        #     nn.Conv2d(8, 4, 3, padding=1, groups=4),
-        #     nn.PixelShuffle(2)
-        # )
-        # self.detail_temp_os1 = nn.Sequential(
-        #     nn.PixelUnshuffle(8),
-        #     nn.Conv2d(128, 64, 3, padding=1, groups=64),
-        #     nn.PixelShuffle(8)
-        # )
+        self.temp_module_os16 = STM(256, os=16, mask_channel=kwargs["embed_dim"])
+        self.temp_module_os4 = DetailAggregation(64)
 
-        # for module in [self.detail_temp_os1, self.detail_temp_os4]:
-        #     for m in module.modules():
-        #         if isinstance(m, nn.Conv2d):
-        #             nn.init.xavier_uniform_(m.weight)
-        #             m.bias.data.zero_()
+    def convert_syn_bn(self):
+        super().convert_syn_bn()
+        self.temp_module_os16 = nn.SyncBatchNorm.convert_sync_batchnorm(self.temp_module_os16)
 
-    def aggregate_detail_matte(self, temp_module, x, b, n_f):
-        x = x.reshape(b, n_f, -1, *x.shape[-2:])
-        new_x = [x[:, 0]]
-        
-        for i in range(1, n_f):
-            cur_f = x[:, i].flatten(0, 1)
-            prev_f = new_x[-1].flatten(0, 1)
-            inp = torch.stack([prev_f, cur_f], dim=1)
-            cur_f = temp_module(inp)
-            cur_f = cur_f.reshape(b, -1, *cur_f.shape[-2:])
-            new_x.append(cur_f)
-        new_x = torch.stack(new_x, dim=1)
-        new_x = new_x.flatten(0, 1)
-        return new_x
+    def aggregate_mem(self, x, mem_feat):
+        '''
+        Update current feat with mem_feat
 
-    def temp_aggregation(self, x, temp_module, b, n_f, prev_feat=None, prev_mask=None):
-        if self.training or n_f > 1  or prev_feat is not None:
-            # print("Perform embedding aggregation")
-            # import pdb; pdb.set_trace()
-            if prev_feat is not None:
-                x = torch.cat((prev_feat, x.unsqueeze(1)), dim=1)
-                x = x.flatten(0, 1)
-            # import pdb; pdb.set_trace()
-            x = x.reshape(b, -1, *x.shape[1:])
-            if not self.training:
-                x = temp_module(x, prev_mask=prev_mask)
-            else:
-                new_x = []
-                for i in range(1, n_f):
-                    new_x.append(temp_module(x[:, :i+1], prev_mask=None)[:, -1])
-                new_x = [temp_module(torch.flip(x, dims=(1,)), prev_mask=None)[:, -1]] + new_x
-                x = torch.stack(new_x, dim=1)
-
-            x = x.flatten(0, 1)
-            
-            if prev_feat is not None:
-                x =  x.reshape(b, -1, *x.shape[-3:])
-                x = x[:, -1, :, :]
+        x: b, c, h, w
+        mem_feat: b, t, c, h, w
+        '''
+        if mem_feat is not None:
+            x = self.temp_module_os16(x, mem_feat)
         return x
 
-    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, prev_feat, prev_mask, **kwargs):
-        
-        # Perform temporal aggregation
-        # if prev_feat is None:
-        #     prev_feat = {}
-        
-        # with torch.no_grad():
-        # x = self.temp_aggregation(x, self.temp_module_o232, b, n_f, prev_feat=prev_feat.get('os32', None), prev_mask=prev_mask)
-        # output = super().forward(x, mid_fea, b, n_f, n_i, masks, iter, logit_output=False, **kwargs)
-        output = super().forward(x, mid_fea, b, n_f, n_i, masks, iter, logit_output=False, 
-                                 temp_aggre_func=partial(self.temp_aggregation, 
-                                                         temp_module=self.temp_module_os8,  
-                                                         b=b, n_f=n_f, prev_feat=prev_feat.get('os8', None), 
-                                                         prev_mask=prev_mask), 
-                                 **kwargs)
-        # if not self.training:
-        #     output['embedding_os32'] = x
-        # if prev_mask is not None or n_f > 1:
-        #     # print("Perform detail aggregation")
-        #     # Propagate the matte between frames
-        #     x_os4 = output['alpha_os4']
-        #     x_os1 = output['alpha_os1']
-        #     if prev_mask is not None:
-        #         x_os4 = torch.cat([prev_mask[0], x_os4], dim=0)
-        #         x_os1 = torch.cat([prev_mask[1], x_os1], dim=0)
-        #         n_f  += 1
-        #     x_os4 = self.aggregate_detail_matte(self.detail_temp_os4, x_os4, b, n_f)
-        #     x_os1 = self.aggregate_detail_matte(self.detail_temp_os1, x_os1, b, n_f)
-        #     if prev_mask is not None:
-        #         x_os4 = x_os4[:-1]
-        #         x_os1 = x_os1[:-1]
-        #     output['alpha_os4'] = x_os4
-        #     output['alpha_os1'] = x_os1
-        
-        # if not self.training:
-        #     output['prev_mask'] = (output['alpha_os4'], output['alpha_os1'])
+    def update_mem(self, mem_feat, refined_masks):
+        '''
+        Update memory feature with refined masks
+        '''
+        mem_feat = self.temp_module_os16.generate_mem(mem_feat, refined_masks)
+        return mem_feat
 
-        # output['alpha_os4'] = F.interpolate(output['alpha_os4'], scale_factor=4.0, mode='bilinear', align_corners=False)
-        # output['alpha_os4'] = (torch.tanh(output['alpha_os4']) + 1.0) / 2.0
-        # output['alpha_os1'] = (torch.tanh(output['alpha_os1']) + 1.0) / 2.0
-        # Temporal consistency with previous frame
-        return output
+    def aggregate_detail_mem(self, x, mem_details):
+        if mem_details is not None:
+            x = self.temp_module_os4(x, mem_details)
+        return x
+    
+    def update_detail_mem(self, mem_details, refined_masks):
+        if mem_details is not None:
+            mem_details = self.temp_module_os4.generate_mem(mem_details, refined_masks)
+        return mem_details
+    
+    def forward(self, x, mid_fea, b, n_f, masks, mem_feat=[], mem_query=None, mem_details=None, gt_alphas=None, **kwargs):
+        
+        # Reshape inputs
+        x = x.reshape(b, n_f, *x.shape[1:])
+        if gt_alphas is not None:
+            gt_alphas = gt_alphas.reshape(b, n_f, *gt_alphas.shape[1:])
+        image = mid_fea['image']
+        image = image.reshape(b, n_f, *image.shape[1:])
+        masks = masks.reshape(b, n_f, *masks.shape[1:])
+        fea4 = mid_fea['shortcut'][0]
+        fea4 = fea4.reshape(b, n_f, *fea4.shape[1:])
+        fea5 = mid_fea['shortcut'][1]
+        fea5 = fea5.reshape(b, n_f, *fea5.shape[1:])
+        
+        final_results = {}
+        need_construct_mem = len(mem_feat) == 0
+        n_mem = 5
+        for i in range(n_f):
+            mid_fea = {
+                'image': image[:, i],
+                'shortcut': [fea4[:, i], fea5[:, i]]
+            }
+            
+            # Construct memory
+            input_mem_feat = mem_feat
+            if need_construct_mem:
+                if len(mem_feat) > 0:
+                    input_mem_feat = [mem_feat[-1]]
+                if len(mem_feat) > 1:
+                    input_mem_feat = [mem_feat[max(0, len(mem_feat) - 1 - n_mem)].detach()] + input_mem_feat
+            if len(input_mem_feat) > 0:
+                input_mem_feat = torch.cat(input_mem_feat, dim=1)
+            else:
+                input_mem_feat = None
+            # import pdb; pdb.set_trace()
+            ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_feat=input_mem_feat, mem_query=mem_query, mem_details=mem_details, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
+            mem_query = ret['mem_queries'].detach()
+            mem_details = ret['mem_details']
+            mem_feat += [ret['mem_feat'].unsqueeze(1)]
+
+            for k in ret:
+                if k not in final_results:
+                    final_results[k] = []
+                final_results[k] += [ret[k]]
+        for k, v in final_results.items():
+            if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks']:
+                final_results[k] = torch.stack(v, dim=1).flatten(0, 1)
+            elif k in ['mem_feat', 'mem_details', 'mem_queries']:
+                final_results[k] = v[-1]
+            elif self.training:
+                final_results[k] = torch.stack(v).mean()
+        return final_results
 
 def res_shortcut_attention_spconv_decoder_22(**kwargs):
     return ResShortCut_AttenSpconv_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)

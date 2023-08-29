@@ -23,15 +23,15 @@ output_dir: 'output/polarized_matting'
 test:
   num_workers: 4
   batch_size: 1
-  # metrics: ['MAD']
+  metrics: ['MAD', 'MSE', 'SAD', 'dtSSD']
 dataset:
   train:
     root_dir: '/mnt/localssd/polarized_matting'
     bg_dir: '/mnt/localssd/bg'
-    short_size: 768
+    short_size: 576
     clip_length: 1
   test:
     root_dir: '/mnt/localssd/polarized_matting'
-    short_size: 768
-    clip_length: 8
-    clip_overlap: 2
+    short_size: 576
+    clip_length: 1
+    clip_overlap: 0

@@ -16,9 +16,10 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, help="Path to config file")
     parser.add_argument("--checkpoint", type=str, help="Path to checkpoint file")
     parser.add_argument("--image-dir", type=str, help="Path to data directory")
+    parser.add_argument("--n-inst", type=int, help="number of instances")
     parser.add_argument("--mask-dir", type=str, help="Path to mask")
     parser.add_argument("--output", type=str, help="name of coco json file")
-
+    parser.add_argument("--temp", type=int, default=1, help="use temperature memory")
     args = parser.parse_args()
 
     # Prepare model
@@ -27,6 +28,8 @@ if __name__ == "__main__":
     model = build_model(CONFIG.model)
     model = model.to(device)
     model.eval()
+
+    use_temp = args.temp == 1
     
     # Load checkpoint
     state_dict = torch.load(args.checkpoint, map_location=device)
@@ -44,14 +47,19 @@ if __name__ == "__main__":
         img = np.array(img).astype(np.float32) / 255.
         img = torch.from_numpy(img).permute(2, 0, 1).unsqueeze(0)
         frames.append(img)
-        mask_path = os.path.join(args.mask_dir, os.path.basename(image_path).replace(".jpg", ".png"))
-        if os.path.exists(mask_path):
-            mask = Image.open(mask_path).convert("L")
-            mask = np.array(mask).astype(np.float32) / 255.
-            mask = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0)
-        else:
-            mask = torch.zeros((1, 1, img.shape[2], img.shape[3]))
-        masks.append(mask)
+        inst_masks = []
+        for inst_i in range(args.n_inst):
+            mask_path = os.path.join(args.mask_dir, str(inst_i), os.path.basename(image_path).replace(".jpg", ".png"))
+            if os.path.exists(mask_path):
+                mask = Image.open(mask_path).convert("L")
+                mask = np.array(mask).astype(np.float32) / 255.
+                mask = torch.from_numpy(mask).unsqueeze(0).unsqueeze(0)
+                # import pdb; pdb.set_trace()
+            else:
+                mask = torch.zeros((1, 1, img.shape[2], img.shape[3]))
+            inst_masks.append(mask)
+        inst_masks = torch.cat(inst_masks, dim=1)
+        masks.append(inst_masks)
 
     frames = torch.cat(frames, dim=0)
     instances = torch.cat(masks, dim=0)
@@ -74,29 +82,55 @@ if __name__ == "__main__":
     frames = frames / torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
 
     # Resize instance masks
-    instances = F.max_pool2d(instances, kernel_size=8, stride=8, padding=0)
-    
+    # instances = F.max_pool2d(instances, kernel_size=8, stride=8, padding=0)
+    instances = (instances > 0.5).float()
+
     # Start inference
     start_idx = 0
     CLIP_LEN = 1
     OVERLAP = 0
 
+    mem_feat = []
+    mem_query = None
+    mem_details = None
+    memory_interval = 5
+    n_mem = 1
     while start_idx < len(frames):
         cur_frames = frames[start_idx: start_idx + CLIP_LEN][None]
-        cur_masks = instances[start_idx: start_idx + CLIP_LEN, None][None]
+        cur_masks = instances[start_idx: start_idx + CLIP_LEN][None]
         alphas = None
         if cur_masks.sum() > 0:
             with torch.no_grad():
                 cur_frames = cur_frames.to(device)
                 cur_masks = cur_masks.to(device)
                 # try:
-                # import pdb; pdb.set_trace()
-                output = model({"image": cur_frames, "mask": cur_masks})
+                prev_mem = []
+                if len(mem_feat) >= 1 and use_temp:
+                    prev_mem.append(mem_feat[-1])
+                    m_i = 2
+                    while len(mem_feat) - m_i >= 0:
+                        if m_i % memory_interval == 0:
+                            prev_mem.append(mem_feat[-m_i])
+                        m_i+= 1
+                
+                
+                output = model({"image": cur_frames, "mask": cur_masks}, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
                 alphas = output["refined_masks"][0]
+                # import cv2
+                # cv2.imwrite("test_mask_1.png", cur_masks[0, 0, 0].cpu().numpy() * 255)
+                # cv2.imwrite("test_out_1.png", alphas[0, 0].cpu().numpy() * 255)
+                # import pdb; pdb.set_trace()
                 # Reversed transform
                 alphas = alphas[:, :, :h, :w]
                 alphas = F.interpolate(alphas, size=(ori_h, ori_w), mode="bilinear", align_corners=False)
-                alphas = alphas.squeeze(1).cpu().numpy()
+                alphas = alphas.cpu().numpy()
+                
+                if use_temp and 'mem_feat' in output:
+                    mem_feat.append(output['mem_feat'].unsqueeze(1))
+                    if len(mem_feat) > memory_interval * n_mem:
+                        mem_feat = mem_feat[-(memory_interval * n_mem):]
+                    mem_query = output['mem_queries']
+                    mem_details = output['mem_details']
                 # except:
                 #     # Save masks only
                 #     print("Error, save empty mask", start_idx, ins_id)
@@ -104,20 +138,22 @@ if __name__ == "__main__":
         else:
             # Save masks only
             print("Empty mask", start_idx)
-            alphas = np.zeros((len(cur_frames), ori_h, ori_w))
+            alphas = np.zeros((len(cur_frames), ori_h, ori_w))[:, None]
 
+        # import pdb; pdb.set_trace()
         # Save alphas
-        import pdb; pdb.set_trace()
         for i in range(CLIP_LEN):
-            if start_idx > 0 and i < OVERLAP:
-                continue
-            if i >= len(alphas):
-                break
-            img = Image.fromarray((alphas[i] * 255).astype(np.uint8))
-            filename = image_paths[start_idx + i].split("/")[-1].replace(".jpg", ".png")
-            output_path = os.path.join(args.output, filename)
-            os.makedirs(os.path.dirname(output_path), exist_ok=True)
-            img.save(output_path)
+            for inst_i in range(args.n_inst):
+                if start_idx > 0 and i < OVERLAP:
+                    continue
+                if i >= len(alphas):
+                    break
+                
+                img = Image.fromarray((alphas[i, inst_i] * 255).astype(np.uint8))
+                filename = image_paths[start_idx + i].split("/")[-1].replace(".jpg", ".png")
+                output_path = os.path.join(args.output, str(inst_i), filename)
+                os.makedirs(os.path.dirname(output_path), exist_ok=True)
+                img.save(output_path)
 
         start_idx += CLIP_LEN - OVERLAP
 

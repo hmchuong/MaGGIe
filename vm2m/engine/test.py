@@ -1,4 +1,5 @@
 
+from functools import partial
 import os
 import random
 import time
@@ -14,7 +15,7 @@ from vm2m.utils.postprocessing import reverse_transform_tensor, postprocess
 from vm2m.utils.metric import build_metric
 
 @torch.no_grad()
-def save_visualization(save_dir, image_names, alphas, transform_info, output):
+def save_visualization(image_names, alpha_names, alphas, transform_info, output, save_dir):
     trans_preds = None
     inc_bin_maps = None
     if 'trans_preds' in output:
@@ -32,11 +33,22 @@ def save_visualization(save_dir, image_names, alphas, transform_info, output):
         # Save alpha pred
         alpha_pred_path = os.path.join(save_dir, 'alpha_pred', video_name)
         os.makedirs(alpha_pred_path, exist_ok=True)
+        # import pdb; pdb.set_trace()
         alpha_pred = (alphas[0, idx] * 255).astype('uint8')
         for inst_id in range(alpha_pred.shape[0]):
-            postfix = '_inst%d' % inst_id if alpha_pred.shape[0] > 1 else ''
-            if not os.path.isfile(os.path.join(alpha_pred_path, image_name[:-4] + postfix + image_name[-4:])):    
-                cv2.imwrite(os.path.join(alpha_pred_path, image_name[:-4] + postfix + image_name[-4:]), alpha_pred[inst_id])
+            target_path = os.path.join(alpha_pred_path, image_name[:-4])
+            if alpha_names is not None:
+                target_path = os.path.join(target_path, alpha_names[inst_id][0])
+            else:
+                if alpha_pred.shape[0] > 1:
+                    target_path = os.path.join(target_path, "{:2d}.png".format(inst_id).replace(' ', '0'))
+                else:
+                    target_path = target_path + ".png"
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            cv2.imwrite(target_path, alpha_pred[inst_id])
+            # postfix = '_inst%d' % inst_id if alpha_pred.shape[0] > 1 else ''
+            # if not os.path.isfile(os.path.join(alpha_pred_path, image_name[:-4] + postfix + image_name[-4:])):    
+            #     cv2.imwrite(os.path.join(alpha_pred_path, image_name[:-4] + postfix + image_name[-4:]), alpha_pred[inst_id])
                 
 
         if trans_preds is not None:
@@ -64,22 +76,32 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
     end_time = time.time()
 
     model.eval()
-    
+    torch.cuda.empty_cache()
     with torch.no_grad():
-        memory_frames = []
-        processed_frames = 0
+        mem_feat = []
+        mem_query = None
+        mem_details = None
         memory_interval = 5
-        prev_embedding = None
+        n_mem = 1
         video_name = None
+
+        prev_pred = None
+        prev_gt = None
+        prev_trimap = None
+
         for i, batch in enumerate(val_loader):
 
             data_time.update(time.time() - end_time)
             
-            # if i < 681:
+            # if i < 79:
             #     continue
             # import pdb; pdb.set_trace()
 
             image_names = batch.pop('image_names')
+            alpha_names = None
+            if 'alpha_names' in batch:
+                alpha_names = batch.pop('alpha_names')
+            
             transform_info = batch.pop('transform_info')
             trimap = batch.pop('trimap').numpy()
             alpha_gt = batch.pop('alpha').numpy()
@@ -87,10 +109,15 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             
             # Reset if new video
             if image_names[0][0].split('/')[-2] != video_name:
+
                 video_name = image_names[0][0].split('/')[-2]
-                memory_frames = []
+                mem_feat = []
+                mem_query = None
+                mem_details = None
                 processed_frames = 0
-                # print("Switch to new video:", video_name)
+                prev_gt = None
+                prev_pred = None
+                prev_trimap = None
 
             batch = {k: v.to(device) for k, v in batch.items()}
 
@@ -98,20 +125,37 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             if batch['mask'].sum() == 0:
                 continue
             # Adding prev_feat
-            prev_feat = None
-            if len(memory_frames) >= 2 and use_temp:
-                prev_feat = torch.stack([memory_frames[0], memory_frames[-1]], dim=1)
-            output = model(batch, prev_feat=prev_feat)
+            # prev_feat = {}
+            prev_mem = []
+            if len(mem_feat) >= 1 and use_temp:
+                prev_mem.append(mem_feat[-1])
+                m_i = 2
+                while len(mem_feat) - m_i >= 0:
+                    if m_i % memory_interval == 0:
+                        prev_mem.append(mem_feat[-m_i])
+                    m_i+= 1
+                
+            output = model(batch, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
 
             batch_time.update(time.time() - end_time)
             processed_frames += 1
 
             # Save memory frames
-            if 'embedding' in output:
-                memory_frames.append(output['embedding'])
-                if len(memory_frames) > memory_interval:
-                    memory_frames = memory_frames[-memory_interval:]
-                    # print("Cut down memory frames")
+            if use_temp and 'mem_feat' in output:
+                mem_feat.append(output['mem_feat'].unsqueeze(1))
+                if len(mem_feat) > memory_interval * n_mem:
+                    mem_feat = mem_feat[-(memory_interval * n_mem):]
+                mem_query = output['mem_queries']
+                mem_details = output['mem_details']
+            # if 'embedding' in output:
+            #     memory_frames.append(output['embedding'])
+            #     if len(memory_frames) > memory_interval:
+            #         memory_frames = memory_frames[-memory_interval:]
+            #         # print("Cut down memory frames")
+            # if 'prev_mask' in output:
+            #     memory_prev_mask.append(output['prev_mask'])
+            #     if len(memory_prev_mask) > memory_interval:
+            #         memory_prev_mask = memory_prev_mask[-memory_interval:]
                 
             
             alpha = output['refined_masks']
@@ -122,10 +166,25 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 
             current_metrics = {}
             for k, v in val_error_dict.items():
+                if k in ['dtSSD', 'MESSDdt']:
+                    if prev_gt is None:
+                        continue
+                    current_trimap = np.stack([prev_trimap, trimap[:, -1]], axis=1) if use_trimap else None
+                    current_pred = np.stack([prev_pred, alpha[:, -1]], axis=1)
+                    current_gt = np.stack([prev_gt, alpha_gt[:, -1]], axis=1)
+                    current_metrics[k] = v.update(current_pred, current_gt, trimap=current_trimap)
+                    continue
                 logging.debug(f"updating {k}...")
                 current_trimap = trimap[:, skip:] if use_trimap else None
                 current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap)
                 logging.debug(f"Done {k}!")
+            
+            # all_preds.append(alpha[:, skip:])
+            # all_gts.append(alpha_gt[:, skip:])
+            # all_trimaps.append(trimap[:, skip:])
+            prev_gt = alpha_gt[:, -1]
+            prev_pred = alpha[:, -1]
+            prev_trimap = trimap[:, -1]
 
             # Logging
             if i % log_iter == 0:
@@ -138,9 +197,10 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             
             # Visualization
             if callback:
-                callback(image_names, alpha, transform_info, output)
+                callback(image_names, alpha_names, alpha, transform_info, output)
 
             end_time = time.time()
+            # import pdb; pdb.set_trace()
     return batch_time.avg, data_time.avg
 
 @torch.no_grad()
@@ -187,15 +247,15 @@ def test(cfg, rank=0, is_dist=False):
 
     # Start testing
     logging.info("Start testing...")
-    if cfg.test.save_results:
-        def callback_vis(image_names, alpha, transform_info, output):
-            save_visualization(cfg.test.save_dir, image_names, alpha, transform_info, output)
-    else:
-        callback_vis = None
+    # if cfg.test.save_results:
+    #     def callback_vis(image_names, alpha, transform_info, output):
+    #         save_visualization(cfg.test.save_dir, image_names, alpha, transform_info, output)
+    # else:
+    #     callback_vis = None
 
     batch_time, data_time = val(model, val_loader, device, cfg.test.log_iter, \
                                 val_error_dict, do_postprocessing=cfg.test.postprocessing, \
-                                    callback=callback_vis, use_trimap=cfg.test.use_trimap, use_temp=cfg.test.temp_aggre)
+                                    callback=partial(save_visualization, save_dir=cfg.test.save_dir) if cfg.test.save_results else None, use_trimap=cfg.test.use_trimap, use_temp=cfg.test.temp_aggre)
     
     logging.info("Testing done!")
 
