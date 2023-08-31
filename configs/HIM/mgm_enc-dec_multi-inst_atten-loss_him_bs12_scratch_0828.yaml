@@ -105,6 +105,7 @@ test:
   save_dir: logs
   save_results: true
   use_trimap: true
+  temp_aggre: false
 train:
   batch_size: 12
   log_iter: 10
