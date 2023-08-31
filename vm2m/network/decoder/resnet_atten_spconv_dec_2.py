@@ -48,7 +48,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
                  atten_dim=128, atten_block=2, 
-                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000, **kwargs):
+                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000, use_id_pe=True, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -95,7 +95,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             output_dim=final_channel,
             max_inst=max_inst,
             return_feat=True,
-            use_temp_pe=False
+            use_temp_pe=False,
+            use_id_pe=use_id_pe
         )
         relu_layer = nn.ReLU(inplace=True)
         # Image low-level feature extractor

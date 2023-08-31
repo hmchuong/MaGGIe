@@ -300,6 +300,7 @@ class ResMaskEmbedShortCut_D(ResShortCut_D):
         super(ResMaskEmbedShortCut_D, self).__init__(block, layers, num_embed, norm_layer, late_downsample=late_downsample, **kwargs)
 
         self.num_embed = num_embed
+
         if self.num_embed > 0:
             self.mask_embed_layer = nn.Embedding(num_mask + 1, num_embed)
     

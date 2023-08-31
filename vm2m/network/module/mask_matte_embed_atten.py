@@ -7,7 +7,7 @@ from .mask_attention import MLP, SelfAttentionLayer, CrossAttentionLayer, FFNLay
 
 class MaskMatteEmbAttenHead(nn.Module):
     def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_head=4, 
-                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True):
+                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True):
         super().__init__()
         
         self.n_block = n_block
@@ -15,6 +15,7 @@ class MaskMatteEmbAttenHead(nn.Module):
         self.atten_stride = atten_stride
         self.return_feat = return_feat
         self.max_inst = max_inst
+        self.use_id_pe = use_id_pe
         self.pe_layer = TemporalPositionEmbeddingSine(attention_dim)
         
         # Linear layer to map input to attention_dim
@@ -277,7 +278,7 @@ class MaskMatteEmbAttenHead(nn.Module):
                 tokens, feat,
                 memory_mask=atten_padding_m if use_mask_atten else None,
                 memory_key_padding_mask=None,
-                pos=feat_pos, query_pos=token_pos
+                pos=feat_pos if self.use_id_pe else None, query_pos=token_pos if self.use_id_pe else None
             )
 
             if self.training and not use_mask_atten:
@@ -309,7 +310,7 @@ class MaskMatteEmbAttenHead(nn.Module):
                 feat, tokens,
                 memory_mask=None,
                 memory_key_padding_mask=None,
-                pos=token_pos, query_pos=feat_pos
+                pos=token_pos if self.use_id_pe else None, query_pos=feat_pos if self.use_id_pe else None
             )
         
         

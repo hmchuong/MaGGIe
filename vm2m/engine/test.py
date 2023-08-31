@@ -164,6 +164,8 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             if do_postprocessing:
                 alpha = postprocess(alpha)
 
+            # import pdb; pdb.set_trace()
+
             current_metrics = {}
             for k, v in val_error_dict.items():
                 if k in ['dtSSD', 'MESSDdt']:
