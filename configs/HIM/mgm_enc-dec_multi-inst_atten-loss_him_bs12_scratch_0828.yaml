@@ -5,6 +5,7 @@ dataset:
     short_size: 576
     split: comp
     downscale_mask: False
+    mask_dir_name: ''
   train:
     bin_alpha_max_k: 30
     crop:
@@ -46,6 +47,7 @@ model:
     head_channel: 120
     max_inst: 10
     warmup_mask_atten_iter: 0
+    use_id_pe: True
   dynamic_kernel:
     dec_layers: 5
     dim_feedforward: 256
@@ -69,9 +71,9 @@ model:
   loss_dtSSD_w: 0.0
   loss_multi_inst_type: smooth_l1_0.5
   loss_multi_inst_w: 0.25
-  loss_multi_inst_warmup: 1000
+  loss_multi_inst_warmup: 4000
   mgm:
-    warmup_iter: 800
+    warmup_iter: 3000
   refinement:
     n_test_points: 16000
     n_train_points: 2048
@@ -91,11 +93,13 @@ name: mgm_enc-dec-spconv_him-syn-maskrcnn_short-576-512x512_bs288_20k_adamw_1.5e
 output_dir: output/HIM
 test:
   batch_size: 1
-  log_iter: 50
+  log_iter: 100
   metrics:
   - MAD
   - MSE
   - SAD
+  - Grad
+  - Conn
   num_workers: 4
   postprocessing: false
   save_dir: logs
@@ -104,7 +108,7 @@ test:
 train:
   batch_size: 12
   log_iter: 10
-  max_iter: 20000
+  max_iter: 30000
   num_workers: 4
   resume_last: True
   optimizer:
@@ -120,10 +124,11 @@ train:
     gamma: 0.1
     name: cosine
     power: 0.9
-    warmup_iters: 200
+    warmup_iters: 1000
   seed: 1234
   val_best_metric: MAD
-  val_iter: 200
+  val_iter: 500
+  val_dist: False
   val_metrics:
   - MAD
   - MSE

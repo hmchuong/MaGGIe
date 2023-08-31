@@ -1,6 +1,7 @@
 
 from functools import partial
 import os
+import copy
 import random
 import time
 import torch
@@ -93,7 +94,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 
             data_time.update(time.time() - end_time)
             
-            # if i < 79:
+            # if i < 117:
             #     continue
             # import pdb; pdb.set_trace()
 
@@ -164,20 +165,18 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             if do_postprocessing:
                 alpha = postprocess(alpha)
 
-            # import pdb; pdb.set_trace()
-
             current_metrics = {}
             for k, v in val_error_dict.items():
-                if k in ['dtSSD', 'MESSDdt']:
+                if k in ['dtSSD', 'MESSDdt', 'dtSSD_trimap', 'MESSDdt_trimap']:
                     if prev_gt is None:
                         continue
-                    current_trimap = np.stack([prev_trimap, trimap[:, -1]], axis=1) if use_trimap else None
+                    current_trimap = np.stack([prev_trimap, trimap[:, -1]], axis=1) if k.endswith("_trimap") else None
                     current_pred = np.stack([prev_pred, alpha[:, -1]], axis=1)
                     current_gt = np.stack([prev_gt, alpha_gt[:, -1]], axis=1)
                     current_metrics[k] = v.update(current_pred, current_gt, trimap=current_trimap)
                     continue
                 logging.debug(f"updating {k}...")
-                current_trimap = trimap[:, skip:] if use_trimap else None
+                current_trimap = trimap[:, skip:] if k.endswith("_trimap") else None
                 current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap)
                 logging.debug(f"Done {k}!")
             
@@ -202,7 +201,6 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                 callback(image_names, alpha_names, alpha, transform_info, output)
 
             end_time = time.time()
-            # import pdb; pdb.set_trace()
     return batch_time.avg, data_time.avg
 
 @torch.no_grad()
@@ -246,6 +244,8 @@ def test(cfg, rank=0, is_dist=False):
 
     # Build metric
     val_error_dict = build_metric(cfg.test.metrics)
+    for k in list(val_error_dict.keys()):
+        val_error_dict[k + "_trimap"] = copy.deepcopy(val_error_dict[k])
 
     # Start testing
     logging.info("Start testing...")

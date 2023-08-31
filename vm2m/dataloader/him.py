@@ -14,7 +14,8 @@ except:
     from utils import gen_transition_gt
 
 class HIMDataset(Dataset):
-    def __init__(self, root_dir, split, padding_inst=10, short_size=768, is_train=False, random_seed=2023, crop=(512, 512), flip_p=0.5, bin_alpha_max_k=30, downscale_mask=True, alpha_dir_name='alphas', **kwargs):
+    def __init__(self, root_dir, split, padding_inst=10, short_size=768, is_train=False, random_seed=2023, \
+                crop=(512, 512), flip_p=0.5, bin_alpha_max_k=30, downscale_mask=True, alpha_dir_name='alphas', mask_dir_name='', **kwargs):
         super().__init__()
         self.root_dir = root_dir
         self.split = split
@@ -23,6 +24,7 @@ class HIMDataset(Dataset):
         self.is_train = is_train
         self.downscale_mask = downscale_mask
         self.alpha_dir_name = alpha_dir_name
+        self.mask_dir_name = mask_dir_name
         self.random = np.random.RandomState(random_seed)
         if "HIM" in root_dir:
             self.load_him_image_alphas()
@@ -57,7 +59,8 @@ class HIMDataset(Dataset):
                 T.ModifyMaskBoundary(self.random)
             ]
         else:
-            self.transforms += [T.GenMaskFromAlpha(), T.DownUpMask(self.random, 0.125, 1.0)]
+            if self.mask_dir_name == '':
+                self.transforms += [T.GenMaskFromAlpha(), T.DownUpMask(self.random, 0.125, 1.0)]
         self.transforms += [
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -68,11 +71,18 @@ class HIMDataset(Dataset):
     def load_him_image_alphas(self):
         images = sorted(glob.glob(os.path.join(self.root_dir, "images", self.split, "*.jpg")))
         all_alphas = []
+        target_dir_name = self.alpha_dir_name if self.mask_dir_name == '' else self.mask_dir_name
+        valid_images = []
         for image in images:
             image_name = os.path.basename(image).replace(".jpg", "")
-            alphas = sorted(glob.glob(os.path.join(self.root_dir, self.alpha_dir_name, self.split, image_name, "*.png")))
-            all_alphas.append(alphas)
-        self.data = list(zip(images, all_alphas))
+            alpha_dir = os.path.join(self.root_dir, target_dir_name, self.split, image_name)
+            if not os.path.exists(alpha_dir):
+                continue
+            valid_images.append(image)
+            alphas = sorted(os.listdir(alpha_dir))
+            all_alphas.append([os.path.join(self.root_dir, self.alpha_dir_name, self.split, image_name, p) for p in alphas])
+        
+        self.data = list(zip(valid_images, all_alphas))
     
     def load_hhm_sythetic_image_alphas(self):
         images = sorted(glob.glob(os.path.join(self.root_dir, self.split, "images", "*.jpg")))
@@ -86,7 +96,7 @@ class HIMDataset(Dataset):
     def __len__(self):
         return len(self.data)
     
-    def load_masks(self, alphas):
+    def load_masks_train(self, alphas):
         masks = []
         for alpha in alphas:
             mask_path = alpha.replace(self.alpha_dir_name, "masks_matched")
@@ -102,7 +112,9 @@ class HIMDataset(Dataset):
         # TODO: Load mask path and random replace the mask by alpha
         masks = None
         if self.is_train:
-            masks = self.load_masks(alphas)
+            masks = self.load_masks_train(alphas)
+        elif self.mask_dir_name != '':
+            masks = [alpha.replace(self.alpha_dir_name, self.mask_dir_name) for alpha in alphas]
 
         # Load image
         input_dict = {
@@ -157,19 +169,20 @@ if __name__ == "__main__":
     import cv2
     import numpy as np
     # dataset = HIMDataset(root_dir="/mnt/localssd/HHM", split="synthesized", is_train=True, downscale_mask=False)
-    dataset = HIMDataset(root_dir="/mnt/localssd/HIM2K", split="natural", is_train=False, downscale_mask=False)
-    for batch in dataset:
-        frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
-        frame = frames[0] * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
-        frame = (frame * 255).permute(1, 2, 0).numpy().astype(np.uint8)
-        cv2.imwrite("debug/frame.png", frame[:, :, ::-1])
-        
-        for idx in range(masks.shape[1]):
-            mask = masks[0, idx]
-            alpha = alphas[0, idx]
-            transition = transition_gt[0, idx]
-            cv2.imwrite("debug/mask_{}.png".format(idx), mask.numpy() * 255)
-            cv2.imwrite("debug/alpha_{}.png".format(idx), alpha.numpy() * 255)
-            cv2.imwrite("debug/trimap_{}.png".format(idx), transition.numpy() * 80)
-        import pdb; pdb.set_trace()
+    dataset = HIMDataset(root_dir="/mnt/localssd/HIM2K", split="natural", is_train=False, downscale_mask=False, mask_dir_name='masks_matched')
+    # for batch in dataset:
+    batch = dataset[117]
+    frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
+    frame = frames[0] * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+    frame = (frame * 255).permute(1, 2, 0).numpy().astype(np.uint8)
+    cv2.imwrite("debug/frame.png", frame[:, :, ::-1])
+    
+    for idx in range(masks.shape[1]):
+        mask = masks[0, idx]
+        alpha = alphas[0, idx]
+        transition = transition_gt[0, idx]
+        cv2.imwrite("debug/mask_{}.png".format(idx), mask.numpy() * 255)
+        cv2.imwrite("debug/alpha_{}.png".format(idx), alpha.numpy() * 255)
+        cv2.imwrite("debug/trimap_{}.png".format(idx), transition.numpy() * 80)
+    import pdb; pdb.set_trace()
 

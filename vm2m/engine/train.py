@@ -321,7 +321,8 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 model.eval()
                 val_model = model.module if is_dist else model
                 _ = [v.reset() for v in val_error_dict.values()]
-                _ = val(val_model, val_loader, device, cfg.train.log_iter, val_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=(not cfg.train.val_dist) or not is_dist)
+                use_temp = cfg.test.temp_aggre and ((not cfg.train.val_dist) or not is_dist)
+                _ = val(val_model, val_loader, device, cfg.test.log_iter, val_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=use_temp)
 
                 if is_dist and cfg.train.val_dist:
                     logging.info("Gathering metrics...")

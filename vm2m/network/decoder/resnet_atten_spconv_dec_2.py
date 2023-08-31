@@ -309,6 +309,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x = self.layer2(x) + fea4
 
         # Predict OS8
+        # import pdb; pdb.set_trace()
         # use mask attention during warmup of training
         use_mask_atten = iter < self.warmup_mask_atten_iter and self.training
         x_os8, x, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 

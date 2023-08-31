@@ -163,6 +163,7 @@ dataset.test.split = 'valid'
 dataset.test.use_thresh_mask = False
 dataset.test.downscale_mask = True
 dataset.test.alpha_dir_name = "alphas"
+dataset.test.mask_dir_name = "masks_matched"
 
 # For video augmentation
 dataset.test.clip_length = 8
