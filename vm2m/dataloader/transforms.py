@@ -25,6 +25,16 @@ class Compose(object):
             # import pdb; pdb.set_trace()
         return input_dict
 
+class ChooseOne(object):
+    def __init__(self, random, transforms):
+        self.random = random
+        self.transforms = transforms
+
+    def __call__(self, input_dict: dict):
+        t = self.random.choice(self.transforms)
+        input_dict = t(input_dict)
+        return input_dict
+
 class Load(object):
     def __init__(self, is_rgb=True):
         self.is_rgb = is_rgb
@@ -453,13 +463,17 @@ def perturb_seg(gt, iou_target=0.6):
     return seg
 
 class ModifyMaskBoundary(object):
-    def __init__(self, random, regional_sample_rate=0.1, sample_rate=0.1, move_rate=0.0):
+    def __init__(self, random, p=0.5, regional_sample_rate=0.1, sample_rate=0.1, move_rate=0.0):
         self.random = random
+        self.p = p
         self.regional_sample_rate = regional_sample_rate
         self.sample_rate = sample_rate
         self.move_rate = move_rate
     
     def modify_mask(self, image):
+        if self.random.rand() < self.p:
+            return image
+            
         iou_target = self.random.rand() * 0.2 + 0.8
 
         if int(cv2.__version__[0]) >= 4:

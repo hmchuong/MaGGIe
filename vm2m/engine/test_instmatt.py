@@ -70,7 +70,7 @@ def save_visualization(image_names, alpha_names, alphas, transform_info, output,
                 cv2.imwrite(os.path.join(inc_bin_path, image_name), inc_bin_pred)
 
 @torch.no_grad()
-def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
+def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False, matte_dir='instmatt'):
     
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
@@ -166,13 +166,14 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                 alpha = postprocess(alpha)
 
             # DEBUG: Load masks for instmatt
-            # import glob
-            # all_alpha_paths = sorted(glob.glob(image_names[0][0].replace('/images/', '/instmatt/').replace(".jpg", "/*.png")))
-            # all_alphas = []
-            # for alpha_path in all_alpha_paths:
-            #     all_alphas.append(cv2.imread(alpha_path, 0))
-            # alpha = np.stack(all_alphas, axis=0)[None, None] / 255.0
-
+            import glob
+            all_alpha_paths = sorted(glob.glob(image_names[0][0].replace('/images/', f'/{matte_dir}/').replace(".jpg", "/*.png")))
+            all_alphas = []
+            for alpha_path in all_alpha_paths:
+                all_alphas.append(cv2.imread(alpha_path, 0))
+            if len(all_alphas) == 0:
+                continue
+            alpha = np.stack(all_alphas, axis=0)[None, None] / 255.0
             current_metrics = {}
             for k, v in val_error_dict.items():
                 if k in ['dtSSD', 'MESSDdt', 'dtSSD_trimap', 'MESSDdt_trimap']:
@@ -212,7 +213,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
     return batch_time.avg, data_time.avg
 
 @torch.no_grad()
-def test(cfg, rank=0, is_dist=False):
+def test(cfg, rank=0, is_dist=False, matte_dir='instmatt'):
 
     # Create dataset
     logging.info("Creating testing dataset...")
@@ -265,7 +266,7 @@ def test(cfg, rank=0, is_dist=False):
 
     batch_time, data_time = val(model, val_loader, device, cfg.test.log_iter, \
                                 val_error_dict, do_postprocessing=cfg.test.postprocessing, \
-                                    callback=partial(save_visualization, save_dir=cfg.test.save_dir) if cfg.test.save_results else None, use_trimap=cfg.test.use_trimap, use_temp=cfg.test.temp_aggre)
+                                    callback=partial(save_visualization, save_dir=cfg.test.save_dir) if cfg.test.save_results else None, use_trimap=cfg.test.use_trimap, use_temp=cfg.test.temp_aggre, matte_dir=matte_dir)
     
     logging.info("Testing done!")
 

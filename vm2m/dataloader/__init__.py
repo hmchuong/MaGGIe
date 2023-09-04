@@ -26,7 +26,8 @@ def build_dataset(cfg, is_train=True, random_seed=0):
     elif cfg.name in ["HIM"]:
         if is_train:
             # dataset = ComposedInstImageMatteDataset(root_dir=cfg.root_dir, split=cfg.split, bg_dir=cfg.bg_dir, max_inst=cfg.max_inst, padding_inst=cfg.padding_inst, short_size=cfg.short_size, crop=cfg.crop, random_seed=random_seed, use_single_instance_only=cfg.use_single_instance_only)
-            dataset = HIMDataset(root_dir=cfg.root_dir, split=cfg.split, max_inst=cfg.max_inst, padding_inst=cfg.padding_inst, short_size=cfg.short_size, crop=cfg.crop, random_seed=random_seed, is_train=is_train, flip_p=cfg.flip_prob, downscale_mask=cfg.downscale_mask)
+            dataset = HIMDataset(root_dir=cfg.root_dir, split=cfg.split, max_inst=cfg.max_inst, padding_inst=cfg.padding_inst, short_size=cfg.short_size, crop=cfg.crop, random_seed=random_seed, is_train=is_train, 
+                                flip_p=cfg.flip_prob, downscale_mask=cfg.downscale_mask, mask_dir_name=cfg.mask_dir_name, modify_mask_p=cfg.modify_mask_p, downscale_mask_p=cfg.downscale_mask_p, use_maskrcnn_p=cfg.use_maskrcnn_p)
         else:
             dataset = HIMDataset(root_dir=cfg.root_dir, split=cfg.split, short_size=cfg.short_size, is_train=is_train, downscale_mask=cfg.downscale_mask, alpha_dir_name=cfg.alpha_dir_name, mask_dir_name=cfg.mask_dir_name)
     elif cfg.name in ["MultiInstVideo"]:

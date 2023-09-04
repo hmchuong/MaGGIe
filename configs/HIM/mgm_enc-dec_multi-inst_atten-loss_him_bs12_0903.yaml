@@ -3,9 +3,9 @@ dataset:
     name: HIM
     root_dir: /mnt/localssd/HIM2K
     short_size: 576
-    split: comp
-    downscale_mask: False
-    mask_dir_name: 'masks_matched'
+    split: natural
+    downscale_mask: True
+    mask_dir_name: ''
   train:
     bin_alpha_max_k: 30
     crop:
@@ -18,7 +18,11 @@ dataset:
     root_dir: /mnt/localssd/HHM
     short_size: 576
     split: synthesized
+    mask_dir_name: 'masks_matched'
     downscale_mask: False
+    modify_mask_p: 0.1
+    downscale_mask_p: 0.5
+    use_maskrcnn_p: 0.2
 model:
   arch: MGM
   aspp:
@@ -109,7 +113,7 @@ test:
 train:
   batch_size: 12
   log_iter: 10
-  max_iter: 30000
+  max_iter: 16000
   num_workers: 4
   resume_last: True
   optimizer:

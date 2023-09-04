@@ -139,7 +139,7 @@ dataset.train.split = 'train'
 dataset.train.clip_length = 8
 dataset.train.short_size = 768
 dataset.train.use_single_instance_only = True
-dataset.train.downscale_mask = True
+dataset.train.downscale_mask = False
 
 # For augmentation
 dataset.train.random_state = 2023
@@ -147,6 +147,10 @@ dataset.train.crop = [512, 512] # (h, w)
 dataset.train.flip_prob = 0.5
 dataset.train.max_inst = 3
 dataset.train.padding_inst = 10
+dataset.train.mask_dir_name = "masks_matched"
+dataset.train.modify_mask_p = 0.1
+dataset.train.downscale_mask_p = 0.5
+dataset.train.use_maskrcnn_p = 0.2
 
 # For video augmentation
 dataset.train.max_step_size = 2
