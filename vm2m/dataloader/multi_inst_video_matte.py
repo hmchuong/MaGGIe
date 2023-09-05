@@ -16,7 +16,7 @@ except ImportError:
 class MultiInstVidDataset(Dataset):
     def __init__(self, root_dir, split, clip_length, overlap=2, padding_inst=10, is_train=False, short_size=576, 
                     crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-                    max_step_size=5, random_seed=2023, **kwargs):
+                    max_step_size=5, random_seed=2023, modify_mask_p=0.1, downscale_mask_p=0.5, **kwargs):
         super().__init__()
         self.root_dir = os.path.join(root_dir, split)
         self.is_train = is_train
@@ -53,8 +53,16 @@ class MultiInstVidDataset(Dataset):
             ])
         self.transforms.append(T.GenMaskFromAlpha(1.0))
         if self.is_train:
-            self.transforms.append(T.RandomBinarizedMask(self.random, bin_alpha_max_k))
-        self.transforms.append(T.DownUpMask(self.random, 0.125, 1.0 if not self.is_train else 0.7))
+            # self.transforms.append(T.RandomBinarizedMask(self.random, bin_alpha_max_k))
+            self.transforms.append(T.ChooseOne(self.random, [
+                T.ModifyMaskBoundary(self.random, modify_mask_p),
+                T.Compose([
+                    T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+                    T.DownUpMask(self.random, 0.125, downscale_mask_p)
+                ])
+            ]))
+        else:
+            self.transforms += [T.DownUpMask(self.random, 0.125, 1.0)]
         self.transforms += [
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -167,10 +175,10 @@ class MultiInstVidDataset(Dataset):
         return out
 
 if __name__ == "__main__":
-    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VideoMatte240K_syn", split="train", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
+    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
     #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
     #                 max_step_size=5, random_seed=2023)
-    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VideoMatte240K_syn", split="valid", clip_length=8, overlap=2, is_train=False, short_size=576, 
+    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="test", clip_length=8, overlap=2, is_train=False, short_size=576, 
                     random_seed=2023)
     for batch in dataset:
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))

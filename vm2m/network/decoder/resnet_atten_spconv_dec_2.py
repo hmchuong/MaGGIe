@@ -48,13 +48,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
                  atten_dim=128, atten_block=2, 
-                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000, use_id_pe=True, **kwargs):
+                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000, use_id_pe=True, use_query_temp=False, use_detail_temp=False, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
         self.large_kernel = large_kernel
         self.kernel_size = 5 if self.large_kernel else 3
+        self.use_query_temp = use_query_temp
+        self.use_detail_temp = use_detail_temp
 
         self.inplanes = 512 if layers[0] > 0 else 256
         self.late_downsample = late_downsample
@@ -215,7 +217,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
         x = Fsp.sparse_add(x, fea3)
 
-        if mem_details is not None:
+        # import pdb; pdb.set_trace()
+        if mem_details is not None and self.use_detail_temp:
             x = self.aggregate_detail_mem(x, mem_details)
         mem_details = x
 
@@ -312,8 +315,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # import pdb; pdb.set_trace()
         # use mask attention during warmup of training
         use_mask_atten = iter < self.warmup_mask_atten_iter and self.training
+        # import pdb; pdb.set_trace()
         x_os8, x, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
-                                                                            prev_tokens=mem_query, 
+                                                                            prev_tokens=mem_query if self.use_query_temp else None, 
                                                                             use_mask_atten=use_mask_atten, gt_mask=gt_masks)
         # import pdb; pdb.set_trace()
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
@@ -375,9 +379,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
 class ResShortCut_AttenSpconv_Temp_Dec(ResShortCut_AttenSpconv_Dec):
     
-    def __init__(self, **kwargs):
+    def __init__(self, stm_dropout=0.0, **kwargs):
         super().__init__(**kwargs)
-        self.temp_module_os16 = STM(256, os=16, mask_channel=kwargs["embed_dim"])
+        self.temp_module_os16 = STM(256, os=16, mask_channel=kwargs["embed_dim"], drop_out=stm_dropout)
         self.temp_module_os4 = DetailAggregation(64)
 
     def convert_syn_bn(self):

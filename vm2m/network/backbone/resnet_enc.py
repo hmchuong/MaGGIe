@@ -201,7 +201,7 @@ class ResShortCut_D(ResNet_D):
         return out, {'shortcut':(fea1, fea2, fea3, fea4, fea5), 'image':x[:,:3,...], 'backbone_feat': (x2, x3, x4, out)}
 
 class ResShortCutOS8_D(ResNet_D):
-    def __init__(self, block, layers, num_mask=1, norm_layer=None, late_downsample=False, **kwargs):
+    def __init__(self, block, layers, num_mask=1, norm_layer=None, late_downsample=False, shortcut_dropout=0.0, **kwargs):
         super(ResShortCutOS8_D, self).__init__(block, layers, norm_layer, late_downsample=late_downsample, mask_channel=num_mask)
 
         self.shortcut_inplane = [128, 256]
@@ -213,6 +213,7 @@ class ResShortCutOS8_D(ResNet_D):
         self.shortcut.append(nn.Identity())
         for stage, inplane in enumerate(self.shortcut_inplane):
             self.shortcut.append(self._make_shortcut(inplane, self.shortcut_plane[stage]))
+        self.shortcut_dropout = nn.Dropout2d(shortcut_dropout)
 
     def _make_shortcut(self, inplane, planes):
         return nn.Sequential(
@@ -241,8 +242,11 @@ class ResShortCutOS8_D(ResNet_D):
         x4 = self.layer3(x3) # N x 256 x 32 x 32
         out = self.layer_bottleneck(x4) # N x 512 x 16 x 16
 
+        # import pdb; pdb.set_trace()
         fea4 = self.shortcut[3](x3)
+        fea4 = self.shortcut_dropout(fea4)
         fea5 = self.shortcut[4](x4)
+        fea5 = self.shortcut_dropout(fea5)
 
         return out, {'shortcut':(fea4, fea5), 'image':x[:,:3,...]}
     

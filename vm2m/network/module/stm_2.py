@@ -4,10 +4,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class STM(nn.Module):
-    def __init__(self, in_channel, mask_channel=3, os=16):
+    def __init__(self, in_channel, mask_channel=3, os=16, drop_out=0.0):
         super().__init__()
         self.query_k_conv = nn.Conv2d(in_channel, in_channel // 8, 1, 1, 0, bias=False)
         self.query_v_conv = nn.Conv2d(in_channel, in_channel // 2, 1, 1, 0, bias=False)
+        self.query_drop_out = nn.Dropout2d(drop_out)
 
         embed_mask_channel = 2**(int(math.log2(os))) * mask_channel
         self.mem_k_conv = nn.Conv2d(in_channel + embed_mask_channel, in_channel // 8, 1, 1, 0, bias=False)
@@ -78,6 +79,8 @@ class STM(nn.Module):
         mem_v = mem_v.reshape_as(query_v) # b x c_v x h x w
 
         # Concatenate query and memory values
+        # import pdb; pdb.set_trace()
+        query_v = self.query_drop_out(query_v)
         query_v = torch.cat([query_v, mem_v], dim=1) # b x c x h x w
 
         # Smooth

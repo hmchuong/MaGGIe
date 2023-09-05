@@ -45,12 +45,12 @@ def main(rank, cfg, dist_url=None, world_size=8, eval_only=False, precision=32, 
             #     wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"))
             # except:
             # wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"), force=True)
-            if not is_sweep:
-                if cfg.wandb.id == '':
-                    wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, name=cfg.name)
-                else:
-                    wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, 
-                            name=cfg.name, id=cfg.wandb.id, resume='must')
+            # if not is_sweep:
+            if cfg.wandb.id == '':
+                wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, name=cfg.name if not is_sweep else None)
+            else:
+                wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, 
+                        name=cfg.name, id=cfg.wandb.id, resume='must')
             wandb.config.update(cfg, allow_val_change=True)
     if eval_only:
         test(cfg, rank, dist_url is not None)

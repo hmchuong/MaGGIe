@@ -141,9 +141,9 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
     if is_dist:
         model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         # model.convert_syn_bn()
-        having_unused_params = False
-        if cfg.model.arch in ['VM2M', 'VM2M0711']:
-            having_unused_params = True
+        # having_unused_params = False
+        # if cfg.model.arch in ['VM2M', 'VM2M0711']:
+        having_unused_params = True
         model = torch.nn.parallel.DistributedDataParallel(
                 model, device_ids=[rank], find_unused_parameters=having_unused_params)
 
@@ -228,7 +228,7 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
     # Start training
     logging.info("Start training...")
     model.train()
-    logging.debug("Iter: {}, len dataloader: {}".format(iter, len(train_loader)))
+    logging.info("Iter: {}, len dataloader: {}".format(iter, len(train_loader)))
     epoch =  iter // len(train_loader)
     scaler = GradScaler() if precision == 16 else None
     while iter < cfg.train.max_iter:
