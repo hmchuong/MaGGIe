@@ -382,7 +382,8 @@ class ResShortCut_AttenSpconv_Temp_Dec(ResShortCut_AttenSpconv_Dec):
     def __init__(self, stm_dropout=0.0, **kwargs):
         super().__init__(**kwargs)
         self.temp_module_os16 = STM(256, os=16, mask_channel=kwargs["embed_dim"], drop_out=stm_dropout)
-        self.temp_module_os4 = DetailAggregation(64)
+        if self.use_detail_temp:
+            self.temp_module_os4 = DetailAggregation(64)
 
     def convert_syn_bn(self):
         super().convert_syn_bn()
@@ -412,7 +413,7 @@ class ResShortCut_AttenSpconv_Temp_Dec(ResShortCut_AttenSpconv_Dec):
         return x
     
     def update_detail_mem(self, mem_details, refined_masks):
-        if mem_details is not None:
+        if mem_details is not None and self.use_detail_temp:
             mem_details = self.temp_module_os4.generate_mem(mem_details, refined_masks)
         return mem_details
     
