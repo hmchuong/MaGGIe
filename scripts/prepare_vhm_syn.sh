@@ -12,6 +12,6 @@ if [ ! -d "syn" ]; then
     tar -xf s5cmd.tar.gz
     chmod +x s5cmd
     sudo mv s5cmd /usr/local/bin/s5cmd
-    s5cmd cp -n -s -u --sp "s3://a-chuonghm/syn/*" syn/
+    s5cmd cp -n -s -u --sp "s3://a-chuonghm/syn_new/*" syn/
 fi
  

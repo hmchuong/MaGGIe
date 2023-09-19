@@ -1,0 +1,80 @@
+name: 'ours_vhm_0905'
+output_dir: 'output/VHM'
+train:
+  batch_size: 3
+  num_workers: 8
+  max_iter: 100000
+  optimizer:
+    lr: 1.0e-4
+    name: adamw
+  scheduler:
+    name: cosine
+    warmup_iters: 1000
+  val_metrics: ['MAD', 'MSE', 'SAD', 'dtSSD']
+  val_best_metric: 'dtSSD'
+  val_iter: 500
+  vis_iter: 50
+  log_iter: 10
+  val_dist: True
+  resume_last: True
+  seed: 1105
+test:
+  num_workers: 4
+  metrics: ['MAD', 'MSE', 'SAD', 'dtSSD']
+model:
+  arch: 'MGM'
+  weights: output/HIM/ours_short-576-512x512_bs12_nnodes-2_gpus-4_52k_adamw_1.5e-4_0903/best_model.pth
+  backbone: res_embed_shortcut_os8_encoder_29
+  backbone_args:
+    num_embed: 3
+    num_mask: 10
+    pretrained: true
+    shortcut_dropout: 0.1
+  decoder: res_shortcut_attention_spconv_temp_decoder_22
+  decoder_args:
+    atten_block: 2
+    atten_dim: 128
+    atten_head: 1
+    atten_stride: 1
+    final_channel: 64
+    head_channel: 120
+    max_inst: 10
+    embed_dim: 3
+    warmup_mask_atten_iter: 0
+    use_query_temp: True
+    use_detail_temp: True
+    stm_dropout: 0.1
+  mgm:
+    warmup_iter: 2000
+  loss_alpha_grad_w: 0.0
+  loss_alpha_lap_w: 1.0
+  loss_alpha_type: l1
+  loss_alpha_w: 1.0
+  loss_atten_w: 1.0
+  loss_comp_w: 0.0
+  loss_dtSSD_w: 1.0
+  loss_multi_inst_w: 0.25
+  loss_multi_inst_type: smooth_l1_0.5
+  loss_multi_inst_warmup: 0
+dataset:
+  train:
+    name: 'MultiInstVideo'
+    root_dir: '/mnt/localssd/syn'
+    bg_dir: ''
+    split: 'train'
+    short_size: 576
+    max_inst: 2
+    clip_length: 5
+    max_step_size: 5
+    padding_inst: 10
+    random_state: 2023
+    modify_mask_p: 0.1
+    downscale_mask_p: 0.5
+  test:
+    name: 'MultiInstVideo'
+    root_dir: '/mnt/localssd/syn'
+    split: 'val'
+    short_size: 576
+    clip_length: 8
+    clip_overlap: 2
+    use_thresh_mask: False

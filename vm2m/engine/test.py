@@ -175,7 +175,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 
             current_metrics = {}
             for k, v in val_error_dict.items():
-                if k in ['dtSSD', 'MESSDdt', 'dtSSD_trimap', 'MESSDdt_trimap']:
+                if k in ['dtSSD', 'MESSDdt', 'dtSSD_trimap', 'MESSDdt_trimap'] and use_temp:
                     if prev_gt is None:
                         continue
                     current_trimap = np.stack([prev_trimap, trimap[:, -1]], axis=1) if k.endswith("_trimap") else None
