@@ -1,9 +1,9 @@
 name: 'ours_vhm_0919'
 output_dir: 'output/VHM'
 train:
-  batch_size: 3
+  batch_size: 6
   num_workers: 8
-  max_iter: 100000
+  max_iter: 62000
   optimizer:
     lr: 1.0e-4
     name: adamw
