@@ -48,7 +48,7 @@ class BasicBlock(nn.Module):
 
 class ResNet_D_Dec(nn.Module):
 
-    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False, max_obj=1):
+    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False, max_obj=1, **kwargs):
         super(ResNet_D_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -163,7 +163,7 @@ class ResNet_D_Dec(nn.Module):
 
 class ResShortCut_D_Dec(ResNet_D_Dec):
 
-    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False, max_inst=1):
+    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False, max_inst=1, **kwargs):
         super(ResShortCut_D_Dec, self).__init__(block, layers, norm_layer, large_kernel,
                                                 late_downsample=late_downsample, max_obj=max_inst)
 

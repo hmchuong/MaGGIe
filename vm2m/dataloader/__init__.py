@@ -37,13 +37,13 @@ def build_dataset(cfg, is_train=True, random_seed=0):
                                             crop=cfg.crop, flip_p=cfg.flip_prob,
                                             max_step_size=cfg.max_step_size, random_seed=random_seed)
         else:
-            dataset = MultiInstVidDataset(root_dir=cfg.root_dir, split=cfg.split, clip_length=cfg.clip_length, overlap=cfg.clip_overlap, is_train=False, short_size=cfg.short_size)
+            dataset = MultiInstVidDataset(root_dir=cfg.root_dir, split=cfg.split, clip_length=cfg.clip_length, overlap=cfg.clip_overlap, is_train=False, short_size=cfg.short_size, random_seed=random_seed, mask_dir_name=cfg.mask_dir_name)
     elif cfg.name in ["CombineMultiInstVideo"]:
          if is_train:
             dataset = CombineMultiInstVideoMatte(root_dir=cfg.root_dir, split=cfg.split, 
                                             clip_length=cfg.clip_length, padding_inst=cfg.padding_inst, is_train=True, short_size=cfg.short_size, 
                                             crop=cfg.crop, flip_p=cfg.flip_prob,
-                                            max_step_size=cfg.max_step_size, random_seed=random_seed)
+                                            max_step_size=cfg.max_step_size, random_seed=random_seed, pha_dir=cfg.pha_dir, weight_mask_dir=cfg.weight_mask_dir)
          else:
              raise NotImplementedError("CombineMultiInstVideo is only for training")
     else:

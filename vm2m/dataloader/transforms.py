@@ -1,3 +1,4 @@
+import os
 import math
 import numpy as np
 import cv2
@@ -42,13 +43,27 @@ class Load(object):
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
+        weights = input_dict["weights"]
+
         frames = [np.array(Image.open(frame_path).convert("RGB" if self.is_rgb else "BGR")) for frame_path in frames]
         if masks is not None:
             masks = [np.array(Image.open(mask_path).convert("L")) for mask_path in masks]
         alphas = [np.array(Image.open(alpha_path).convert("L")) for alpha_path in alphas]
+        if weights is not None:
+            loaded_weights = []
+            for weight_path in weights:
+                if not os.path.exists(weight_path):
+                    weight = np.ones_like(alphas[0]) * 255
+                else:
+                    weight = np.array(Image.open(weight_path).convert("L"))
+                weight = ((weight > 127) * 255).astype('uint8')
+                loaded_weights.append(weight)
+            weights = loaded_weights
+       
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
         input_dict["masks"] = masks
+        input_dict["weights"] = weights
         return input_dict
         
 class ResizeShort(object):
@@ -60,6 +75,8 @@ class ResizeShort(object):
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
+        weights = input_dict["weights"]
+
         input_dict["ori_alphas"] = alphas
         transform_info = input_dict["transform_info"]
         h, w = frames[0].shape[:2]
@@ -68,6 +85,8 @@ class ResizeShort(object):
             frames = [cv2.resize(frame, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_LINEAR) for frame in frames]
             if masks is not None:
                 masks = [cv2.resize(mask, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_NEAREST) for mask in masks]
+            if weights is not None:
+                weights = [cv2.resize(mask, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_NEAREST) for mask in weights]
             # import pdb; pdb.set_trace()
             alphas = [cv2.resize(alpha, (int(w * ratio), int(h * ratio)), interpolation=cv2.INTER_LINEAR) for alpha in alphas]
         transform_info.append({'name': 'resize', 'ori_size': (h, w), 'ratio': ratio})
@@ -75,6 +94,7 @@ class ResizeShort(object):
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
         input_dict["masks"] = masks
+        input_dict["weights"] = weights
         input_dict["transform_info"] = transform_info
         
         return input_dict
@@ -88,6 +108,7 @@ class PaddingMultiplyBy(object):
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
+        weights = input_dict["weights"]
         transform_info = input_dict["transform_info"]
 
         h, w = frames[0].shape[:2]
@@ -96,12 +117,15 @@ class PaddingMultiplyBy(object):
         frames = [cv2.copyMakeBorder(frame, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for frame in frames]
         if masks is not None:
             masks = [cv2.copyMakeBorder(mask, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for mask in masks]
+        if weights is not None:
+            weights = [cv2.copyMakeBorder(mask, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for mask in weights]
         alphas = [cv2.copyMakeBorder(alpha, 0, h_pad, 0, w_pad, cv2.BORDER_CONSTANT, value=0) for alpha in alphas]
         transform_info.append({'name': 'padding', 'pad_size': (h_pad, w_pad)})
         
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
         input_dict["masks"] = masks
+        input_dict["weights"] = weights
         input_dict["transform_info"] = transform_info
 
         return input_dict
@@ -113,15 +137,19 @@ class Stack(object):
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
+        weights = input_dict["weights"]
 
         frames = np.stack(frames, axis=0)
         alphas = np.stack(alphas, axis=0)
         if masks is not None:
             masks = np.stack(masks, axis=0)
+        if weights is not None:
+            weights = np.stack(weights, axis=0)
         
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
         input_dict["masks"] = masks
+        input_dict["weights"] = weights
 
         return input_dict
 
@@ -140,6 +168,7 @@ class RandomCropByAlpha(object):
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
+        weights = input_dict["weights"]
 
         h, w = frames[0].shape[:2]
         if h < self.crop_size[0] or w < self.crop_size[1]:
@@ -173,9 +202,14 @@ class RandomCropByAlpha(object):
         if masks is not None:
             crop_masks = masks[:,y:y+self.crop_size[0], x:x+self.crop_size[1]]
         
+        crop_weights = weights
+        if weights is not None:
+            crop_weights = weights[:,y:y+self.crop_size[0], x:x+self.crop_size[1]]
+        
         input_dict["frames"] = crop_frames
         input_dict["alphas"] = crop_alphas
         input_dict["masks"] = crop_masks
+        input_dict["weights"] = crop_weights
 
         return input_dict
 
@@ -193,16 +227,20 @@ class RandomHorizontalFlip(object):
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
+        weights = input_dict["weights"]
 
         if self.random.rand() < self.p:
             frames = frames[:, :, ::-1, :]
             alphas = alphas[:, :, ::-1]
             if masks is not None:
                 masks = masks[:, :, ::-1]
+            if weights is not None:
+                weights = weights[:, :, ::-1]
         
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
         input_dict["masks"] = masks
+        input_dict["weights"] = weights
 
         return input_dict
 
@@ -297,7 +335,7 @@ class RandomBinarizeAlpha(object):
         alpha: (H, W)
         '''
         
-        threshold = np.random.uniform(0.1, 0.95) * 255
+        threshold = self.random.uniform(0.1, 0.95) * 255
 
         # binarize the alphas
         _, img_binarized = cv2.threshold(np.array(alpha), threshold, 1, cv2.THRESH_BINARY)
@@ -568,6 +606,7 @@ class ToTensor(object):
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
         masks = input_dict["masks"]
+        weights = input_dict["weights"]
 
         frames = torch.from_numpy(np.ascontiguousarray(frames)).permute(0, 3, 1, 2).contiguous().float()        
         alphas = torch.from_numpy(np.ascontiguousarray(alphas)).contiguous()
@@ -578,10 +617,16 @@ class ToTensor(object):
         if masks is not None:
             masks = torch.from_numpy(np.ascontiguousarray(masks).astype('uint8')).contiguous()
             masks = masks.view(frames.shape[0], n_insts, *masks.shape[1:])
+        
+        if weights is not None:
+            weights = torch.from_numpy(np.ascontiguousarray(weights).astype('uint8')).contiguous()
+            weights = weights.view(frames.shape[0], n_insts, *weights.shape[1:])
+
 
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
         input_dict["masks"] = masks
+        input_dict["weights"] = weights
         
         if "ori_alphas" in input_dict:
             ori_alphas = input_dict["ori_alphas"]
@@ -741,9 +786,10 @@ class RandomAffine(object):
         frames = input_dict["frames"]
         bg = input_dict.get("bg", None)
         alphas = input_dict.get("alphas", None)
+        weights = input_dict.get("weights", None)
 
         ignore_regions = np.ones_like(alphas)
-        list_FM = list(frames) + list(alphas) + list(ignore_regions)
+        list_FM = list(frames) + list(alphas) + list(weights) + list(ignore_regions)
         if bg is not None:
             list_FM += list(bg)
         
@@ -752,12 +798,14 @@ class RandomAffine(object):
         n_alpha = len(alphas)
         frames = np.stack(list_trans_FM[:n_f], axis=0)
         alphas = np.stack(list_trans_FM[n_f: n_f + n_alpha], axis=0)
-        ignore_regions = np.stack(list_trans_FM[n_f + n_alpha: 2*n_f + n_alpha], axis=0)
+        weights = np.stack(list_trans_FM[n_f + n_alpha: n_f + n_alpha * 2], axis=0)
+        ignore_regions = np.stack(list_trans_FM[n_f + n_alpha * 2: 2*n_f + n_alpha * 2], axis=0)
         if bg is not None:
             bg = np.stack(list_trans_FM[3*n_f:], axis=0)
         
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
+        input_dict["weights"] = weights
         input_dict["ignore_regions"] = ignore_regions
         if bg is not None:
             input_dict["bg"] = bg
@@ -776,10 +824,11 @@ class MotionBlur(object):
 
         frames = input_dict["frames"]
         alphas = input_dict["alphas"]
+        weights = input_dict["weights"]
         bg = input_dict.get("bg", None)
         
         if self.random.uniform(0, 1) < 0.5 and bg is not None:
-            N_cat = np.concatenate([frames, bg, alphas[:, :, :, None]], axis=-1) # T x H x W x 7
+            N_cat = np.concatenate([frames, bg, alphas[:, :, :, None], weights[:, :, :, None]], axis=-1) # T x H x W x 7
             N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x 7 x T
             N_cat = N_cat.reshape(*N_cat.shape[:2], -1) # H x W x 7T
             N_cat_aug = self.motion_aug(image=N_cat)["image"] # H x W x 7T
@@ -788,6 +837,7 @@ class MotionBlur(object):
             frames = N_cat_aug[:, :, :, :3]
             bg = N_cat_aug[:, :, :, 3:6]
             alphas = N_cat_aug[:, :, :, 6]
+            weights = N_cat_aug[:, :, :, 7]
             frames = np.clip(frames, 0, 255)
             bg = np.clip(bg, 0, 255)
             alphas = np.clip(alphas, 0, 255)
@@ -797,18 +847,24 @@ class MotionBlur(object):
                 alphas = alphas.reshape(len(frames), -1, *alphas.shape[1:])
                 n_inst = alphas.shape[1]
                 alphas = alphas.transpose((0, 2, 3, 1)) # T x H x W x n_inst
-                N_cat = np.concatenate([frames, alphas], axis=-1) # T x H x W x (n_inst + 3)
+                weights = weights.reshape(len(frames), -1, *weights.shape[1:])
+                weights = weights.transpose((0, 2, 3, 1))
+                N_cat = np.concatenate([frames, alphas, weights], axis=-1) # T x H x W x (n_inst + 3)
                 N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x (n_inst + 3) x T
                 N_cat = N_cat.reshape(*N_cat.shape[:2], -1) # H x W x (n_inst + 3)T
                 N_cat_aug = self.motion_aug(image=N_cat)["image"] # H x W x (n_inst + 3)T
                 N_cat_aug = N_cat_aug.reshape(*N_cat_aug.shape[:2], -1, frames.shape[0]) # H x W x (n_inst + 3) x T
                 N_cat_aug = N_cat_aug.transpose((3, 0, 1, 2)) # T x H x W x (n_inst + 3)
                 frames = N_cat_aug[:, :, :, :3]
-                alphas = N_cat_aug[:, :, :, 3:]
+                alphas = N_cat_aug[:, :, :, 3:3 + n_inst]
+                weights = N_cat_aug[:, :, :, 3 + n_inst:]
                 frames = np.clip(frames, 0, 255)
                 alphas = np.clip(alphas, 0, 255)
+                weights = np.clip(weights, 0, 255)
                 alphas = alphas.transpose((0, 3, 1, 2)) # T x n_inst x H x W
                 alphas = alphas.reshape(-1, *alphas.shape[2:])
+                weights = weights.transpose((0, 3, 1, 2))
+                weights = weights.reshape(-1, *weights.shape[2:])
             if self.random.uniform(0, 1) < 0.3 and bg is not None:
                 N_cat = bg 
                 N_cat = N_cat.transpose((1, 2, 3, 0)) # H x W x 3 x T
@@ -820,6 +876,7 @@ class MotionBlur(object):
                 bg = np.clip(bg, 0, 255)
         input_dict["frames"] = frames
         input_dict["alphas"] = alphas
+        input_dict["weights"] = weights
         if bg is not None:
             input_dict["bg"] = bg
             input_dict["fg"] = frames

@@ -151,6 +151,8 @@ dataset.train.mask_dir_name = "masks_matched"
 dataset.train.modify_mask_p = 0.1
 dataset.train.downscale_mask_p = 0.5
 dataset.train.use_maskrcnn_p = 0.2
+dataset.train.pha_dir = 'pha'
+dataset.train.weight_mask_dir = ''
 
 # For video augmentation
 dataset.train.max_step_size = 2
@@ -168,6 +170,7 @@ dataset.test.use_thresh_mask = False
 dataset.test.downscale_mask = True
 dataset.test.alpha_dir_name = "alphas"
 dataset.test.mask_dir_name = "masks_matched"
+dataset.test.random_seed = 2023
 
 # For video augmentation
 dataset.test.clip_length = 8

@@ -433,6 +433,7 @@ class ResShortCut_AttenSpconv_Temp_Dec(ResShortCut_AttenSpconv_Dec):
         
         final_results = {}
         need_construct_mem = len(mem_feat) == 0
+        # import pdb; pdb.set_trace()
         n_mem = 5
         for i in range(n_f):
             mid_fea = {

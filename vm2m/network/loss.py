@@ -10,7 +10,7 @@ def _loss_dtSSD(pred, gt, mask):
     diff = (dadt - dgdt) ** 2
     diff = diff * mask[:, 1:]
     # import pdb; pdb.set_trace()
-    diff = torch.sum(diff) / torch.sum(mask[:, 1:])
+    diff = torch.sum(diff) / torch.sum(mask[:, 1:] + 1e-6)
     return diff
 
 def loss_dtSSD(pred, gt, mask):

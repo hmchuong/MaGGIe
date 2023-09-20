@@ -128,7 +128,8 @@ class HIMDataset(Dataset):
         input_dict = {
             "frames": [image_path],
             "alphas": alphas,
-            "masks": masks
+            "masks": masks,
+            "weights": None
         }
         output_dict = self.transforms(input_dict)
         image, alpha, mask, transform_info = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"]

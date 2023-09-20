@@ -41,7 +41,7 @@ class Metric(object):
         
         mask = None
         if trimap is not None:
-            mask = (trimap == 1).astype('float32')
+            mask = (trimap > 0).astype('float32')
         else:
             mask = np.ones_like(gt).astype('float32')
 
@@ -81,7 +81,22 @@ class MAD(Metric):
 
     def compute_metric(self, pred, gt, mask, **kargs):
         return np.sum(np.abs(pred - gt) * mask) * 1000, mask.sum()
-    
+
+# class MAD_fg(Metric):
+#     def compute_metric(self, pred, gt, mask, **kargs):
+#         mask = (mask == 2).float()
+#         return np.sum(np.abs(pred - gt) * mask) * 1000, mask.sum()
+
+# class MAD_bg(Metric):
+#     def compute_metric(self, pred, gt, mask, **kargs):
+#         mask = (mask == 0).float()
+#         return np.sum(np.abs(pred - gt) * mask) * 1000, mask.sum()
+
+# class MAD_unk(Metric):
+#     def compute_metric(self, pred, gt, mask, **kargs):
+#         mask = (mask == 1).float()
+#         return np.sum(np.abs(pred - gt) * mask) * 1000, mask.sum()
+
 # class Conn(Metric):
     
 #     def compute_metric(self, pred, gt, mask, **kargs):

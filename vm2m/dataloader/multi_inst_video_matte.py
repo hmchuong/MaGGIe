@@ -16,13 +16,16 @@ except ImportError:
 class MultiInstVidDataset(Dataset):
     def __init__(self, root_dir, split, clip_length, overlap=2, padding_inst=10, is_train=False, short_size=576, 
                     crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-                    max_step_size=5, random_seed=2023, modify_mask_p=0.1, downscale_mask_p=0.5, **kwargs):
+                    max_step_size=5, random_seed=2023, modify_mask_p=0.1, mask_dir_name='', downscale_mask_p=0.5, pha_dir='pha', weight_mask_dir='', **kwargs):
         super().__init__()
         self.root_dir = os.path.join(root_dir, split)
         self.is_train = is_train
         self.clip_length = clip_length
         self.overlap = overlap
         self.padding_inst = padding_inst
+        self.mask_dir_name = mask_dir_name
+        self.pha_dir = pha_dir
+        self.weight_mask_dir = weight_mask_dir
 
         self.video_infos = {} # {video_name: [list of sorted frame names]}
         self.frame_ids = [] # (video_name, start_frame_id)
@@ -51,7 +54,8 @@ class MultiInstVidDataset(Dataset):
                 T.JpegCompression(self.random),
                 T.RandomAffine(self.random)
             ])
-        self.transforms.append(T.GenMaskFromAlpha(1.0))
+        if self.is_train or self.mask_dir_name == '':
+            self.transforms.append(T.GenMaskFromAlpha(1.0))
         if self.is_train:
             # self.transforms.append(T.RandomBinarizedMask(self.random, bin_alpha_max_k))
             self.transforms.append(T.ChooseOne(self.random, [
@@ -62,7 +66,8 @@ class MultiInstVidDataset(Dataset):
                 ])
             ]))
         else:
-            self.transforms += [T.DownUpMask(self.random, 0.125, 1.0)]
+            if self.mask_dir_name == '':
+                self.transforms += [T.DownUpMask(self.random, 0.125, 1.0)]
         self.transforms += [
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -75,7 +80,7 @@ class MultiInstVidDataset(Dataset):
     def load_video_frame(self, video_name, overlap):
         ''' Load video frame from video_name
         '''
-        frame_names = sorted(os.listdir(os.path.join(self.root_dir, "fgr", video_name)))
+        frame_names = sorted(os.listdir(os.path.join(self.root_dir, 'fgr', video_name)))
         self.video_infos[video_name] = frame_names
 
         # Load frame ids
@@ -88,8 +93,8 @@ class MultiInstVidDataset(Dataset):
     def load_frame_ids(self, overlap):
         ''' Load frames of all videos
         '''
-        fg_dir = os.path.join(self.root_dir, "fgr")
-        for video_name in os.listdir(fg_dir):
+        fg_dir = os.path.join(self.root_dir, self.pha_dir)
+        for video_name in sorted(os.listdir(fg_dir)):
             self.load_video_frame(video_name, overlap)
     
     def __getitem__(self, idx):
@@ -115,19 +120,28 @@ class MultiInstVidDataset(Dataset):
         alpha_paths = []
         for frame_name in frame_names:
             alpha_dir = frame_name.replace(".jpg", "")
-            alpha_path = list(glob.glob(os.path.join(self.root_dir, "pha", video_name, alpha_dir, "*.png")))
+            alpha_path = list(glob.glob(os.path.join(self.root_dir, self.pha_dir, video_name, alpha_dir, "*.png")))
             alpha_path = sorted(alpha_path)
             if len(alpha_path) > self.padding_inst:
                 alpha_path = alpha_path[:self.padding_inst]
             alpha_paths.extend(alpha_path)
 
+        mask_paths = None
+        if self.mask_dir_name != '' and not self.is_train:
+            mask_paths = [x.replace(f'/{self.pha_dir}/', '/' + self.mask_dir_name + '/') for x in alpha_paths]
+        weight_paths = [''] * len(alpha_paths)
+        if self.weight_mask_dir != '' and self.is_train:
+            weight_paths = [x.replace(f'/{self.pha_dir}/', '/' + self.weight_mask_dir + '/') for x in alpha_paths]
+
         input_dict = {
             "frames": frame_paths,
             "alphas": alpha_paths,
-            "masks": None
+            "masks": mask_paths,
+            "weights": weight_paths
         }
+        # import pdb; pdb.set_trace()
         output_dict = self.transforms(input_dict)
-        frames, alphas, masks, transform_info = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"]
+        frames, alphas, masks, transform_info, weights = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"], output_dict["weights"]
 
         if not self.is_train:
             alphas = output_dict["ori_alphas"]
@@ -140,11 +154,14 @@ class MultiInstVidDataset(Dataset):
         if add_padding > 0 and self.is_train:
             new_alpha = torch.zeros(alphas.shape[0], self.padding_inst, *alphas.shape[2:], dtype=alphas.dtype)
             new_mask = torch.zeros(alphas.shape[0], self.padding_inst, *masks.shape[2:], dtype=masks.dtype)
+            new_weight = torch.zeros(alphas.shape[0], self.padding_inst, *weights.shape[2:], dtype=weights.dtype)
             chosen_ids = self.random.choice(range(self.padding_inst), alphas.shape[1], replace=False)
             new_alpha[:, chosen_ids] = alphas
             new_mask[:, chosen_ids] = masks
+            new_weight[:, chosen_ids] = weights
             masks = new_mask
             alphas = new_alpha
+            weights = new_weight
         
         # Transition GT
         transition_gt = None
@@ -156,10 +173,12 @@ class MultiInstVidDataset(Dataset):
 
         alphas = alphas * 1.0 / 255
         masks = masks * 1.0 / 255
+        weights = weights * 1.0 / 255
 
         out =  {'image': frames,
                 'mask': masks.float(),
-                'alpha': alphas.float()}
+                'alpha': alphas.float(), 
+                'weight': weights.float()}
 
         if not self.is_train:
             trans = gen_transition_gt(alphas.flatten(0, 1)[:, None])
@@ -178,10 +197,14 @@ if __name__ == "__main__":
     # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
     #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
     #                 max_step_size=5, random_seed=2023)
-    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="test", clip_length=8, overlap=2, is_train=False, short_size=576, 
-                    random_seed=2023)
+    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="test", clip_length=8, overlap=2, is_train=False, short_size=576, 
+    #                 random_seed=2023)
+    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VIPSeg", split="out", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
+                    crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
+                    max_step_size=5, random_seed=2023, pha_dir='pha_vid_0911_from-seg', weight_mask_dir='')
     for batch in dataset:
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
+        weights = batch["weight"]
         print(frames.shape, masks.shape, alphas.shape, transition_gt.shape)
         
         for idx in range(len(frames)):
@@ -189,6 +212,7 @@ if __name__ == "__main__":
             mask = masks[idx]
             alpha = alphas[idx]
             transition = transition_gt[idx]
+            weight = weights[idx]
 
             frame = frame * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
             frame = (frame * 255).permute(1, 2, 0).numpy().astype(np.uint8)
@@ -196,5 +220,6 @@ if __name__ == "__main__":
             for inst_i in range(mask.shape[0]):
                 cv2.imwrite("debug/mask_{}_{}.png".format(idx, inst_i), mask[inst_i].numpy() * 255)
                 cv2.imwrite("debug/alpha_{}_{}.png".format(idx, inst_i), alpha[inst_i].numpy() * 255)
+                cv2.imwrite("debug/weight_{}_{}.png".format(idx, inst_i), weight[inst_i].numpy() * 255)
                 cv2.imwrite("debug/transition_{}_{}.png".format(idx, inst_i), transition[inst_i].numpy() * 120)
         import pdb; pdb.set_trace()

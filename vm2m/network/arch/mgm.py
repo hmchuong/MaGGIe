@@ -127,17 +127,17 @@ class MGM(nn.Module):
             self.freeze_to_train_temporal()
 
 
-    # def fushion(self, pred):
-    #     alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
+    def fushion(self, pred):
+        alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
-    #     ### Progressive Refinement Module in MGMatting Paper
-    #     alpha_pred = alpha_pred_os8.clone().detach()
-    #     weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
-    #     alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
-    #     weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
-    #     alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
+        ### Progressive Refinement Module in MGMatting Paper
+        alpha_pred = alpha_pred_os8.clone().detach()
+        weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
+        alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
+        weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
+        alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
 
-    #     return alpha_pred, weight_os4, weight_os1
+        return alpha_pred, weight_os4, weight_os1
 
     def forward(self, batch, return_ctx=False, mem_feat=[], mem_query=None, mem_details=None, **kwargs):
         '''
@@ -149,6 +149,7 @@ class MGM(nn.Module):
         x = batch['image']
         masks = batch['mask']
         alphas = batch.get('alpha', None)
+        weights = batch.get('weight', None)
         trans_gt = batch.get('transition', None)
         fg = batch.get('fg', None)
         bg = batch.get('bg', None)
@@ -214,10 +215,13 @@ class MGM(nn.Module):
                             gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details)
         
         # Fushion
-        # alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
-        alpha_pred = pred.pop("refined_masks")
-        weight_os4 = pred.pop("weight_os4")
-        weight_os1 = pred.pop("weight_os1")
+        if 'refined_masks' in pred:
+            alpha_pred = pred.pop("refined_masks")
+            weight_os4 = pred.pop("weight_os4")
+            weight_os1 = pred.pop("weight_os1")
+        else:
+            alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
+        
         
         output = {}
         if self.num_masks > 0 and self.training:
@@ -240,6 +244,8 @@ class MGM(nn.Module):
         if self.training:
             alphas = alphas.view(-1, n_i, h, w)
             trans_gt = trans_gt.view(-1, n_i, h, w)
+            if weights is not None:
+                weights = weights.view(-1, n_i, h, w)
             iter = batch['iter']
             
             # maskout padding masks
@@ -250,7 +256,7 @@ class MGM(nn.Module):
                     continue
                 pred[k] = v * valid_masks
 
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
 
             # Add loss max and min attention
             if 'loss_max_atten' in pred and self.loss_atten_w > 0:
@@ -308,7 +314,7 @@ class MGM(nn.Module):
             else:
                 raise NotImplementedError("NotImplemented loss type {}".format(loss_type))
        
-    def compute_loss(self, pred, weight_os4, weight_os1, alphas, trans_gt, fg, bg, iter, alpha_shape):
+    def compute_loss(self, pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape):
         '''
         pred: dict of output from forward
         batch: dict of input batch
@@ -328,6 +334,11 @@ class MGM(nn.Module):
         weight_os8 = torch.ones_like(weight_os1)
         valid_mask = alphas.sum((2, 3), keepdim=True) > 0
         weight_os8 = weight_os8 * valid_mask
+
+        if correct_weights is not None:
+            weight_os1 = weight_os1 * correct_weights
+            weight_os4 = weight_os4 * correct_weights
+            weight_os8 = weight_os8 * correct_weights
 
         # Add padding to alphas and trans_gt
         n_i = alphas.shape[1]
@@ -429,7 +440,7 @@ class MGM(nn.Module):
 
 
 class MGM_SingInst(MGM):
-    def forward(self, batch, return_ctx=False, prev_feat={}, prev_mask=None):
+    def forward(self, batch, return_ctx=False, prev_feat={}, prev_mask=None, **kwargs):
         masks = batch['mask']
         n_i = masks.shape[2]
         # if self.num_masks == 1:

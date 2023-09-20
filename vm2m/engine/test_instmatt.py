@@ -185,7 +185,14 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                     current_metrics[k] = v.update(current_pred, current_gt, trimap=current_trimap)
                     continue
                 logging.debug(f"updating {k}...")
-                current_trimap = trimap[:, skip:] if k.endswith("_trimap") else None
+                current_trimap = None
+                if k.endswith("_fg"):
+                    current_trimap = (trimap[:, skip:] == 2).astype('float32')
+                elif k.endswith("_bg"):
+                    current_trimap = (trimap[:, skip:] == 0).astype('float32')
+                elif k.endswith("_unk"):
+                    current_trimap = (trimap[:, skip:] == 1).astype('float32')
+                # current_trimap = trimap[:, skip:] if k.endswith("_trimap") else None
                 current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap)
                 logging.debug(f"Done {k}!")
             
@@ -253,6 +260,9 @@ def test(cfg, rank=0, is_dist=False, matte_dir='instmatt'):
 
     # Build metric
     val_error_dict = build_metric(cfg.test.metrics)
+    val_error_dict["MAD_fg"] = copy.deepcopy(val_error_dict['MAD'])
+    val_error_dict["MAD_bg"] = copy.deepcopy(val_error_dict['MAD'])
+    val_error_dict["MAD_unk"] = copy.deepcopy(val_error_dict['MAD'])
     # for k in list(val_error_dict.keys()):
     #     val_error_dict[k + "_trimap"] = copy.deepcopy(val_error_dict[k])
 
