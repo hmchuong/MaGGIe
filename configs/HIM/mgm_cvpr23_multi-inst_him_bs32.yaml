@@ -1,0 +1,146 @@
+dataset:
+  test:
+    name: HIM
+    root_dir: /mnt/localssd/HIM2K
+    short_size: 576
+    split: natural
+    downscale_mask: True
+    mask_dir_name: ''
+  train:
+    bin_alpha_max_k: 30
+    crop:
+    - 512
+    - 512
+    flip_prob: 0.5
+    name: HIM
+    padding_inst: 1
+    random_state: 2023
+    root_dir: /mnt/localssd/HHM
+    short_size: 576
+    split: synthesized
+    mask_dir_name: 'masks_matched'
+    downscale_mask: False
+    modify_mask_p: 0.1
+    downscale_mask_p: 0.5
+    use_maskrcnn_p: 0.2
+model:
+  arch: MGM_SingInst
+  aspp:
+    in_channels: 512
+    out_channels: 512
+  backbone: res_shortcut_encoder_29
+  backbone_args:
+    num_embed: 3
+    num_mask: 1
+    pretrained: true
+  breakdown:
+    in_channels:
+    - 32
+    - 32
+    - 32
+    in_features:
+    - os4
+    - os1
+  decoder: res_shortcut_decoder_22
+  decoder_args:
+    atten_block: 2
+    atten_dim: 128
+    atten_head: 1
+    atten_stride: 1
+    final_channel: 64
+    head_channel: 120
+    max_inst: 1
+    warmup_mask_atten_iter: 0
+    use_id_pe: True
+  dynamic_kernel:
+    dec_layers: 5
+    dim_feedforward: 256
+    enforce_input_project: true
+    hidden_dim: 256
+    in_channels: 256
+    in_features:
+    - os32
+    - os16
+    - os8
+    nheads: 4
+    out_incoherence: 157
+    out_pixeldecoder: 864
+    pre_norm: false
+  loss_alpha_grad_w: 0.0
+  loss_alpha_lap_w: 1.0
+  loss_alpha_type: l1
+  loss_alpha_w: 1.0
+  loss_atten_w: 1.0
+  loss_comp_w: 0.0
+  loss_dtSSD_w: 0.0
+  loss_multi_inst_type: smooth_l1_0.5
+  loss_multi_inst_w: 0.0
+  loss_multi_inst_warmup: 1500
+  mgm:
+    warmup_iter: 1125
+  refinement:
+    n_test_points: 16000
+    n_train_points: 2048
+  shm:
+    dilation_kernel: 15
+    lr_scale: 0.5
+    max_n_pixel: 4000000
+    mgm_weights: ''
+  shortcut_dims:
+  - 32
+  - 32
+  - 64
+  - 128
+  - 256
+  weights: ''
+name: mgm_cvpr23_multi-inst_him_bs32_0919
+output_dir: output/HIM
+test:
+  batch_size: 1
+  log_iter: 100
+  metrics:
+  - MAD
+  - MSE
+  - SAD
+  - Grad
+  - Conn
+  num_workers: 4
+  postprocessing: false
+  save_dir: logs
+  save_results: true
+  use_trimap: true
+  temp_aggre: false
+train:
+  batch_size: 64
+  log_iter: 10
+  max_iter: 20000
+  num_workers: 8
+  resume_last: True
+  optimizer:
+    betas:
+    - 0.9
+    - 0.999
+    lr: 0.00015
+    momentum: 0.9
+    name: adamw
+    weight_decay: 0.01
+  resume: ''
+  scheduler:
+    gamma: 0.1
+    name: cosine
+    power: 0.9
+    warmup_iters: 500
+  seed: 1234
+  val_best_metric: MAD
+  val_iter: 500
+  val_dist: False
+  val_metrics:
+  - MAD
+  - MSE
+  - SAD
+  vis_iter: 50
+wandb:
+  entity: research-dmo
+  id: ''
+  project: video-maskg-matting
+  use: true

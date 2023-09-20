@@ -117,12 +117,17 @@ class HIMDataset(Dataset):
     def __getitem__(self, index):
         image_path, alphas = self.data[index]
 
+        if len(alphas) > self.padding_inst:
+            alphas = self.random.choice(alphas, self.padding_inst, replace=True)
+
         # Load mask path and random replace the mask by alpha
         masks = None
         if self.is_train:
             masks = self.load_masks_train(alphas)
         elif self.mask_dir_name != '':
             masks = [alpha.replace(self.alpha_dir_name, self.mask_dir_name) for alpha in alphas]
+
+        
 
         # Load image
         input_dict = {
@@ -154,6 +159,7 @@ class HIMDataset(Dataset):
             mask = F.interpolate(mask, size=(image.shape[2] // 8, image.shape[3] // 8), mode="nearest")
         # alpha = alpha * 1.0 / 255
         # mask = mask * 1.0 / 255
+        # import pdb; pdb.set_trace()
         out =  {'image': image, 
                 'mask': mask.float(),
                 'alpha': alpha.float()}

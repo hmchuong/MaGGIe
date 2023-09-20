@@ -440,7 +440,9 @@ class MGM(nn.Module):
 
 
 class MGM_SingInst(MGM):
-    def forward(self, batch, return_ctx=False, prev_feat={}, prev_mask=None, **kwargs):
+    def forward(self, batch, **kwargs):
+        if self.training:
+            return super().forward(batch, **kwargs)
         masks = batch['mask']
         n_i = masks.shape[2]
         # if self.num_masks == 1:
@@ -449,7 +451,7 @@ class MGM_SingInst(MGM):
         batch = copy.deepcopy(batch)
         for i in range(n_i):
             batch['mask'] = masks[:, :, i:i+1]
-            outputs.append(super().forward(batch, return_ctx))
+            outputs.append(super().forward(batch, **kwargs))
         for k in outputs[0].keys():
             outputs[0][k] = torch.cat([o[k] for o in outputs], 2)
         return outputs[0]
