@@ -48,7 +48,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
                  atten_dim=128, atten_block=2, 
-                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000, use_id_pe=True, use_query_temp=False, use_detail_temp=False, **kwargs):
+                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000, use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -62,6 +62,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         self.late_downsample = late_downsample
         self.midplanes = 64 if late_downsample else 32
         self.warmup_mask_atten_iter = warmup_mask_atten_iter
+        self.warmup_detail_iter = warmup_detail_iter
 
         self.leaky_relu = nn.LeakyReLU(0.2, inplace=True)
 
@@ -143,6 +144,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             spconv.SubMConv2d(32, 1, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2)
         )
 
+        # self.mask_dropout_p = detail_mask_dropout
+        self.fea_dropout = nn.Dropout2d(detail_mask_dropout)
+
     def convert_syn_bn(self):
         self.layer1 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer1)
         self.layer2 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer2)
@@ -189,6 +193,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         masks = masks.reshape(b * n_i, 1, H, W)
         roi_masks = roi_masks.reshape(b * n_i, 1, H, W)
         image = image.unsqueeze(1).repeat(1, n_i, 1, 1, 1).reshape(b * n_i, 3, H, W)
+        
+        # if self.training and self.mask_dropout_p > 0:
+        #     nonzeros_ids = torch.nonzero(masks)
+        #     if len(nonzeros_ids) > 0:
+        #         mask_ids = torch.randperm(len(nonzeros_ids))[:int(len(nonzeros_ids) * self.mask_dropout_p)]
+        #         selected_ids = nonzeros_ids[mask_ids]
+        #         masks[selected_ids[:, 0], selected_ids[:, 1], selected_ids[:, 2], selected_ids[:, 3]] = 0
+            
+
         inp = torch.cat([image, masks], dim=1)
 
         # Prepare sparse tensor
@@ -212,6 +225,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         coords = fea3.indices.clone()
         coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
         coords = coords.long()
+        x = self.fea_dropout(x)
         x = x.permute(0, 2, 3, 1).contiguous()
         x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
         x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
@@ -331,7 +345,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
         guided_mask_os8 = x_os8
-        if self.training and (iter < self.warmup_mask_atten_iter or x_os8.sum() == 0):
+        if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 2 and random.random() < 0.5)):
             guided_mask_os8 = gt_alphas.clone()
             # if gt_alphas.max() == 0 and self.training:
             #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
@@ -343,6 +357,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         if unknown_os8.sum() > 0 or self.training:
             # TODO: Combine with details memory
+            # guided_mask_os8 = (guided_mask_os8 > 0).float()
             x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details)
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
             x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])

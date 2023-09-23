@@ -75,9 +75,9 @@ model:
   loss_dtSSD_w: 0.0
   loss_multi_inst_type: smooth_l1_0.5
   loss_multi_inst_w: 0.0
-  loss_multi_inst_warmup: 1500
+  loss_multi_inst_warmup: 4000
   mgm:
-    warmup_iter: 1125
+    warmup_iter: 3000
   refinement:
     n_test_points: 16000
     n_train_points: 2048
@@ -93,7 +93,7 @@ model:
   - 128
   - 256
   weights: ''
-name: mgm_cvpr23_multi-inst_him_bs32_0919
+name: mgm_cvpr23_him_bs12_0921
 output_dir: output/HIM
 test:
   batch_size: 1
@@ -111,9 +111,9 @@ test:
   use_trimap: true
   temp_aggre: false
 train:
-  batch_size: 64
+  batch_size: 12
   log_iter: 10
-  max_iter: 20000
+  max_iter: 52000
   num_workers: 8
   resume_last: True
   optimizer:
@@ -129,7 +129,7 @@ train:
     gamma: 0.1
     name: cosine
     power: 0.9
-    warmup_iters: 500
+    warmup_iters: 1000
   seed: 1234
   val_best_metric: MAD
   val_iter: 500

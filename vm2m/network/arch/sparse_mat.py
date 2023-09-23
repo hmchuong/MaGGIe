@@ -1,3 +1,4 @@
+import copy
 import cv2
 import math
 import logging
@@ -6,9 +7,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from vm2m.network.module.shm import SHM
+# from vm2m.network.module.shm import SHM
 from vm2m.network.loss import LapLoss, loss_comp
-from .mgm import MGM
+# from .mgm import MGM
 
 
 def _upsample_like(src,tar,mode='bilinear'):
@@ -46,8 +47,8 @@ class SparseMat(nn.Module):
     def __init__(self, backbone, decoder, cfg):
         super(SparseMat, self).__init__()
         self.cfg = cfg
-        self.mgm = MGM(backbone, decoder, cfg)
-        self.shm = SHM(inc=4)
+        self.lpn = backbone #MGM(backbone, decoder, cfg)
+        self.shm = decoder #SHM(inc=4)
         self.lr_scale = cfg.shm.lr_scale
         self.stride = cfg.shm.dilation_kernel
         self.dilate_op = nn.MaxPool2d(self.stride, stride=1, padding=self.stride//2)
@@ -57,17 +58,6 @@ class SparseMat(nn.Module):
         self.loss_comp_w = cfg.loss_comp_w
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
         self.lap_loss = LapLoss()
-
-        state_dict = torch.load(cfg.shm.mgm_weights, map_location='cpu')
-        self.mgm.load_state_dict(state_dict, strict=True)
-
-        self.mgm.eval()
-        for p in self.mgm.parameters():
-            p.requires_grad = False
-    
-    def train(self, mode=True):
-        super(SparseMat, self).train(mode)
-        self.mgm.eval()
 
     @torch.no_grad()
     def generate_sparse_inputs(self, img, lr_pred, mask):
@@ -91,8 +81,10 @@ class SparseMat(nn.Module):
 
     def gen_lr_batch(self, batch, scale=0.5):
         lr_batch = {}
+        # import pdb; pdb.set_trace()
         lr_batch['image'] = reshape5D(batch['image'], scale_factor=scale, multiply_by=64)
-        lr_batch['mask'] = reshape5D(batch['mask'], scale_factor=4.0, multiply_by=64)
+        mask_scale = scale / (batch['mask'].shape[-1] / batch['image'].shape[-1])
+        lr_batch['mask'] = reshape5D(batch['mask'], scale_factor=mask_scale, multiply_by=64)
         return lr_batch
 
     def forward_inference(self, lr_pred, x_hr, ctx, bs, n_f):
@@ -126,7 +118,7 @@ class SparseMat(nn.Module):
         all_hr_preds = all_hr_preds.view(bs, n_f, -1, *all_hr_preds.shape[-2:])
         return {'refined_masks': all_hr_preds}
 
-    def forward(self, input_dict):
+    def forward(self, input_dict, **kwargs):
         # xlr = input_dict['lr_image'] # rescale to 256
         # xhr = input_dict['hr_image'] # 512
 
@@ -134,11 +126,14 @@ class SparseMat(nn.Module):
         # lr_pred, ctx = self.lpn(xlr)
 
         lr_inp = self.gen_lr_batch(input_dict, scale=0.5)
-        with torch.no_grad():
-            lr_out = self.mgm(lr_inp, return_ctx=True)
+        # with torch.no_grad():
+        #     lr_out = self.mgm(lr_inp, return_ctx=True)
 
-        lr_pred = lr_out['refined_masks'].clone().detach()
-        ctx = lr_out['ctx'].clone().detach()
+        xlr = torch.cat([lr_inp['image'], lr_inp['mask']], dim=2).flatten(1, 2)
+        lr_pred, ctx = self.lpn(xlr)
+
+        # lr_pred = lr_out['refined_masks'].clone().detach()
+        # ctx = lr_out['ctx'].clone().detach()
 
         # reshape to B, C, H, W before passing to SHM
         xhr = input_dict['image']
@@ -231,7 +226,8 @@ class SparseMat(nn.Module):
             loss_rec = 0
             weight = 2.0
             for pred in pred_list[::-1]:
-                loss_rec += weight * self.regression_loss(pred, alphas, loss_type='l1', weight=mask)
+                # import pdb; pdb.set_trace()
+                loss_rec += weight * self.regression_loss(pred, alphas, loss_type='l1', weight=None)
                 weight = weight / 2.0
             loss_dict['loss_rec'] = loss_rec
             total_loss += loss_dict['loss_rec'] * self.loss_alpha_w
@@ -241,7 +237,7 @@ class SparseMat(nn.Module):
             loss = 0
             weight = 2.0
             for pred in pred_list[::-1]:
-                loss += weight * loss_comp(pred, alphas, fg, bg, mask)
+                loss += weight * loss_comp(pred, alphas, fg, bg, None)
                 weight = weight / 2.0
             loss_dict['loss_comp'] = loss
             total_loss += loss_dict['loss_comp'] * self.loss_comp_w
@@ -251,7 +247,7 @@ class SparseMat(nn.Module):
             loss = 0
             weight = 2.0
             for pred in pred_list[::-1]:
-                loss += weight * self.lap_loss(pred, alphas, mask)
+                loss += weight * self.lap_loss(pred, alphas, None)
                 weight = weight / 2.0
             loss_dict['loss_lap'] = loss
             total_loss += loss_dict['loss_lap'] * self.loss_alpha_lap_w
@@ -317,3 +313,20 @@ class SparseMat(nn.Module):
             hr_pred_sp = preds[-1]
             hr_pred = hr_pred_sp * mask_s + lr_pred_us * (1-mask_s)
         return hr_pred
+
+class SparseMat_SingInst(SparseMat):
+    def forward(self, batch, **kwargs):
+        if self.training:
+            return super().forward(batch, **kwargs)
+        masks = batch['mask']
+        n_i = masks.shape[2]
+        # if self.num_masks == 1:
+        outputs = []
+        # interate one mask at a time
+        batch = copy.deepcopy(batch)
+        for i in range(n_i):
+            batch['mask'] = masks[:, :, i:i+1]
+            outputs.append(super().forward(batch, **kwargs))
+        for k in outputs[0].keys():
+            outputs[0][k] = torch.cat([o[k] for o in outputs], 2)
+        return outputs[0]

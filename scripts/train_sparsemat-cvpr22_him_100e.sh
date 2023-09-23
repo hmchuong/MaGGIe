@@ -11,6 +11,6 @@ sh scripts/prepare_him_syn.sh
 # Start training
 echo "Starting training..."
 cd $ROOT_DIR
-CONFIG=configs/HIM/mgm_cvpr23_multi-inst_him_bs12.yaml
+CONFIG=configs/HIM/sparsemat_cvpr22_him_bs64.yaml
 torchrun --standalone --nnodes=1 --nproc_per_node=$RUNAI_NUM_OF_GPUS tools/main_ddp.py \
                     --config $CONFIG --precision 16
