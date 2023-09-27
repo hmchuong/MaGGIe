@@ -120,6 +120,11 @@ class HIMDataset(Dataset):
         if len(alphas) > self.padding_inst:
             alphas = self.random.choice(alphas, self.padding_inst, replace=True)
 
+        # remove some alphas
+        if len(alphas) > 1 and self.is_train and self.random.rand() < 0.2:
+            num_alphas = self.random.randint(1, len(alphas))
+            alphas = self.random.choice(alphas, num_alphas, replace=False)
+
         # Load mask path and random replace the mask by alpha
         masks = None
         if self.is_train:

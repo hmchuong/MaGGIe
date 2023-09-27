@@ -345,7 +345,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
         guided_mask_os8 = x_os8
-        if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 2 and random.random() < 0.5)):
+        if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 3 and random.random() < 0.5)):
             guided_mask_os8 = gt_alphas.clone()
             # if gt_alphas.max() == 0 and self.training:
             #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
@@ -384,6 +384,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         ret['refined_masks'] = alpha_pred
         ret['weight_os4'] = weight_os4
         ret['weight_os1'] = weight_os1
+        ret['detail_mask'] = unknown_os8
         if self.training and iter >= self.warmup_mask_atten_iter:
             ret['loss_max_atten'] = loss_max_atten
             ret['loss_min_atten'] = loss_min_atten
