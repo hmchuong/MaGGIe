@@ -152,7 +152,7 @@ class SpectralNorm(nn.Module):
 
     def _make_params(self):
         w = getattr(self.module, self.name)
-
+        # import pdb; pdb.set_trace()
         height = w.data.shape[0]
         width = w.view(height, -1).data.shape[1]
 

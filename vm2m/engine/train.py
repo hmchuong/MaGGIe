@@ -39,7 +39,8 @@ def wandb_log_image(batch, output, iter):
     log_images.append(log_alpha(batch['alpha'], 'alpha_gt', index, inst_index))
     # alpha_gt = (batch['alpha'][0,0,0] * 255).cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(alpha_gt, caption="alpha_gt"))
-
+    
+    # import pdb; pdb.set_trace()
     log_images.append(log_alpha(output['refined_masks'], 'alpha_pred', index, inst_index))
     # alpha_pred = (output['refined_masks'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(alpha_pred, caption="alpha_pred"))
@@ -83,6 +84,7 @@ def load_state_dict(model, state_dict):
         if name not in current_state_dict:
             unexpected_keys.append(name)
         elif param.shape != current_state_dict[name].shape:
+            import pdb; pdb.set_trace()
             mismatch_keys.append(name)
         else:
             current_state_dict[name].copy_(param)
@@ -139,10 +141,11 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
     optimizer, lr_scheduler = build_optim_lr_scheduler(cfg, model)
 
     if is_dist:
-        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        if cfg.model.sync_bn:
+            model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         # model.convert_syn_bn()
         having_unused_params = False
-        if cfg.model.arch in ['VM2M', 'VM2M0711']:
+        if cfg.model.arch in ['VM2M', 'VM2M0711', 'MGM_SS']:
             having_unused_params = True
         model = torch.nn.parallel.DistributedDataParallel(
                 model, device_ids=[rank], find_unused_parameters=having_unused_params)
@@ -313,7 +316,10 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 # Visualization
                 if iter % cfg.train.vis_iter == 0 and cfg.wandb.use:
                     # Visualize to wandb
-                    wandb_log_image(batch, output, iter)  
+                    try:
+                        wandb_log_image(batch, output, iter)
+                    except:
+                        pass
                 
             # Validation
             if iter % cfg.train.val_iter == 0 and (cfg.train.val_dist or (not cfg.train.val_dist and global_rank == 0)):

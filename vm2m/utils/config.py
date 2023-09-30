@@ -60,6 +60,7 @@ CONFIG.test.temp_aggre = False
 CONFIG.model = CN({})
 CONFIG.model.weights = ''
 CONFIG.model.arch = 'VM2M'
+CONFIG.model.sync_bn = True
 
 # Backbone aka encoder
 CONFIG.model.backbone = 'res_encoder_29' # resnet34

@@ -5,3 +5,5 @@ from .tcvom import TCVOM
 from .vm2m_0711 import VM2M0711
 from .mgm_dk import MGM_DK
 from .dummy import Dummy
+from .instmatt import InstMatt
+from .mgm_ss import MGM_SS
