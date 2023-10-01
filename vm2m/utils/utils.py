@@ -19,9 +19,19 @@ def resizeAnyShape(x, scale_factor=None, size=None, mode='bilinear', align_corne
 
 def compute_unknown(masks, k_size=30):
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+    
     h, w = masks.shape[-2:]
     uncertain = (masks > 1.0/255.0) & (masks < 254.0/255.0)
     ori_shape = uncertain.shape
+
+    # ----- Using kornia -----
+    # uncertain = uncertain.view(-1, 1, h, w)
+    # kernel = torch.from_numpy(kernel).to(masks.device).float()
+    # uncertain = dilation(uncertain.float(), kernel, engine='convolution')
+    # uncertain = uncertain.view(*ori_shape)
+    # uncertain = (uncertain > 0.0).float()
+
+    # ----- Using cv2 -----
     uncertain = uncertain.view(-1, h, w).detach().cpu().numpy().astype('uint8')
 
     for n in range(uncertain.shape[0]):

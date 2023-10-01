@@ -69,7 +69,7 @@ model:
     out_pixeldecoder: 864
     pre_norm: false
   loss_alpha_grad_w: 1.0
-  loss_alpha_lap_w: 0.0
+  loss_alpha_lap_w: 1.0
   loss_alpha_type: l1
   loss_alpha_w: 1.0
   loss_atten_w: 1.0

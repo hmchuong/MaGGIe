@@ -33,8 +33,10 @@ class MGM_Laplacian(nn.Module):
         # Some weights for loss
         self.loss_alpha_w = cfg.loss_alpha_w
         self.loss_alpha_grad_w = cfg.loss_alpha_grad_w
+        self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
         self.loss_atten_w = cfg.loss_atten_w
         self.grad_loss = GradientLoss()
+        self.lap_loss = LapLoss()
 
         self.train_temporal = False #cfg.decoder in ['res_shortcut_attention_spconv_temp_decoder_22']
 
@@ -293,25 +295,29 @@ class MGM_Laplacian(nn.Module):
             ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alpha_gt_os1, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
             ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alpha_gt_os4, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
             ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alpha_gt_os8, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
-            ref_alpha_fuse = self.regression_loss(fused_alpha_pred, alphas_gt, loss_type=self.cfg.loss_alpha_type, weight=weight_fuse)
-            ref_alpha_loss = (ref_alpha_fuse + ref_alpha_os1 * 2 + ref_alpha_os4 * 2 + ref_alpha_os8) / 6.0
+            ref_alpha_loss = (ref_alpha_os1 * 2 + ref_alpha_os4 * 2 + ref_alpha_os8) / 5.0
             loss_dict['loss_rec_os1'] = ref_alpha_os1
             loss_dict['loss_rec_os4'] = ref_alpha_os4
             loss_dict['loss_rec_os8'] = ref_alpha_os8
-            loss_dict['loss_rec_fuse'] = ref_alpha_fuse
             loss_dict['loss_rec'] = ref_alpha_loss
             total_loss += ref_alpha_loss * self.loss_alpha_w
         
+        # Lap loss
+        if self.loss_alpha_lap_w > 0:
+            logging.debug("Computing lap loss")
+            h, w = alpha_pred_os1.shape[-2:]
+            lap_loss_os1 = self.lap_loss(alpha_pred_os1.view(-1, 1, h, w), alpha_gt_os1.view(-1, 1, h, w), weight_os1.view(-1, 1, h, w))
+            loss_dict['loss_lap_os1'] = lap_loss_os1
+            total_loss += lap_loss_os1 * self.loss_alpha_lap_w
+
         if self.loss_alpha_grad_w > 0:
             grad_loss_os1 = self.grad_loss(alpha_pred_os1, alpha_gt_os1, weight_os1)
             grad_loss_os4 = self.grad_loss(alpha_pred_os4, alpha_gt_os4, weight_os4)
             grad_loss_os8 = self.grad_loss(alpha_pred_os8, alpha_gt_os8, weight_os8)
-            grad_loss_fuse = self.grad_loss(fused_alpha_pred, alphas_gt, weight_fuse)
-            grad_loss_all = (grad_loss_fuse + grad_loss_os1 * 2 + grad_loss_os4 * 2 + grad_loss_os8) / 6.0
+            grad_loss_all = (grad_loss_os1 * 2 + grad_loss_os4 * 2 + grad_loss_os8) / 5.0
             loss_dict['loss_grad_os1'] = grad_loss_os1
             loss_dict['loss_grad_os4'] = grad_loss_os4
             loss_dict['loss_grad_os8'] = grad_loss_os8
-            loss_dict['loss_grad_fuse'] = grad_loss_fuse
             loss_dict['loss_grad'] = grad_loss_all
             total_loss += grad_loss_all * self.loss_alpha_grad_w
 
