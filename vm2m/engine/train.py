@@ -48,7 +48,12 @@ def wandb_log_image(batch, output, iter):
     log_images.append(log_alpha(batch['mask'], 'mask_gt', index, inst_index))
     # mask_gt = (batch['mask'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(mask_gt, caption="mask_gt"))
-    
+
+    # if 'alpha_gt_os1' in batch:
+    #     log_images.append(log_alpha(batch['alpha_gt_os1'], 'alpha_os1_gt', index, inst_index))
+    #     log_images.append(log_alpha(batch['alpha_gt_os4'], 'alpha_os4_gt', index, inst_index))
+    #     log_images.append(log_alpha(batch['alpha_gt_os8'], 'alpha_os8_gt', index, inst_index))
+        
     # For VM2M
     if 'trans_preds' in output:
         for i, trans_pred in enumerate(output['trans_preds']):

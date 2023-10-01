@@ -13,6 +13,43 @@ except:
     import transforms as T
     from utils import gen_transition_gt
 
+
+def gauss_kernel(size=5, device=torch.device('cpu'), channels=3):
+    kernel = torch.tensor([[1., 4., 6., 4., 1],
+                           [4., 16., 24., 16., 4.],
+                           [6., 24., 36., 24., 6.],
+                           [4., 16., 24., 16., 4.],
+                           [1., 4., 6., 4., 1.]])
+    kernel /= 256.
+    kernel = kernel.repeat(channels, 1, 1, 1)
+    kernel = kernel.to(device)
+    return kernel
+
+def downsample(x, factor=2):
+    return x[:, :, ::factor, ::factor]
+
+def upsample(x, size=2):
+    return F.interpolate(x, size=size, mode='bilinear', align_corners=False)
+
+def conv_gauss(img, kernel):
+    img = torch.nn.functional.pad(img, (2, 2, 2, 2), mode='reflect')
+    out = torch.nn.functional.conv2d(img, kernel.to(img.device), groups=img.shape[1])
+    return out
+
+def gaussian_laplacian_pyramid(img, kernel, loi=[1,4,8]):
+    pyr_gau = [img]
+    pyr_lap = []
+    for i in range(1, len(loi)):
+        filtered = conv_gauss(pyr_gau[-1], kernel)
+        scale_factor = int(loi[i] / loi[i-1])
+        down = downsample(filtered, factor=scale_factor)
+        up = upsample(down, size=pyr_gau[-1].shape[-2:])
+        diff = pyr_gau[-1]-up
+        pyr_lap.append(diff)
+        pyr_gau.append(down)
+    pyr_lap.append(pyr_gau[-1])
+    return pyr_gau, pyr_lap
+
 class HIMDataset(Dataset):
     def __init__(self, root_dir, split, padding_inst=10, short_size=768, is_train=False, random_seed=2023, \
                 crop=(512, 512), flip_p=0.5, bin_alpha_max_k=30, downscale_mask=True, alpha_dir_name='alphas', mask_dir_name='', 
@@ -74,6 +111,10 @@ class HIMDataset(Dataset):
         ]
         
         self.transforms = T.Compose(self.transforms)
+
+
+        # For gaussian laplacian pyramid
+        self.image_kernel = gauss_kernel(channels=3)
     
     def load_him_image_alphas(self):
         images = sorted(glob.glob(os.path.join(self.root_dir, "images", self.split, "*.jpg")))
@@ -118,11 +159,11 @@ class HIMDataset(Dataset):
         image_path, alphas = self.data[index]
 
         if len(alphas) > self.padding_inst:
-            alphas = self.random.choice(alphas, self.padding_inst, replace=True)
+            alphas = self.random.choice(alphas, self.padding_inst, replace=False)
 
-        # remove some alphas
+        # remove one random alpha
         if len(alphas) > 1 and self.is_train and self.random.rand() < 0.2:
-            num_alphas = self.random.randint(1, len(alphas))
+            num_alphas = len(alphas) - 1
             alphas = self.random.choice(alphas, num_alphas, replace=False)
 
         # Load mask path and random replace the mask by alpha
@@ -165,9 +206,21 @@ class HIMDataset(Dataset):
         # alpha = alpha * 1.0 / 255
         # mask = mask * 1.0 / 255
         # import pdb; pdb.set_trace()
-        out =  {'image': image, 
-                'mask': mask.float(),
-                'alpha': alpha.float()}
+
+        # Build Gauss OS8, Lap OS4, Lap OS1, Lap Image OS1-OS8
+        _, im_pyrlap = gaussian_laplacian_pyramid(image, self.image_kernel, loi=[1,8])
+        alpha_kernel = gauss_kernel(channels=alpha.shape[1])
+        _, alpha_pyrlap = gaussian_laplacian_pyramid(alpha, alpha_kernel, loi=[1,4,8])
+
+        out =  {
+            'image': image, 
+            'image_lap': im_pyrlap[0],
+            'mask': mask.float(),
+            'alpha': alpha.float(),
+            'alpha_gt_os1': alpha_pyrlap[0],
+            'alpha_gt_os4': alpha_pyrlap[1],
+            'alpha_gt_os8': alpha_pyrlap[2],
+        }
         # import pdb; pdb.set_trace()
         # Generate trimap for evaluation
         if self.is_train:
@@ -193,9 +246,16 @@ if __name__ == "__main__":
     for batch in dataset:
         # batch = dataset[117]
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
+        image_lap = batch["image_lap"]
+        alpha_gt_os1 = batch["alpha_gt_os1"]
+        alpha_gt_os4 = batch["alpha_gt_os4"]
+        alpha_gt_os8 = batch["alpha_gt_os8"]
         frame = frames[0] * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
         frame = (frame * 255).permute(1, 2, 0).numpy().astype(np.uint8)
+        image_lap = image_lap[0] * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
+        image_lap = (image_lap * 255).permute(1, 2, 0).numpy().astype(np.uint8)
         cv2.imwrite("debug/frame.png", frame[:, :, ::-1])
+        cv2.imwrite("debug/image_lap.png", image_lap[:, :, ::-1])
         
         for idx in range(masks.shape[1]):
             mask = masks[0, idx]
@@ -203,6 +263,9 @@ if __name__ == "__main__":
             transition = transition_gt[0, idx]
             cv2.imwrite("debug/mask_{}.png".format(idx), mask.numpy() * 255)
             cv2.imwrite("debug/alpha_{}.png".format(idx), alpha.numpy() * 255)
+            cv2.imwrite("debug/alpha_gt_os1_{}.png".format(idx), alpha_gt_os1[0, idx].numpy() * 255)
+            cv2.imwrite("debug/alpha_gt_os4_{}.png".format(idx), alpha_gt_os4[0, idx].numpy() * 255)
+            cv2.imwrite("debug/alpha_gt_os8_{}.png".format(idx), alpha_gt_os8[0, idx].numpy() * 255)
             cv2.imwrite("debug/trimap_{}.png".format(idx), transition.numpy() * 80)
         import pdb; pdb.set_trace()
 

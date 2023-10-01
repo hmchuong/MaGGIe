@@ -7,3 +7,4 @@ from .mgm_dk import MGM_DK
 from .dummy import Dummy
 from .instmatt import InstMatt
 from .mgm_ss import MGM_SS
+from .mgm_lap import MGM_Laplacian
