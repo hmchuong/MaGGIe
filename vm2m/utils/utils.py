@@ -1,7 +1,7 @@
 import cv2
 import torch
 from torch.nn import functional as F
-# from kornia.morphology import dilation
+from kornia.morphology import dilation
 
 def resizeAnyShape(x, scale_factor=None, size=None, mode='bilinear', align_corners=False, use_max_pool=False):
     shape = x.shape

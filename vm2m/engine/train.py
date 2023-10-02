@@ -257,9 +257,9 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
             optimizer.zero_grad()
             if precision == 16:
                 with autocast():
-                    output, loss = model(batch, mem_feat=[])
+                    output, loss = model(batch, mem_feat={})
             else:
-                output, loss = model(batch, mem_feat=[])
+                output, loss = model(batch, mem_feat={})
             if loss is None:
                 logging.error("Loss is None!")
                 continue

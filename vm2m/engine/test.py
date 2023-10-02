@@ -93,10 +93,6 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
         for i, batch in enumerate(val_loader):
 
             data_time.update(time.time() - end_time)
-            
-            # if i < 117:
-            #     continue
-            # import pdb; pdb.set_trace()
 
             image_names = batch.pop('image_names')
             alpha_names = None
@@ -127,7 +123,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                 continue
             # Adding prev_feat
             # prev_feat = {}
-            prev_mem = []
+            prev_mem = {}
             if len(mem_feat) >= 1 and use_temp:
                 prev_mem.append(mem_feat[-1])
                 m_i = 2
@@ -148,30 +144,12 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                     mem_feat = mem_feat[-(memory_interval * n_mem):]
                 mem_query = output['mem_queries']
                 mem_details = output['mem_details']
-            # if 'embedding' in output:
-            #     memory_frames.append(output['embedding'])
-            #     if len(memory_frames) > memory_interval:
-            #         memory_frames = memory_frames[-memory_interval:]
-            #         # print("Cut down memory frames")
-            # if 'prev_mask' in output:
-            #     memory_prev_mask.append(output['prev_mask'])
-            #     if len(memory_prev_mask) > memory_interval:
-            #         memory_prev_mask = memory_prev_mask[-memory_interval:]
                 
-            
             alpha = output['refined_masks']
             alpha = alpha #.cpu().numpy()
             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
             if do_postprocessing:
                 alpha = postprocess(alpha)
-
-            # DEBUG: Load masks for instmatt
-            # import glob
-            # all_alpha_paths = sorted(glob.glob(image_names[0][0].replace('/images/', '/instmatt/').replace(".jpg", "/*.png")))
-            # all_alphas = []
-            # for alpha_path in all_alpha_paths:
-            #     all_alphas.append(cv2.imread(alpha_path, 0))
-            # alpha = np.stack(all_alphas, axis=0)[None, None] / 255.0
 
             current_metrics = {}
             for k, v in val_error_dict.items():
@@ -195,9 +173,6 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                 current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap)
                 logging.debug(f"Done {k}!")
             
-            # all_preds.append(alpha[:, skip:])
-            # all_gts.append(alpha_gt[:, skip:])
-            # all_trimaps.append(trimap[:, skip:])
             prev_gt = alpha_gt[:, -1]
             prev_pred = alpha[:, -1]
             prev_trimap = trimap[:, -1]

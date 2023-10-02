@@ -54,6 +54,8 @@ class MGM(nn.Module):
         if hasattr(self.encoder, 'mask_embed_layer'):
             if hasattr(self.decoder, 'temp_module_os16'):
                 self.decoder.temp_module_os16.mask_embed_layer = self.encoder.mask_embed_layer
+            if hasattr(self.decoder, 'temp_module_os8'):
+                self.decoder.temp_module_os8.mask_embed_layer = self.encoder.mask_embed_layer
         # if isinstance(self.encoder, ResMaskEmbedShortCut_D) and isinstance(self.decoder, ResShortCut_EmbedAtten_Dec):
         #     self.decoder.refine_OS1.id_embedding = self.encoder.mask_embed
         #     self.decoder.refine_OS4.id_embedding = self.encoder.mask_embed
@@ -139,7 +141,7 @@ class MGM(nn.Module):
 
         return alpha_pred, weight_os4, weight_os1
 
-    def forward(self, batch, return_ctx=False, mem_feat=[], mem_query=None, mem_details=None, **kwargs):
+    def forward(self, batch, return_ctx=False, mem_feat={}, mem_query=None, mem_details=None, **kwargs):
         '''
         x: b, n_f, 3, h, w, image tensors
         masks: b, n_frames, n_instances, h//8, w//8, coarse masks
