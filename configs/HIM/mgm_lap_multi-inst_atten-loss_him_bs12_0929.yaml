@@ -113,7 +113,7 @@ test:
   use_trimap: true
   temp_aggre: false
 train:
-  batch_size: 32
+  batch_size: 24
   log_iter: 10
   max_iter: 16000
   num_workers: 4

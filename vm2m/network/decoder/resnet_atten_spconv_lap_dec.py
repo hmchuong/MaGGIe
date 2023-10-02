@@ -76,7 +76,7 @@ class ResShortCut_AttenSpconv_Lap_Dec(nn.Module):
         relu_layer = nn.ReLU(inplace=True)
         # Image low-level feature extractor
         self.low_os1_module = spconv.SparseSequential(
-            spconv.SubMConv2d(7, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
+            spconv.SubMConv2d(4, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
             relu_layer,
             nn.BatchNorm1d(32),
             spconv.SubMConv2d(32, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.1"),
@@ -164,7 +164,7 @@ class ResShortCut_AttenSpconv_Lap_Dec(nn.Module):
         b, n_i, H, W = masks.shape
         masks = masks.reshape(b * n_i, 1, H, W)
         roi_masks = roi_masks.reshape(b * n_i, 1, H, W)
-        image = image.unsqueeze(1).repeat(1, n_i, 1, 1, 1).reshape(b * n_i, 6, H, W)
+        image = image.unsqueeze(1).repeat(1, n_i, 1, 1, 1).reshape(b * n_i, image.shape[1], H, W)
             
 
         inp = torch.cat([image, masks], dim=1)
@@ -245,23 +245,25 @@ class ResShortCut_AttenSpconv_Lap_Dec(nn.Module):
     def update_detail_mem(self, mem_details, refined_masks):
         return mem_details
 
-    def fuse_pred(self, pred):
+    def fuse_pred(self, pred, detail_mask):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
         alpha_pred = alpha_pred_os8.clone()
         
         # Upsample and replace by OS4
         alpha_pred = F.interpolate(alpha_pred, size=alpha_pred_os4.shape[-2:], mode='bilinear', align_corners=False)
-        unknown_os4 = compute_unknown(alpha_pred, k_size=8)
+        unknown_os4 = compute_unknown(alpha_pred, k_size=8) * detail_mask[:, :, ::4, ::4]
         alpha_pred = alpha_pred_os4 * unknown_os4 + alpha_pred * (1 - unknown_os4)
 
+        # cv2.imwrite('alpha_pred_os4.png', alpha_pred[0,0].cpu().numpy() * 255)
+        # cv2.imwrite('alpha_pred_os8.png', alpha_pred_os8[0,0].cpu().numpy() * 255)
+        # cv2.imwrite('alpha_unk_os4.png', unknown_os4[0,0].cpu().numpy() * 255)
+        # cv2.imwrite('alpha_unk_os1.png', unknown_os1[0,0].cpu().numpy() * 255)
         # import pdb; pdb.set_trace()
 
         # Upsample and replace by OS1
         alpha_pred = F.interpolate(alpha_pred, size=alpha_pred_os1.shape[-2:], mode='bilinear', align_corners=False)
-        unknown_os1 = compute_unknown(alpha_pred, k_size=15)
+        unknown_os1 = compute_unknown(alpha_pred, k_size=15) * detail_mask
         alpha_pred = alpha_pred_os1 * unknown_os1 + alpha_pred * (1 - unknown_os1)
-
-
 
         return unknown_os1, unknown_os4, alpha_pred
     
@@ -321,7 +323,9 @@ class ResShortCut_AttenSpconv_Lap_Dec(nn.Module):
 
         if unknown_os8.sum() > 0 or self.training:
             # Combine with details memory
-            x_os4, x_os1, mem_details = self.predict_details(x, torch.cat([image, lap_image], dim=1), unknown_os8, guided_mask_os8, mem_details)
+            # detail_input = torch.cat([image, lap_image], dim=1)
+            detail_input = image
+            x_os4, x_os1, mem_details = self.predict_details(x, detail_input, unknown_os8, guided_mask_os8, mem_details)
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
             x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])
             x_os4 = (torch.tanh(x_os4) + 1.0) / 2.0
@@ -334,7 +338,7 @@ class ResShortCut_AttenSpconv_Lap_Dec(nn.Module):
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
 
-        weight_os1, weight_os4, alpha_pred = self.fuse_pred(ret)
+        weight_os1, weight_os4, alpha_pred = self.fuse_pred(ret, unknown_os8)
         ret['weight_os1'] = weight_os1
         ret['weight_os4'] = weight_os4
         ret['alpha'] = alpha_pred

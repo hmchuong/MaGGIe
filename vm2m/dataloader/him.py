@@ -214,7 +214,7 @@ class HIMDataset(Dataset):
 
         out =  {
             'image': image, 
-            'image_lap': im_pyrlap[0],
+            'image_lap': im_pyrlap[0].abs(),
             'mask': mask.float(),
             'alpha': alpha.float(),
             'alpha_gt_os1': alpha_pyrlap[0],
