@@ -166,7 +166,7 @@ class MGM_Laplacian(nn.Module):
         
         # Fuse the output
         weight_os1, weight_os4, alpha_pred = pred.pop('weight_os1'), pred.pop('weight_os4'), pred.pop('alpha')
-        
+        detail_mask = pred.pop('detail_mask', None)
         # Reshape the output
         if self.num_masks > 0 and self.training:
             alpha_pred = alpha_pred.view(b, n_f, self.num_masks, h, w)
@@ -187,7 +187,7 @@ class MGM_Laplacian(nn.Module):
                     continue
                 pred[k] = v * valid_masks
 
-            loss_dict = self.compute_loss(pred, alpha_pred, alphas, weight_os1, weight_os4, iter, (b, n_f, self.num_masks, h, w))
+            loss_dict = self.compute_loss(pred, alpha_pred, alphas, weight_os1, weight_os4, detail_mask, iter, (b, n_f, self.num_masks, h, w))
 
             # Add loss max and min attention
             if 'loss_max_atten' in pred and self.loss_atten_w > 0:
@@ -248,7 +248,7 @@ class MGM_Laplacian(nn.Module):
             else:
                 raise NotImplementedError("NotImplemented loss type {}".format(loss_type))
        
-    def compute_loss(self, pred, fused_alpha_pred, alphas_gt, weight_os1, weight_os4, iter, alpha_shape):
+    def compute_loss(self, pred, fused_alpha_pred, alphas_gt, weight_os1, weight_os4, detail_mask, iter, alpha_shape):
         '''
         pred: dict of output from forward
         batch: dict of input batch
@@ -272,13 +272,13 @@ class MGM_Laplacian(nn.Module):
         if iter < self.cfg.mgm.warmup_iter or (iter < self.cfg.mgm.warmup_iter * 3 and random.randint(0,1) == 0):
             # Compute weight os4 and os1 from alphas
             temp_gt = F.interpolate(alpha_gt_os8, size=alpha_gt_os4.shape[-2:], mode='nearest')
-            weight_os4 = compute_unknown(temp_gt, k_size=8)
+            weight_os4 = compute_unknown(temp_gt, k_size=8) * detail_mask[:, :, ::4, ::4]
             temp_gt = alpha_gt_os4 * weight_os4 + temp_gt * (1 - weight_os4)
 
             # Upsample and replace by OS1
             temp_gt = F.interpolate(temp_gt, size=alpha_gt_os1.shape[-2:], mode='nearest')
-            weight_os1 = compute_unknown(temp_gt, k_size=15)
-        
+            weight_os1 = compute_unknown(temp_gt, k_size=15) * detail_mask
+
         loss_dict = {}
         
 

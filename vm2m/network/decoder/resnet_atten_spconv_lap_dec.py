@@ -319,7 +319,8 @@ class ResShortCut_AttenSpconv_Lap_Dec(nn.Module):
             guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
 
         # Compute RoI for next level
-        unknown_os8 = compute_unknown(guided_mask_os8)
+        # kernel_width = 30 # if not self.training else random.randint(1, 30)
+        unknown_os8 = compute_unknown(guided_mask_os8, k_size=30, is_train=self.training)
 
         if unknown_os8.sum() > 0 or self.training:
             # Combine with details memory

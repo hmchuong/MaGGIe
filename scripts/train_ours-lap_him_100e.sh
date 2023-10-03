@@ -15,5 +15,5 @@ cd $ROOT_DIR
 
 CONFIG=configs/HIM/mgm_lap_multi-inst_atten-loss_him_bs12_0929.yaml
 torchrun --standalone --nnodes=1 --nproc_per_node=$RUNAI_NUM_OF_GPUS  tools/main_ddp.py \
-                    --config $CONFIG --precision 16 name ours_fea-dropout-0.2_lap-loss_1001 \
-                    train.max_iter 27000 wandb.id u5git7yo
+                    --config $CONFIG --precision 16 name ours_fea-dropout-0.2_lap-loss_1002 \
+                    train.max_iter 27000 wandb.id sekymv8q
