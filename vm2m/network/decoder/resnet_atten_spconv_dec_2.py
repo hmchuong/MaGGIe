@@ -99,7 +99,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             max_inst=max_inst,
             return_feat=True,
             use_temp_pe=False,
-            use_id_pe=use_id_pe
+            use_id_pe=use_id_pe,
+            temporal_query=use_query_temp
         )
         relu_layer = nn.ReLU(inplace=True)
         # Image low-level feature extractor
@@ -487,8 +488,51 @@ class ResShortCut_AttenSpconv_Temp_Dec(ResShortCut_AttenSpconv_Dec):
                 final_results[k] = torch.stack(v).mean()
         return final_results
 
+class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
+    
+    def forward(self, x, mid_fea, b, n_f, masks, mem_query=None, gt_alphas=None, **kwargs):
+        
+        # Reshape inputs
+        x = x.reshape(b, n_f, *x.shape[1:])
+        if gt_alphas is not None:
+            gt_alphas = gt_alphas.reshape(b, n_f, *gt_alphas.shape[1:])
+        image = mid_fea['image']
+        image = image.reshape(b, n_f, *image.shape[1:])
+        masks = masks.reshape(b, n_f, *masks.shape[1:])
+        fea4 = mid_fea['shortcut'][0]
+        fea4 = fea4.reshape(b, n_f, *fea4.shape[1:])
+        fea5 = mid_fea['shortcut'][1]
+        fea5 = fea5.reshape(b, n_f, *fea5.shape[1:])
+        
+        final_results = {}
+        # import pdb; pdb.set_trace()
+        n_mem = 5
+        for i in range(n_f):
+            mid_fea = {
+                'image': image[:, i],
+                'shortcut': [fea4[:, i], fea5[:, i]]
+            }
+            ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=mem_query, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
+            mem_query = ret['mem_queries']
+
+            for k in ret:
+                if k not in final_results:
+                    final_results[k] = []
+                final_results[k] += [ret[k]]
+        for k, v in final_results.items():
+            if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks']:
+                final_results[k] = torch.stack(v, dim=1).flatten(0, 1)
+            elif k in ['mem_feat', 'mem_details', 'mem_queries']:
+                final_results[k] = v[-1]
+            elif self.training:
+                final_results[k] = torch.stack(v).mean()
+        return final_results
+
 def res_shortcut_attention_spconv_decoder_22(**kwargs):
     return ResShortCut_AttenSpconv_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)
 
 def res_shortcut_attention_spconv_temp_decoder_22(**kwargs):
     return ResShortCut_AttenSpconv_Temp_Dec(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)
+
+def res_shortcut_attention_spconv_querytemp_decoder_22(**kwargs):
+    return ResShortCut_AttenSpconv_QueryTemp_Dec(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)

@@ -79,9 +79,9 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
     model.eval()
     torch.cuda.empty_cache()
     with torch.no_grad():
-        mem_feat = []
-        mem_query = None
-        mem_details = None
+        mem_feat = {}
+        # mem_query = None
+        # mem_details = None
         memory_interval = 5
         n_mem = 1
         video_name = None
@@ -108,7 +108,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             if image_names[0][0].split('/')[-2] != video_name:
 
                 video_name = image_names[0][0].split('/')[-2]
-                mem_feat = []
+                mem_feat = {}
                 mem_query = None
                 mem_details = None
                 processed_frames = 0
@@ -123,27 +123,46 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                 continue
             # Adding prev_feat
             # prev_feat = {}
-            prev_mem = {}
-            if len(mem_feat) >= 1 and use_temp:
-                prev_mem.append(mem_feat[-1])
-                m_i = 2
-                while len(mem_feat) - m_i >= 0:
-                    if m_i % memory_interval == 0:
-                        prev_mem.append(mem_feat[-m_i])
-                    m_i+= 1
-                
-            output = model(batch, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
+            # prev_mem = {}
+            # if len(mem_feat) >= 1 and use_temp:
+            #     prev_mem.append(mem_feat[-1])
+            #     m_i = 2
+            #     while len(mem_feat) - m_i >= 0:
+            #         if m_i % memory_interval == 0:
+            #             prev_mem.append(mem_feat[-m_i])
+            #         m_i+= 1
+            # if use_temp:
+            #     for key in ['mem_os16', 'mem_os8']:
+            #         if not key in mem_feat: continue
+            #         prev_mem[key] = [mem_feat[key][-1]]
+            #         m_i = 2
+            #         while len(mem_feat[key]) - m_i >= 0:
+            #             if m_i % memory_interval == 0:
+            #                 prev_mem[key].append(mem_feat[key][-m_i])
+            #             m_i+= 1
+            #         prev_mem[key] = torch.stack(prev_mem[key], dim=1)
+            # import pdb; pdb.set_trace()
+            # output = model(batch, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
+            # output = model(batch, mem_feat=prev_mem)
+            output = model(batch, mem_feat=[], mem_query=mem_query)
 
             batch_time.update(time.time() - end_time)
             processed_frames += 1
 
             # Save memory frames
-            if use_temp and 'mem_feat' in output:
-                mem_feat.append(output['mem_feat'].unsqueeze(1))
-                if len(mem_feat) > memory_interval * n_mem:
-                    mem_feat = mem_feat[-(memory_interval * n_mem):]
+            if use_temp and 'mem_queries' in output:
+                # mem_feat.append(output['mem_feat'].unsqueeze(1))
+                # if len(mem_feat) > memory_interval * n_mem:
+                #     mem_feat = mem_feat[-(memory_interval * n_mem):]
                 mem_query = output['mem_queries']
-                mem_details = output['mem_details']
+                # mem_details = output['mem_details']
+            # if use_temp:
+                # for key in ['mem_os16', 'mem_os8']:
+                #     if not key in output: continue
+                #     mem_feat[key] = mem_feat.get(key, []) + [output[key]]
+                #     if len(mem_feat[key]) > memory_interval * n_mem:
+                #         mem_feat[key] = mem_feat[key][-memory_interval * n_mem:]
+            # import pdb; pdb.set_trace()
                 
             alpha = output['refined_masks']
             alpha = alpha #.cpu().numpy()

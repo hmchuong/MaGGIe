@@ -7,7 +7,7 @@ from .mask_attention import MLP, SelfAttentionLayer, CrossAttentionLayer, FFNLay
 
 class MaskMatteEmbAttenHead(nn.Module):
     def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_head=4, 
-                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True):
+                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True, temporal_query=False):
         super().__init__()
         
         self.n_block = n_block
@@ -102,6 +102,11 @@ class MaskMatteEmbAttenHead(nn.Module):
         if self.atten_stride > 1.0:
             self.ori_feat_proj = nn.Conv2d(input_dim, attention_dim, kernel_size=1, stride=1, padding=0, bias=False)
             nn.init.xavier_uniform_(self.ori_feat_proj.weight)
+
+        self.temporal_query = temporal_query
+        if temporal_query:
+            self.query_lstm = nn.LSTM(attention_dim, attention_dim, batch_first=True)
+            self.temp_layernorm = nn.LayerNorm(attention_dim)
     
     def compute_atten_loss(self, b, n_f, guidance_mask, atten_mat):
         # Compute loss on attention mat: max at guidance, min at non-guidance
@@ -231,11 +236,11 @@ class MaskMatteEmbAttenHead(nn.Module):
         token_pos = token_pos.permute(2, 1, 0, 3).reshape(-1, b, self.atten_dim)
 
         # combine with previous tokens
-        if prev_tokens is not None:
+        # if prev_tokens is not None:
             # prev_tokens = prev_tokens.permute(1, 0, 2).unsqueeze(1)  # n_i, 1, b, c_atten
             # prev_tokens = prev_tokens.repeat(1, n_f, 1, 1)  # n_i, n_f, b, c_atten
             # import pdb; pdb.set_trace()
-            tokens = tokens + prev_tokens #.flatten(0, 1)  # n_i * n_f, b, c_atten
+            # tokens = tokens + prev_tokens #.flatten(0, 1)  # n_i * n_f, b, c_atten
 
 
         # atten_padding_mask = n_f * b, h * w, n_i
@@ -313,8 +318,6 @@ class MaskMatteEmbAttenHead(nn.Module):
                 pos=token_pos if self.use_id_pe else None, query_pos=feat_pos if self.use_id_pe else None
             )
         
-        
-
         # tokens to features attention
         # Q: n_i, n_f * b, c_atten
         # KV: h * w, n_f * b, c_atten
@@ -324,7 +327,23 @@ class MaskMatteEmbAttenHead(nn.Module):
             memory_key_padding_mask=None,
             pos=feat_pos, query_pos=token_pos
         )
-        mem_tokens = tokens
+
+        # TODO: Aggregate the memory here
+        mem_tokens = None
+        if self.temporal_query:
+
+            if prev_tokens is None:
+                tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None])
+            else:
+                tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None], prev_tokens) 
+            tokens = tokens.reshape(-1, n_f * b, self.atten_dim)
+            tokens = self.temp_layernorm(tokens)
+            mem_tokens = (h_mem, c_mem)
+
+
+        
+            
+        # mem_tokens = tokens
 
         if self.training and not use_mask_atten:
             cur_max_loss, cur_min_loss = self.compute_atten_loss(b, n_f, guidance_mask, atten_mat)

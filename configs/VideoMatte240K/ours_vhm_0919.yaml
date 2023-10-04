@@ -33,7 +33,7 @@ model:
     num_mask: 10
     pretrained: true
     shortcut_dropout: 0.3
-  decoder: res_shortcut_attention_spconv_temp_decoder_22
+  decoder: res_shortcut_attention_spconv_querytemp_decoder_22
   decoder_args:
     atten_block: 2
     atten_dim: 128
@@ -43,10 +43,11 @@ model:
     head_channel: 120
     max_inst: 10
     embed_dim: 3
-    warmup_mask_atten_iter: 0
-    use_query_temp: False
+    use_query_temp: True
     use_detail_temp: False
     stm_dropout: 0.1
+    warmup_mask_atten_iter: 0
+    warmup_detail_iter: 0
   mgm:
     warmup_iter: 0
   loss_alpha_grad_w: 0.0
