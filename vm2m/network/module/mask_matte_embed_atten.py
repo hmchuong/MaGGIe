@@ -107,6 +107,9 @@ class MaskMatteEmbAttenHead(nn.Module):
         if temporal_query:
             self.query_lstm = nn.LSTM(attention_dim, attention_dim, batch_first=True)
             self.temp_layernorm = nn.LayerNorm(attention_dim)
+            for p in self.query_lstm.parameters():
+                if p.dim() > 1:
+                    nn.init.xavier_uniform_(p)
     
     def compute_atten_loss(self, b, n_f, guidance_mask, atten_mat):
         # Compute loss on attention mat: max at guidance, min at non-guidance

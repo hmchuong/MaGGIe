@@ -16,6 +16,7 @@ from vm2m.network.module.temporal_nn import TemporalNN
 from vm2m.network.module.ligru_conv import LiGRUConv
 from vm2m.network.module.stm_2 import STM
 from vm2m.network.module.detail_aggregation import DetailAggregation
+from vm2m.network.module.instance_query_atten import InstanceQueryAttention
 from .resnet_dec import BasicBlock
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
@@ -57,6 +58,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         self.kernel_size = 5 if self.large_kernel else 3
         self.use_query_temp = use_query_temp
         self.use_detail_temp = use_detail_temp
+        self.max_inst = max_inst
 
         self.inplanes = 512 if layers[0] > 0 else 256
         self.late_downsample = late_downsample
@@ -179,8 +181,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         return nn.Sequential(*layers)
     
-    def aggregate_detail_mem(self, x, mem_details):
-        return x
+    def aggregate_detail_mem(self, x, mem_details, n_i):
+        return x, mem_details
 
     def predict_details(self, x, image, roi_masks, masks, mem_details=None):
         '''
@@ -233,9 +235,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x = Fsp.sparse_add(x, fea3)
 
         # import pdb; pdb.set_trace()
-        if mem_details is not None and self.use_detail_temp:
-            x = self.aggregate_detail_mem(x, mem_details)
-        mem_details = x
+        # if mem_details is not None and self.use_detail_temp:
+        x, mem_details = self.aggregate_detail_mem(x, mem_details, n_i)
+        # mem_details = x
 
         # Predict OS 4
         x_os4 = self.refine_OS4(x)
@@ -427,7 +429,7 @@ class ResShortCut_AttenSpconv_Temp_Dec(ResShortCut_AttenSpconv_Dec):
     def aggregate_detail_mem(self, x, mem_details):
         if mem_details is not None:
             x = self.temp_module_os4(x, mem_details)
-        return x
+        return x, mem_details
     
     def update_detail_mem(self, mem_details, refined_masks):
         if mem_details is not None and self.use_detail_temp:
@@ -490,7 +492,21 @@ class ResShortCut_AttenSpconv_Temp_Dec(ResShortCut_AttenSpconv_Dec):
 
 class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
     
-    def forward(self, x, mid_fea, b, n_f, masks, mem_query=None, gt_alphas=None, **kwargs):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if self.use_detail_temp:
+            self.temp_module_os4 = InstanceQueryAttention(64, max_inst=self.max_inst)
+    
+    def aggregate_detail_mem(self, x, mem_details, n_i):
+        '''
+        Update current feat with mem_feat
+        '''
+        if self.use_detail_temp:
+            return self.temp_module_os4(x, n_i, mem_details)
+        return x, mem_details
+
+        
+    def forward(self, x, mid_fea, b, n_f, masks, mem_query=None, mem_details=None, gt_alphas=None, **kwargs):
         
         # Reshape inputs
         x = x.reshape(b, n_f, *x.shape[1:])
@@ -512,8 +528,9 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 'image': image[:, i],
                 'shortcut': [fea4[:, i], fea5[:, i]]
             }
-            ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=mem_query, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
+            ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=mem_query, mem_details=mem_details, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
             mem_query = ret['mem_queries']
+            mem_details = ret['mem_details']
 
             for k in ret:
                 if k not in final_results:
