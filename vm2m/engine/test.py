@@ -80,8 +80,8 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
     torch.cuda.empty_cache()
     with torch.no_grad():
         mem_feat = {}
-        # mem_query = None
-        # mem_details = None
+        mem_query = None
+        mem_details = None
         memory_interval = 5
         n_mem = 1
         video_name = None
@@ -144,7 +144,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             # import pdb; pdb.set_trace()
             # output = model(batch, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
             # output = model(batch, mem_feat=prev_mem)
-            output = model(batch, mem_feat=[], mem_query=mem_query)
+            output = model(batch, mem_feat=[], mem_query=mem_query, mem_details=mem_details)
 
             batch_time.update(time.time() - end_time)
             processed_frames += 1
@@ -155,7 +155,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                 # if len(mem_feat) > memory_interval * n_mem:
                 #     mem_feat = mem_feat[-(memory_interval * n_mem):]
                 mem_query = output['mem_queries']
-                # mem_details = output['mem_details']
+                mem_details = output['mem_details']
             # if use_temp:
                 # for key in ['mem_os16', 'mem_os8']:
                 #     if not key in output: continue

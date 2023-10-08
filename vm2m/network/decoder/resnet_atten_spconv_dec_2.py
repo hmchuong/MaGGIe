@@ -17,6 +17,7 @@ from vm2m.network.module.ligru_conv import LiGRUConv
 from vm2m.network.module.stm_2 import STM
 from vm2m.network.module.detail_aggregation import DetailAggregation
 from vm2m.network.module.instance_query_atten import InstanceQueryAttention
+from vm2m.utils.utils import compute_unknown
 from .resnet_dec import BasicBlock
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
@@ -229,6 +230,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
         coords = coords.long()
         x = self.fea_dropout(x)
+        # import pdb; pdb.set_trace()
         x = x.permute(0, 2, 3, 1).contiguous()
         x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
         x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
@@ -265,12 +267,12 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         return x_os4_out, x_os1_out, mem_details
 
-    def compute_unknown(self, masks, k_size=30):
-        h, w = masks.shape[-2:]
-        uncertain = (masks > 1.0/255.0) & (masks < 254.0/255.0)
-        dilated_m = F.max_pool2d(uncertain.float(), kernel_size=k_size, stride=1, padding=k_size // 2)
-        dilated_m = dilated_m[:,:, :h, :w]
-        return dilated_m
+    # def compute_unknown(self, masks, k_size=30):
+    #     h, w = masks.shape[-2:]
+    #     uncertain = (masks > 1.0/255.0) & (masks < 254.0/255.0)
+    #     dilated_m = F.max_pool2d(uncertain.float(), kernel_size=k_size, stride=1, padding=k_size // 2)
+    #     dilated_m = dilated_m[:,:, :h, :w]
+    #     return dilated_m
 
     def aggregate_mem(self, x, mem_feat):
         '''
@@ -287,17 +289,19 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def update_detail_mem(self, mem_details, refined_masks):
         return mem_details
 
-    def fushion(self, pred):
+    def fushion(self, pred, detail_mask):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
         ### Progressive Refinement Module in MGMatting Paper
-        alpha_pred = alpha_pred_os8.clone().detach()
+        alpha_pred = alpha_pred_os8.clone() #.detach()
         
-        weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
+        # weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
+        weight_os4 = compute_unknown(alpha_pred, k_size=30) * detail_mask
         weight_os4 = weight_os4.type(alpha_pred.dtype)
         alpha_pred_os4 = alpha_pred_os4.type(alpha_pred.dtype)
         alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
-        weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
+        # weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
+        weight_os1 = compute_unknown(alpha_pred, k_size=15) * detail_mask
         weight_os1 = weight_os1.type(alpha_pred.dtype)
         alpha_pred_os1 = alpha_pred_os1.type(alpha_pred.dtype)
         alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
@@ -354,7 +358,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
             # print(guided_mask_os8.sum(), guided_mask_os8.max())
 
-        unknown_os8 = self.compute_unknown(guided_mask_os8)
+        # unknown_os8 = self.compute_unknown(guided_mask_os8)
+        unknown_os8 = compute_unknown(guided_mask_os8, k_size=30, is_train=self.training)
+
         if unknown_os8.max() == 0 and self.training:
             unknown_os8[:, :, 200: 250, 200: 250] = 1.0
 
@@ -378,15 +384,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # if not self.training:
         #     import pdb; pdb.set_trace()
         # Update mem_feat
-        alpha_pred, weight_os4, weight_os1 = self.fushion(ret)
+        alpha_pred, _, _ = self.fushion(ret, unknown_os8)
         mem_feat = self.update_mem(mem_feat, alpha_pred)
 
         # Update mem_details
         mem_details = self.update_detail_mem(mem_details, alpha_pred)
 
         ret['refined_masks'] = alpha_pred
-        ret['weight_os4'] = weight_os4
-        ret['weight_os1'] = weight_os1
+        # ret['weight_os4'] = weight_os4
+        # ret['weight_os1'] = weight_os1
         ret['detail_mask'] = unknown_os8
         if self.training and iter >= self.warmup_mask_atten_iter:
             ret['loss_max_atten'] = loss_max_atten
@@ -505,6 +511,44 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
             return self.temp_module_os4(x, n_i, mem_details)
         return x, mem_details
 
+    # def forward(self, x, mid_fea, b, n_f, masks, mem_query=None, mem_details=None, gt_alphas=None, **kwargs):
+        
+    #     # Reshape inputs
+    #     x = x.reshape(b, n_f, *x.shape[1:])
+    #     if gt_alphas is not None:
+    #         gt_alphas = gt_alphas.reshape(b, n_f, *gt_alphas.shape[1:])
+    #     image = mid_fea['image']
+    #     image = image.reshape(b, n_f, *image.shape[1:])
+    #     masks = masks.reshape(b, n_f, *masks.shape[1:])
+    #     fea4 = mid_fea['shortcut'][0]
+    #     fea4 = fea4.reshape(b, n_f, *fea4.shape[1:])
+    #     fea5 = mid_fea['shortcut'][1]
+    #     fea5 = fea5.reshape(b, n_f, *fea5.shape[1:])
+        
+    #     final_results = {}
+    #     # import pdb; pdb.set_trace()
+    #     n_mem = 5
+    #     for i in range(n_f):
+    #         mid_fea = {
+    #             'image': image[:, i],
+    #             'shortcut': [fea4[:, i], fea5[:, i]]
+    #         }
+    #         ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=mem_query, mem_details=mem_details, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
+    #         mem_query = ret['mem_queries']
+    #         mem_details = ret['mem_details']
+
+    #         for k in ret:
+    #             if k not in final_results:
+    #                 final_results[k] = []
+    #             final_results[k] += [ret[k]]
+    #     for k, v in final_results.items():
+    #         if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks']:
+    #             final_results[k] = torch.stack(v, dim=1).flatten(0, 1)
+    #         elif k in ['mem_feat', 'mem_details', 'mem_queries']:
+    #             final_results[k] = v[-1]
+    #         elif self.training:
+    #             final_results[k] = torch.stack(v).mean()
+    #     return final_results
         
     def forward(self, x, mid_fea, b, n_f, masks, mem_query=None, mem_details=None, gt_alphas=None, **kwargs):
         
@@ -521,6 +565,7 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
         fea5 = fea5.reshape(b, n_f, *fea5.shape[1:])
         
         final_results = {}
+        final_results_notemp = {}
         # import pdb; pdb.set_trace()
         n_mem = 5
         for i in range(n_f):
@@ -529,6 +574,7 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 'shortcut': [fea4[:, i], fea5[:, i]]
             }
             ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=mem_query, mem_details=mem_details, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
+            ret_notemp = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=None, mem_details=None, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
             mem_query = ret['mem_queries']
             mem_details = ret['mem_details']
 
@@ -536,6 +582,12 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 if k not in final_results:
                     final_results[k] = []
                 final_results[k] += [ret[k]]
+            for k in ret:
+                if k not in final_results_notemp:
+                    final_results_notemp[k] = []
+                final_results_notemp[k] += [ret_notemp[k]]
+        
+        # Compute new temp loss to focus on wrong regions
         for k, v in final_results.items():
             if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks']:
                 final_results[k] = torch.stack(v, dim=1).flatten(0, 1)
@@ -543,7 +595,16 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 final_results[k] = v[-1]
             elif self.training:
                 final_results[k] = torch.stack(v).mean()
-        return final_results
+        
+        for k, v in final_results_notemp.items():
+            if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks']:
+                final_results_notemp[k] = torch.stack(v, dim=1).flatten(0, 1)
+            elif k in ['mem_feat', 'mem_details', 'mem_queries']:
+                final_results_notemp[k] = v[-1]
+            elif self.training:
+                final_results_notemp[k] = torch.stack(v).mean()
+
+        return final_results, final_results_notemp
 
 def res_shortcut_attention_spconv_decoder_22(**kwargs):
     return ResShortCut_AttenSpconv_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)

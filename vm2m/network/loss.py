@@ -52,6 +52,7 @@ class GradientLoss(nn.Module):
                 mask = mask.unsqueeze(1)
             logit = logit * mask
             label = label * mask
+            # import pdb; pdb.set_trace()
             loss = torch.sum(
                 F.l1_loss(self.sobel(logit), self.sobel(label), reduction='none')) / (
                     mask.sum() + self.eps)
@@ -73,7 +74,6 @@ class GradientLoss(nn.Module):
 
         input_pad = input.reshape(n * c, 1, h, w)
         input_pad = F.pad(input_pad, pad=[1, 1, 1, 1], mode='replicate')
-
         grad_x = F.conv2d(input_pad, self.kernel_x, padding=0)
         grad_y = F.conv2d(input_pad, self.kernel_y, padding=0)
 

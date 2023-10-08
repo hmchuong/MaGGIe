@@ -215,12 +215,17 @@ class MGM(nn.Module):
         pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, 
                             masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, 
                             gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details)
-        
+        pred_notemp = None
+        if isinstance(pred, tuple):
+            pred, pred_notemp = pred
+
         # Fushion
         if 'refined_masks' in pred:
             alpha_pred = pred.pop("refined_masks")
-            weight_os4 = pred.pop("weight_os4")
-            weight_os1 = pred.pop("weight_os1")
+            weight_os4 = pred.pop("detail_mask").type(alpha_pred.dtype)
+            weight_os1 = weight_os4
+            # weight_os4 = pred.pop("weight_os4")
+            # weight_os1 = pred.pop("weight_os1")
         else:
             alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
         
@@ -258,7 +263,10 @@ class MGM(nn.Module):
                     continue
                 pred[k] = v * valid_masks
 
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+            if pred_notemp is not None:
+                loss_dict = self.compute_loss_temp(pred, pred_notemp, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+            else:
+                loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
 
             # Add loss max and min attention
             if 'loss_max_atten' in pred and self.loss_atten_w > 0:
@@ -315,7 +323,89 @@ class MGM(nn.Module):
                 loss = F.mse_loss(logit * weight, target * weight, reduction='sum') / (torch.sum(weight) + 1e-8)
             else:
                 raise NotImplementedError("NotImplemented loss type {}".format(loss_type))
-       
+    
+    def compute_loss_temp(self, pred, pred_notemp, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape):
+        loss_dict = self.compute_loss(pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape)
+
+        pred_os8, pred_notemp_os8 = pred['alpha_os8'], pred_notemp['alpha_os8']
+        pred_os4, pred_notemp_os4 = pred['alpha_os4'], pred_notemp['alpha_os4']
+        pred_os1, pred_notemp_os1 = pred['alpha_os1'], pred_notemp['alpha_os1']
+        
+        # Compute diff between pred and pred_notemp
+        valid_mask = alphas.sum((2, 3), keepdim=True) > 0
+        pred_notemp_os8 = pred_notemp_os8 * valid_mask
+        pred_notemp_os4 = pred_notemp_os4 * valid_mask
+        pred_notemp_os1 = pred_notemp_os1 * valid_mask
+
+        # OS8
+        diff_os8 = torch.abs(alphas - pred_notemp_os8)
+        weight_os8 = diff_os8 > (1.0/255.0)
+
+        # OS4
+        diff_os4 = torch.abs(alphas - pred_notemp_os4) * weight_os4
+        weight_os4 = diff_os4 > (1.0/255.0)
+
+        # OS1
+        diff_os1 = torch.abs(alphas - pred_notemp_os1) * weight_os1
+        weight_os1 = diff_os1 > (1.0/255.0)
+
+        # Reg loss
+        total_loss = loss_dict['total']
+
+        if self.loss_alpha_w > 0:
+            ref_alpha_os1 = self.regression_loss(pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
+            ref_alpha_os4 = self.regression_loss(pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
+            ref_alpha_os8 = self.regression_loss(pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
+            ref_alpha_loss = (ref_alpha_os1 * 2 + ref_alpha_os4 * 1 + ref_alpha_os8 * 1) / 5.0
+            loss_dict['loss_rec_os1'] += ref_alpha_os1
+            loss_dict['loss_rec_os4'] += ref_alpha_os4
+            loss_dict['loss_rec_os8'] += ref_alpha_os8
+            loss_dict['loss_rec'] += ref_alpha_loss
+            total_loss += ref_alpha_loss * self.loss_alpha_w
+
+        # Lap loss
+        if self.loss_alpha_lap_w > 0:
+            logging.debug("Computing lap loss")
+            h, w = pred_os1.shape[-2:]
+            lap_loss_os1 = self.lap_loss(pred_os1.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os1.view(-1, 1, h, w))
+            lap_loss_os4 = self.lap_loss(pred_os4.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os4.view(-1, 1, h, w))
+            lap_loss_os8 = self.lap_loss(pred_os8.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os8.view(-1, 1, h, w))
+            lap_loss = (lap_loss_os1 * 2 + lap_loss_os4 * 1 + lap_loss_os8 * 1) / 5.0
+            loss_dict['loss_lap_os1'] += lap_loss_os1
+            loss_dict['loss_lap_os4'] += lap_loss_os4
+            loss_dict['loss_lap_os8'] += lap_loss_os8
+            loss_dict['loss_lap'] += lap_loss
+            total_loss += lap_loss * self.loss_alpha_lap_w
+        
+        if self.loss_alpha_grad_w > 0:
+            grad_loss_os1 = self.grad_loss(pred_os1, alphas, weight_os1)
+            grad_loss_os4 = self.grad_loss(pred_os4, alphas, weight_os4)
+            grad_loss_os8 = self.grad_loss(pred_os8, alphas, weight_os8)
+            grad_loss = (grad_loss_os1 * 2 + grad_loss_os4 * 1 + grad_loss_os8 * 1) / 5.0
+            loss_dict['loss_grad_os1'] += grad_loss_os1
+            loss_dict['loss_grad_os4'] += grad_loss_os4
+            loss_dict['loss_grad_os8'] += grad_loss_os8
+            loss_dict['loss_grad'] += grad_loss
+            total_loss += grad_loss * self.loss_alpha_grad_w
+
+        if self.loss_dtSSD_w > 0:
+            alpha_pred_os8 = pred_os8.reshape(*alpha_shape)
+            alpha_pred_os4 = pred_os4.reshape(*alpha_shape)
+            alpha_pred_os1 = pred_os1.reshape(*alpha_shape)
+            alphas = alphas.reshape(*alpha_shape)
+            dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, weight_os1.reshape(*alpha_shape))
+            dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, weight_os4.reshape(*alpha_shape))
+            dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, weight_os8.reshape(*alpha_shape))
+            dtSSD_loss = (dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1) / 5.0
+            loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
+            loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
+            loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8
+            loss_dict['loss_dtSSD'] = dtSSD_loss
+            total_loss += dtSSD_loss * self.loss_dtSSD_w
+
+        loss_dict['total'] = total_loss
+        return loss_dict
+
     def compute_loss(self, pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape):
         '''
         pred: dict of output from forward
@@ -323,13 +413,13 @@ class MGM(nn.Module):
         '''
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
-        if iter < self.cfg.mgm.warmup_iter or (iter < self.cfg.mgm.warmup_iter * 3 and random.randint(0,1) == 0):
-            weight_os1 = trans_gt
-            weight_os4 = trans_gt
-            # logging.debug('Using ground truth mask')
-        else:
-            alpha_pred_os4[weight_os4==0] = alpha_pred_os8[weight_os4==0]
-            alpha_pred_os1[weight_os1==0] = alpha_pred_os4[weight_os1==0]
+        # if iter < self.cfg.mgm.warmup_iter or (iter < self.cfg.mgm.warmup_iter * 3 and random.randint(0,1) == 0):
+        #     weight_os1 = trans_gt
+        #     weight_os4 = trans_gt
+        #     # logging.debug('Using ground truth mask')
+        # else:
+        # alpha_pred_os4[weight_os4==0] = alpha_pred_os8[weight_os4==0]
+        # alpha_pred_os1[weight_os1==0] = alpha_pred_os4[weight_os1==0]
             # logging.debug('Using prediction mask')
 
         loss_dict = {}
@@ -426,10 +516,10 @@ class MGM(nn.Module):
             alpha_pred_os4 = alpha_pred_os4.reshape(*alpha_shape)
             alpha_pred_os1 = alpha_pred_os1.reshape(*alpha_shape)
             alphas = alphas.reshape(*alpha_shape)
-            trans_gt = trans_gt.reshape(*alpha_shape)
-            dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, trans_gt)
-            dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, trans_gt)
-            dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, trans_gt)
+            # trans_gt = trans_gt.reshape(*alpha_shape)
+            dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, weight_os1.reshape(*alpha_shape))
+            dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, weight_os4.reshape(*alpha_shape))
+            dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, weight_os8.reshape(*alpha_shape))
             dtSSD_loss = (dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1) / 5.0
             loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
             loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
