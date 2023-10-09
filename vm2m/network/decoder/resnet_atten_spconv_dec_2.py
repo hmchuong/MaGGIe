@@ -50,7 +50,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
                  atten_dim=128, atten_block=2, 
-                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000, use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, **kwargs):
+                 atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000,
+                  use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -223,6 +224,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         fea1 = self.low_os1_module(inp)
         fea2 = self.low_os2_module(fea1)
         fea3 = self.low_os4_module(fea2)
+
+        # fea3, mem_details = self.aggregate_detail_mem(fea3, mem_details, n_i)
 
         # Combine x with fea3
         # Prepare sparse tensor of x

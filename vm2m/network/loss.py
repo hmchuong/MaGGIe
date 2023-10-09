@@ -13,8 +13,31 @@ def _loss_dtSSD(pred, gt, mask):
     diff = torch.sum(diff) / torch.sum(mask[:, 1:] + 1e-6)
     return diff
 
+def _loss_dtSSD_ohem_smooth_l1(pred, gt, mask, ratio=0.25, threshold=5e-5):
+    '''
+    ratio: maximum ratio of hard examples
+    threshold: minimum loss of hard examples
+    '''
+    b, n_f, _, h, w = pred.shape
+    dadt = torch.abs(pred[:, 1:] - pred[:, :-1])
+    dgdt = torch.abs(gt[:, 1:] - gt[:, :-1])
+    diff = F.smooth_l1_loss(dadt, dgdt, reduction='none', beta=0.5)
+    diff = diff * mask[:, 1:]
+    diff = diff.flatten()
+    
+    # Ohem
+    diff, indices = torch.sort(diff, descending=True)
+    
+    min_value = diff[int(diff.numel() * ratio)]
+    min_value = max(min_value, threshold)
+    min_value = min(min_value, diff.max())
+
+    hard_loss = diff[diff > min_value].mean()
+    return hard_loss
+
 def loss_dtSSD(pred, gt, mask):
-    loss = _loss_dtSSD(pred, gt, mask) #+ _loss_dtSSD(torch.flip(pred, dims=(1,)), torch.flip(gt, dims=(1,)), torch.flip(mask, dims=(1,)))
+    # loss = _loss_dtSSD(pred, gt, mask) #+ _loss_dtSSD(torch.flip(pred, dims=(1,)), torch.flip(gt, dims=(1,)), torch.flip(mask, dims=(1,)))
+    loss = _loss_dtSSD_ohem_smooth_l1(pred, gt, mask)
     return loss
     # b, n_f, _, h, w = pred.shape
     # import pdb; pdb.set_trace()

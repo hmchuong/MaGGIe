@@ -104,13 +104,13 @@ class MaskMatteEmbAttenHead(nn.Module):
             nn.init.xavier_uniform_(self.ori_feat_proj.weight)
 
         self.temporal_query = temporal_query
-        if 'mlp' in temporal_query:
+        if temporal_query and 'mlp' in temporal_query:
             self.mem_mlp = FFNLayer(d_model=attention_dim,
                                     dim_feedforward=attention_dim,
                                     dropout=0.0,
                                     normalize_before=False)
             
-        if 'lstm' in temporal_query:
+        if temporal_query and 'lstm' in temporal_query:
             self.query_lstm = nn.LSTM(attention_dim, attention_dim, batch_first=True)
             # self.temp_layernorm = nn.LayerNorm(attention_dim)
             for p in self.query_lstm.parameters():
@@ -345,7 +345,7 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         # TODO: Aggregate the memory here
         mem_tokens = None
-        if self.temporal_query != 'none': # and prev_tokens is not None:
+        if self.temporal_query and self.temporal_query != 'none': # and prev_tokens is not None:
             # tokens = tokens + prev_tokens
             
             if 'lstm' in self.temporal_query:
