@@ -76,7 +76,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
     data_time = AverageMeter('data_time')
     end_time = time.time()
 
-    model.eval()
+    # model.eval()
     torch.cuda.empty_cache()
     with torch.no_grad():
         mem_feat = []
@@ -136,18 +136,18 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                         prev_mem.append(mem_feat[-m_i])
                     m_i+= 1
                 
-            output = model(batch, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
+            # output = model(batch, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
 
             batch_time.update(time.time() - end_time)
             processed_frames += 1
 
             # Save memory frames
-            if use_temp and 'mem_feat' in output:
-                mem_feat.append(output['mem_feat'].unsqueeze(1))
-                if len(mem_feat) > memory_interval * n_mem:
-                    mem_feat = mem_feat[-(memory_interval * n_mem):]
-                mem_query = output['mem_queries']
-                mem_details = output['mem_details']
+            # if use_temp and 'mem_feat' in output:
+            #     mem_feat.append(output['mem_feat'].unsqueeze(1))
+            #     if len(mem_feat) > memory_interval * n_mem:
+            #         mem_feat = mem_feat[-(memory_interval * n_mem):]
+            #     mem_query = output['mem_queries']
+            #     mem_details = output['mem_details']
             # if 'embedding' in output:
             #     memory_frames.append(output['embedding'])
             #     if len(memory_frames) > memory_interval:
@@ -159,11 +159,11 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             #         memory_prev_mask = memory_prev_mask[-memory_interval:]
                 
             
-            alpha = output['refined_masks']
-            alpha = alpha #.cpu().numpy()
-            alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
-            if do_postprocessing:
-                alpha = postprocess(alpha)
+            # alpha = output['refined_masks']
+            # alpha = alpha #.cpu().numpy()
+            # alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
+            # if do_postprocessing:
+            #     alpha = postprocess(alpha)
 
             # DEBUG: Load masks for instmatt
             import glob
@@ -174,6 +174,10 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             if len(all_alphas) == 0:
                 continue
             alpha = np.stack(all_alphas, axis=0)[None, None] / 255.0
+
+            alpha[alpha <= 1.0/255.0] = 0.0
+            alpha[alpha >= 254.0/255.0] = 1.0
+            
             current_metrics = {}
             for k, v in val_error_dict.items():
                 if k in ['dtSSD', 'MESSDdt', 'dtSSD_trimap', 'MESSDdt_trimap']:

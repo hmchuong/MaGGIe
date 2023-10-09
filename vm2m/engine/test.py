@@ -167,6 +167,11 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             alpha = output['refined_masks']
             alpha = alpha #.cpu().numpy()
             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
+            
+            # Threshold some high-low values
+            alpha[alpha <= 1.0/255.0] = 0.0
+            alpha[alpha >= 254.0/255.0] = 1.0
+
             if do_postprocessing:
                 alpha = postprocess(alpha)
 
@@ -189,7 +194,12 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                 elif k.endswith("_unk"):
                     current_trimap = (trimap[:, skip:] == 1).astype('float32')
                 # current_trimap = trimap[:, skip:] if k.endswith("_trimap") else None
-                current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap)
+                # metric_time = time.time()
+                current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap, device=device)
+                # print(f"Metric {k} in {time.time() - metric_time}")
+                # if k.endswith("_bg"):
+                #     print(current_metrics[k])
+                #     import pdb; pdb.set_trace()
                 logging.debug(f"Done {k}!")
             
             prev_gt = alpha_gt[:, -1]

@@ -7,7 +7,7 @@ from .mask_attention import MLP, SelfAttentionLayer, CrossAttentionLayer, FFNLay
 
 class MaskMatteEmbAttenHead(nn.Module):
     def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_head=4, 
-                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True, temporal_query=False):
+                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True, temporal_query='none'):
         super().__init__()
         
         self.n_block = n_block
@@ -104,9 +104,15 @@ class MaskMatteEmbAttenHead(nn.Module):
             nn.init.xavier_uniform_(self.ori_feat_proj.weight)
 
         self.temporal_query = temporal_query
-        if temporal_query:
+        if 'mlp' in temporal_query:
+            self.mem_mlp = FFNLayer(d_model=attention_dim,
+                                    dim_feedforward=attention_dim,
+                                    dropout=0.0,
+                                    normalize_before=False)
+            
+        if 'lstm' in temporal_query:
             self.query_lstm = nn.LSTM(attention_dim, attention_dim, batch_first=True)
-            self.temp_layernorm = nn.LayerNorm(attention_dim)
+            # self.temp_layernorm = nn.LayerNorm(attention_dim)
             for p in self.query_lstm.parameters():
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
@@ -262,6 +268,7 @@ class MaskMatteEmbAttenHead(nn.Module):
         
         max_loss = 0
         min_loss = 0
+        mem_tokens = None
         # For each iteration:
         for i in range(self.n_block):
             
@@ -320,6 +327,11 @@ class MaskMatteEmbAttenHead(nn.Module):
                 memory_key_padding_mask=None,
                 pos=token_pos if self.use_id_pe else None, query_pos=feat_pos if self.use_id_pe else None
             )
+
+            # TODO: Add previous tokens here
+            # if self.temporal_query and prev_tokens and i == 0:
+            #     tokens = tokens + prev_tokens
+            #     mem_tokens = tokens
         
         # tokens to features attention
         # Q: n_i, n_f * b, c_atten
@@ -333,15 +345,24 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         # TODO: Aggregate the memory here
         mem_tokens = None
-        if self.temporal_query:
+        if self.temporal_query != 'none': # and prev_tokens is not None:
+            # tokens = tokens + prev_tokens
+            
+            if 'lstm' in self.temporal_query:
+                if prev_tokens is None:
+                    tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None])
+                else:
+                    tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None], prev_tokens) 
+                tokens = tokens.reshape(-1, n_f * b, self.atten_dim)
+                mem_tokens = (h_mem, c_mem)
+            elif prev_tokens is not None:
+                tokens = tokens + prev_tokens
+            # tokens = self.temp_layernorm(tokens)
 
-            if prev_tokens is None:
-                tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None])
-            else:
-                tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None], prev_tokens) 
-            tokens = tokens.reshape(-1, n_f * b, self.atten_dim)
-            tokens = self.temp_layernorm(tokens)
-            mem_tokens = (h_mem, c_mem)
+            if 'mlp' in self.temporal_query:
+                tokens = self.mem_mlp(tokens) 
+            if mem_tokens is None:
+                mem_tokens = tokens
 
 
         

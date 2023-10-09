@@ -349,6 +349,22 @@ class MGM(nn.Module):
         diff_os1 = torch.abs(alphas - pred_notemp_os1) * weight_os1
         weight_os1 = diff_os1 > (1.0/255.0)
 
+        # TODO: Check the differences between temp and no temp
+        # for b_i in range(weight_os8.shape[0]):
+        #     for ii in range(weight_os8.shape[1]):
+        #         if valid_mask[b_i, ii, 0, 0]:
+        #             print(b_i, ii)
+        #             cv2.imwrite("weight_os8.png", weight_os8[b_i, ii].cpu().numpy() * 255)
+        #             cv2.imwrite("weight_os4.png", weight_os4[b_i, ii].cpu().numpy() * 255)
+        #             cv2.imwrite("weight_os1.png", weight_os1[b_i, ii].cpu().numpy() * 255)
+        #             cv2.imwrite("pred_notemp_os8.png", pred_notemp_os8[b_i, ii].detach().cpu().numpy() * 255)
+        #             cv2.imwrite("pred_notemp_os4.png", pred_notemp_os4[b_i, ii].detach().cpu().numpy() * 255)
+        #             cv2.imwrite("pred_notemp_os1.png", pred_notemp_os1[b_i, ii].detach().cpu().numpy() * 255)
+        #             cv2.imwrite("pred_temp_os8.png", pred_os8[b_i, ii].detach().cpu().numpy() * 255)
+        #             cv2.imwrite("pred_temp_os4.png", pred_os4[b_i, ii].detach().cpu().numpy() * 255)
+        #             cv2.imwrite("pred_temp_os1.png", pred_os1[b_i, ii].detach().cpu().numpy() * 255)
+        #             import pdb; pdb.set_trace()
+
         # Reg loss
         total_loss = loss_dict['total']
 

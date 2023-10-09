@@ -574,7 +574,7 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 'shortcut': [fea4[:, i], fea5[:, i]]
             }
             ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=mem_query, mem_details=mem_details, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
-            ret_notemp = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=None, mem_details=None, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
+            # ret_notemp = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=None, mem_details=None, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
             mem_query = ret['mem_queries']
             mem_details = ret['mem_details']
 
@@ -582,29 +582,30 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 if k not in final_results:
                     final_results[k] = []
                 final_results[k] += [ret[k]]
-            for k in ret:
-                if k not in final_results_notemp:
-                    final_results_notemp[k] = []
-                final_results_notemp[k] += [ret_notemp[k]]
+            # for k in ret:
+            #     if k not in final_results_notemp:
+            #         final_results_notemp[k] = []
+            #     final_results_notemp[k] += [ret_notemp[k]]
         
         # Compute new temp loss to focus on wrong regions
         for k, v in final_results.items():
-            if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks']:
+            if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks', 'detail_mask']:
                 final_results[k] = torch.stack(v, dim=1).flatten(0, 1)
             elif k in ['mem_feat', 'mem_details', 'mem_queries']:
                 final_results[k] = v[-1]
             elif self.training:
                 final_results[k] = torch.stack(v).mean()
         
-        for k, v in final_results_notemp.items():
-            if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks']:
-                final_results_notemp[k] = torch.stack(v, dim=1).flatten(0, 1)
-            elif k in ['mem_feat', 'mem_details', 'mem_queries']:
-                final_results_notemp[k] = v[-1]
-            elif self.training:
-                final_results_notemp[k] = torch.stack(v).mean()
+        # for k, v in final_results_notemp.items():
+        #     if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks', 'detail_mask']:
+        #         final_results_notemp[k] = torch.stack(v, dim=1).flatten(0, 1)
+        #     elif k in ['mem_feat', 'mem_details', 'mem_queries']:
+        #         final_results_notemp[k] = v[-1]
+        #     elif self.training:
+        #         final_results_notemp[k] = torch.stack(v).mean()
 
-        return final_results, final_results_notemp
+        # return final_results, final_results_notemp
+        return final_results
 
 def res_shortcut_attention_spconv_decoder_22(**kwargs):
     return ResShortCut_AttenSpconv_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)
