@@ -17,6 +17,6 @@ CONFIG=configs/VideoMatte240K/ours_vhm_1008.yaml
 
 # TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --standalone --nnodes=1 --nproc_per_node=$RUNAI_NUM_OF_GPUS tools/main_ddp.py \
 #                     --config $CONFIG --precision 16 name ours_vhm_mem-query-pre_1003
-
+# export DEBUG=1
 TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nproc_per_node=$RUNAI_NUM_OF_GPUS --nnodes=$WORLD_SIZE --node_rank=$RANK --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT tools/main_ddp.py \
-                    --config $CONFIG --precision 16 name ours_vhm_mem-query-lstm+mlp_1008
+                    --config $CONFIG --precision 16 name ours_vhm_transition_1010

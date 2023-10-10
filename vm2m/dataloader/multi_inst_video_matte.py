@@ -8,10 +8,10 @@ from torch.nn import functional as F
 from torch.utils.data import Dataset
 try:
     from . import transforms as T
-    from .utils import gen_transition_temporal_gt, gen_transition_gt
+    from .utils import gen_transition_temporal_gt, gen_transition_gt, gen_diff_mask
 except ImportError:
     import transforms as T
-    from utils import gen_transition_gt, gen_transition_temporal_gt
+    from utils import gen_transition_gt, gen_transition_temporal_gt, gen_diff_mask
 
 class MultiInstVidDataset(Dataset):
     def __init__(self, root_dir, split, clip_length, overlap=2, padding_inst=10, is_train=False, short_size=576, 
@@ -166,10 +166,22 @@ class MultiInstVidDataset(Dataset):
         # Transition GT
         transition_gt = None
         if self.is_train:
+            # k_size = self.random.choice(range(2, 5))
+            # iterations = np.random.randint(5, 15)
+
             k_size = self.random.choice(range(2, 5))
-            iterations = np.random.randint(5, 15)
-            transition_gt = gen_transition_gt(alphas.flatten(0, 1)[:, None], masks.flatten(0, 1)[:, None], k_size, iterations)
-            transition_gt = transition_gt.reshape_as(alphas)
+            iterations = np.random.randint(3, 7)
+
+            diff = np.abs(alphas[1:] - alphas[:-1])
+            # transition_gt = gen_transition_gt(alphas.flatten(0, 1)[:, None], masks.flatten(0, 1)[:, None], k_size, iterations)
+            # transition_gt = transition_gt.reshape_as(alphas)
+            # import pdb; pdb.set_trace()
+            # transition_gt = gen_transition_gt(diff.flatten(0, 1)[:, None], None, k_size, iterations)
+            transition_gt = gen_diff_mask(diff.flatten(0, 1)[:, None], k_size, iterations)
+            transition_gt = transition_gt.reshape_as(diff)
+            transition_gt = torch.cat([torch.ones_like(transition_gt[:1]), transition_gt], dim=0)
+            transition_gt = transition_gt.sum(1, keepdim=True).expand_as(transition_gt)
+            transition_gt = (transition_gt > 0).type(torch.uint8)
 
         alphas = alphas * 1.0 / 255
         masks = masks * 1.0 / 255
@@ -194,14 +206,14 @@ class MultiInstVidDataset(Dataset):
         return out
 
 if __name__ == "__main__":
-    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
-    #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-    #                 max_step_size=5, random_seed=2023)
+    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
+                    crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
+                    max_step_size=5, random_seed=2023)
     # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="test", clip_length=8, overlap=2, is_train=False, short_size=576, 
     #                 random_seed=2023)
-    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VIPSeg", split="out", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
-                    crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-                    max_step_size=5, random_seed=2023, pha_dir='pha_vid_0911_from-seg', weight_mask_dir='')
+    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VIPSeg", split="out", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
+    #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
+    #                 max_step_size=5, random_seed=2023, pha_dir='pha_vid_0911_from-seg', weight_mask_dir='')
     for batch in dataset:
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
         weights = batch["weight"]
@@ -221,5 +233,6 @@ if __name__ == "__main__":
                 cv2.imwrite("debug/mask_{}_{}.png".format(idx, inst_i), mask[inst_i].numpy() * 255)
                 cv2.imwrite("debug/alpha_{}_{}.png".format(idx, inst_i), alpha[inst_i].numpy() * 255)
                 cv2.imwrite("debug/weight_{}_{}.png".format(idx, inst_i), weight[inst_i].numpy() * 255)
-                cv2.imwrite("debug/transition_{}_{}.png".format(idx, inst_i), transition[inst_i].numpy() * 120)
+                # cv2.imwrite("debug/transition_{}_{}.png".format(idx, inst_i), transition[inst_i].numpy() * 120)
+            cv2.imwrite("debug/transition_{}.png".format(idx), transition[0].numpy() * 255)
         import pdb; pdb.set_trace()

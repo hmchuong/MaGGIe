@@ -37,6 +37,7 @@ def wandb_log_image(batch, output, iter):
     log_images.append(wandb.Image(image, caption="image"))
 
     log_images.append(log_alpha(batch['alpha'], 'alpha_gt', index, inst_index))
+    log_images.append(log_alpha(batch['transition'], 'trans_gt', index, inst_index))
     # alpha_gt = (batch['alpha'][0,0,0] * 255).cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(alpha_gt, caption="alpha_gt"))
     
@@ -44,6 +45,7 @@ def wandb_log_image(batch, output, iter):
     log_images.append(log_alpha(output['refined_masks'], 'alpha_pred', index, inst_index))
     # alpha_pred = (output['refined_masks'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(alpha_pred, caption="alpha_pred"))
+    
 
     log_images.append(log_alpha(batch['mask'], 'mask_gt', index, inst_index))
     # mask_gt = (batch['mask'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
@@ -53,7 +55,12 @@ def wandb_log_image(batch, output, iter):
     #     log_images.append(log_alpha(batch['alpha_gt_os1'], 'alpha_os1_gt', index, inst_index))
     #     log_images.append(log_alpha(batch['alpha_gt_os4'], 'alpha_os4_gt', index, inst_index))
     #     log_images.append(log_alpha(batch['alpha_gt_os8'], 'alpha_os8_gt', index, inst_index))
-        
+    
+    if 'refined_masks_temp' in output:
+        log_images.append(log_alpha(output['refined_masks_temp'], 'alpha_temp_pred', index, inst_index))
+    if 'diff_pred' in output:
+        log_images.append(log_alpha(output['diff_pred'], 'diff_pred', index, inst_index))
+
     # For VM2M
     if 'trans_preds' in output:
         for i, trans_pred in enumerate(output['trans_preds']):
@@ -149,7 +156,7 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
         if cfg.model.sync_bn:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         # model.convert_syn_bn()
-        having_unused_params = True
+        having_unused_params = False
         if cfg.model.arch in ['VM2M', 'VM2M0711', 'MGM_SS']:
             having_unused_params = True
         model = torch.nn.parallel.DistributedDataParallel(
@@ -257,28 +264,48 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
             optimizer.zero_grad()
             if precision == 16:
                 with autocast():
-                    output, loss = model(batch, mem_feat={})
+                    output, loss = model(batch, mem_feat=None)
             else:
-                output, loss = model(batch, mem_feat={})
+                output, loss = model(batch, mem_feat=None)
             if loss is None:
                 logging.error("Loss is None!")
                 continue
-
+                
+            # Store to log_metrics
             loss_reduced = loss #reduce_dict(loss)
+            for k, v in loss_reduced.items():
+                if k not in log_metrics:
+                    log_metrics[k] = AverageMeter(k)
+                log_metrics[k].update(v.item())
+            
+            # Logging
+            if iter % cfg.train.log_iter == 0:
+                log_str = "Epoch: {}, Iter: {}/{}".format(epoch, iter, cfg.train.max_iter)
+                for k, v in log_metrics.items():
+                    log_str += ", {}: {:.4f}".format(k, v.avg)
+                log_str += ", lr: {:.6f}".format(lr_scheduler.get_last_lr()[0])
+                log_str += ", batch_time: {:.4f}s".format(batch_time.avg)
+                log_str += ", data_time: {:.4f}s".format(data_time.avg)
+
+                logging.info(log_str)
+            if global_rank == 0 and cfg.wandb.use and iter % cfg.train.log_iter == 0:
+                for k, v in log_metrics.items():
+                    wandb.log({"train/" + k: v.val}, commit=False)
+                wandb.log({"train/lr": lr_scheduler.get_last_lr()[0]}, commit=False)
+                wandb.log({"train/batch_time": batch_time.val}, commit=False)
+                wandb.log({"train/data_time": data_time.val}, commit=False)
+                wandb.log({"train/epoch": epoch}, commit=False)
+                wandb.log({"train/iter": iter}, commit=True)
+
+            batch_time.update(time.time() - end_time)
+
+            
 
             if precision == 16:
                 scaler.scale(loss['total']).backward()
             else:
                 loss['total'].backward()
-                
-            # Store to log_metrics
-            for k, v in loss_reduced.items():
-                if k not in log_metrics:
-                    log_metrics[k] = AverageMeter(k)
-                log_metrics[k].update(v.item())
 
-            logging.debug("Optimizing")
-            
             # Clip norm
             if precision == 16:
                 scaler.unscale_(optimizer)
@@ -294,37 +321,15 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 optimizer.step()
 
             lr_scheduler.step()
-            batch_time.update(time.time() - end_time)
-
-            if global_rank == 0:
-                # Logging
-                if iter % cfg.train.log_iter == 0:
-                    log_str = "Epoch: {}, Iter: {}/{}".format(epoch, iter, cfg.train.max_iter)
-                    for k, v in log_metrics.items():
-                        log_str += ", {}: {:.4f}".format(k, v.avg)
-                    log_str += ", lr: {:.6f}".format(lr_scheduler.get_last_lr()[0])
-                    log_str += ", batch_time: {:.4f}s".format(batch_time.avg)
-                    log_str += ", data_time: {:.4f}s".format(data_time.avg)
-
-                    logging.info(log_str)
-
-                    # log to wandb
-                    if cfg.wandb.use:
-                        for k, v in log_metrics.items():
-                            wandb.log({"train/" + k: v.val}, commit=False)
-                        wandb.log({"train/lr": lr_scheduler.get_last_lr()[0]}, commit=False)
-                        wandb.log({"train/batch_time": batch_time.val}, commit=False)
-                        wandb.log({"train/data_time": data_time.val}, commit=False)
-                        wandb.log({"train/epoch": epoch}, commit=False)
-                        wandb.log({"train/iter": iter}, commit=True)
-                
-                # Visualization
-                if iter % cfg.train.vis_iter == 0 and cfg.wandb.use:
-                    # Visualize to wandb
-                    try:
-                        wandb_log_image(batch, output, iter)
-                    except:
-                        pass
+            
+            
+            # Visualization
+            if global_rank == 0 and iter % cfg.train.vis_iter == 0 and cfg.wandb.use:
+                # Visualize to wandb
+                try:
+                    wandb_log_image(batch, output, iter)
+                except:
+                    pass
                 
             # Validation
             if iter % cfg.train.val_iter == 0 and (cfg.train.val_dist or (not cfg.train.val_dist and global_rank == 0)):

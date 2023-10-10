@@ -2,6 +2,16 @@ import cv2
 import torch
 import numpy as np
 
+def gen_diff_mask(alphas, k_size=25, iterations=1):
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
+                                        (k_size, k_size))
+    all_diff_map = []
+    for x in alphas:
+        dilated = cv2.dilate(x[0, :, :, None].numpy(), kernel, iterations=iterations)
+        all_diff_map.append(torch.from_numpy(dilated))
+    all_diff_map = torch.stack(all_diff_map).unsqueeze(1)
+    return all_diff_map
+
 def gen_transition_gt(alphas, masks=None, k_size=25, iterations=1):
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE,
                                         (k_size, k_size))

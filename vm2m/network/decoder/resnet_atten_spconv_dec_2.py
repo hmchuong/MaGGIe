@@ -9,7 +9,7 @@ from torch.nn import functional as F
 import spconv.pytorch as spconv
 from spconv.pytorch import functional as Fsp
 from vm2m.network.ops import SpectralNorm
-from vm2m.network.module.base import conv1x1
+from vm2m.network.module.base import conv1x1, conv3x3
 from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead
 from vm2m.network.module.instance_matte_head import InstanceMatteHead
 from vm2m.network.module.temporal_nn import TemporalNN
@@ -292,6 +292,12 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def update_detail_mem(self, mem_details, refined_masks):
         return mem_details
 
+    def compute_diff(self, x, prev_feat):
+        '''
+        Compute difference between current and previous frame input
+        '''
+        return None
+
     def fushion(self, pred, detail_mask):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
@@ -331,9 +337,12 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x = self.layer1(x) + fea5
         
         # Update with memory
-        x = self.aggregate_mem(x, mem_feat)
-        mem_feat = x
+        # x = self.aggregate_mem(x, mem_feat)
+        # mem_feat = x
+
         x = self.layer2(x) + fea4
+
+        
 
         # Predict OS8
         # import pdb; pdb.set_trace()
@@ -343,6 +352,11 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x_os8, x, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
                                                                             prev_tokens=mem_query if self.use_query_temp else None, 
                                                                             use_mask_atten=use_mask_atten, gt_mask=gt_masks)
+
+        # Compute differences between current and previous frame
+        diff_pred = self.compute_diff(x, mem_feat)
+        mem_feat = x
+
         # import pdb; pdb.set_trace()
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
@@ -388,15 +402,17 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         #     import pdb; pdb.set_trace()
         # Update mem_feat
         alpha_pred, _, _ = self.fushion(ret, unknown_os8)
-        mem_feat = self.update_mem(mem_feat, alpha_pred)
+        # mem_feat = self.update_mem(mem_feat, alpha_pred)
 
         # Update mem_details
         mem_details = self.update_detail_mem(mem_details, alpha_pred)
 
         ret['refined_masks'] = alpha_pred
+        # ret['refined_masks'] = x_os8
         # ret['weight_os4'] = weight_os4
         # ret['weight_os1'] = weight_os1
         ret['detail_mask'] = unknown_os8
+        ret['diff_pred'] = diff_pred
         if self.training and iter >= self.warmup_mask_atten_iter:
             ret['loss_max_atten'] = loss_max_atten
             ret['loss_min_atten'] = loss_min_atten
@@ -569,7 +585,6 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
         
         final_results = {}
         final_results_notemp = {}
-        # import pdb; pdb.set_trace()
         n_mem = 5
         for i in range(n_f):
             mid_fea = {
@@ -577,7 +592,6 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 'shortcut': [fea4[:, i], fea5[:, i]]
             }
             ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=mem_query, mem_details=mem_details, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
-            # ret_notemp = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_query=None, mem_details=None, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
             mem_query = ret['mem_queries']
             mem_details = ret['mem_details']
 
@@ -585,10 +599,6 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 if k not in final_results:
                     final_results[k] = []
                 final_results[k] += [ret[k]]
-            # for k in ret:
-            #     if k not in final_results_notemp:
-            #         final_results_notemp[k] = []
-            #     final_results_notemp[k] += [ret_notemp[k]]
         
         # Compute new temp loss to focus on wrong regions
         for k, v in final_results.items():
@@ -598,16 +608,71 @@ class ResShortCut_AttenSpconv_QueryTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 final_results[k] = v[-1]
             elif self.training:
                 final_results[k] = torch.stack(v).mean()
-        
-        # for k, v in final_results_notemp.items():
-        #     if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks', 'detail_mask']:
-        #         final_results_notemp[k] = torch.stack(v, dim=1).flatten(0, 1)
-        #     elif k in ['mem_feat', 'mem_details', 'mem_queries']:
-        #         final_results_notemp[k] = v[-1]
-        #     elif self.training:
-        #         final_results_notemp[k] = torch.stack(v).mean()
+        return final_results
 
-        # return final_results, final_results_notemp
+class ResShortCut_AttenSpconv_InconsistTemp_Dec(ResShortCut_AttenSpconv_Dec):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+        # Module to compute the difference between two inputs
+        self.diff_module = nn.Sequential(
+            SpectralNorm(conv1x1(256, 64)),
+            self._norm_layer(64),
+            nn.ReLU(inplace=True),
+            SpectralNorm(conv3x3(64, 32)),
+            self._norm_layer(32),
+            nn.ReLU(inplace=True),
+            conv3x3(32, 1)
+        )
+
+    def compute_diff(self, x, prev_feat):
+        '''
+        Compute difference between current and previous frame input
+        '''
+        if prev_feat is None:
+            return torch.ones((x.shape[0], 1, x.shape[2], x.shape[3]), device=x.device) * 99
+        inp = torch.cat([x, prev_feat], dim=1)
+        return self.diff_module(inp)
+
+    def forward(self, x, mid_fea, b, n_f, masks, mem_feat=None, mem_query=None, mem_details=None, gt_alphas=None, **kwargs):
+        # Reshape inputs
+        x = x.reshape(b, n_f, *x.shape[1:])
+        if gt_alphas is not None:
+            gt_alphas = gt_alphas.reshape(b, n_f, *gt_alphas.shape[1:])
+        image = mid_fea['image']
+        image = image.reshape(b, n_f, *image.shape[1:])
+        masks = masks.reshape(b, n_f, *masks.shape[1:])
+        fea4 = mid_fea['shortcut'][0]
+        fea4 = fea4.reshape(b, n_f, *fea4.shape[1:])
+        fea5 = mid_fea['shortcut'][1]
+        fea5 = fea5.reshape(b, n_f, *fea5.shape[1:])
+        
+        final_results = {}
+        final_results_notemp = {}
+        n_mem = 5
+        for i in range(n_f):
+            mid_fea = {
+                'image': image[:, i],
+                'shortcut': [fea4[:, i], fea5[:, i]]
+            }
+            ret = super().forward(x=x[:, i], mid_fea=mid_fea, b=b, n_f=1, masks=masks[:, i], mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details, gt_alphas=gt_alphas[:,i] if gt_alphas is not None else gt_alphas, **kwargs)
+            mem_query = ret['mem_queries']
+            mem_details = ret['mem_details']
+            mem_feat = ret['mem_feat']
+
+            for k in ret:
+                if k not in final_results:
+                    final_results[k] = []
+                final_results[k] += [ret[k]]
+        
+        # Compute new temp loss to focus on wrong regions
+        for k, v in final_results.items():
+            if k in ['alpha_os1', 'alpha_os4', 'alpha_os8', 'weight_os4', 'weight_os1', 'refined_masks', 'detail_mask', 'diff_pred']:
+                final_results[k] = torch.stack(v, dim=1).flatten(0, 1)
+            elif k in ['mem_feat', 'mem_details', 'mem_queries']:
+                final_results[k] = v[-1]
+            elif self.training:
+                final_results[k] = torch.stack(v).mean()
         return final_results
 
 def res_shortcut_attention_spconv_decoder_22(**kwargs):
@@ -618,3 +683,6 @@ def res_shortcut_attention_spconv_temp_decoder_22(**kwargs):
 
 def res_shortcut_attention_spconv_querytemp_decoder_22(**kwargs):
     return ResShortCut_AttenSpconv_QueryTemp_Dec(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)
+
+def res_shortcut_attention_spconv_inconsisttemp_decoder_22(**kwargs):
+    return ResShortCut_AttenSpconv_InconsistTemp_Dec(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)
