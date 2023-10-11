@@ -354,8 +354,14 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
                                                                             use_mask_atten=use_mask_atten, gt_mask=gt_masks)
 
         # Compute differences between current and previous frame
-        diff_pred = self.compute_diff(x, mem_feat)
+        diff_pred = self.compute_diff(x, mem_feat[0] if mem_feat is not None else None)
+        prev_pred = mem_feat[1] if mem_feat is not None else None
         mem_feat = x
+
+        # If not training, compute new os8 based on diff_pred
+        if not self.training and prev_pred is not None and diff_pred is not None:
+            x_os8 = prev_pred * (1 - diff_pred) + diff_pred * x_os8
+            prev_pred = x_os8
 
         # import pdb; pdb.set_trace()
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
@@ -374,6 +380,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             # if gt_alphas.max() == 0 and self.training:
             #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
             # print(guided_mask_os8.sum(), guided_mask_os8.max())
+
+        
 
         # unknown_os8 = self.compute_unknown(guided_mask_os8)
         unknown_os8 = compute_unknown(guided_mask_os8, k_size=30, is_train=self.training)
@@ -403,6 +411,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # Update mem_feat
         alpha_pred, _, _ = self.fushion(ret, unknown_os8)
         # mem_feat = self.update_mem(mem_feat, alpha_pred)
+        mem_feat = (mem_feat, prev_pred)
 
         # Update mem_details
         mem_details = self.update_detail_mem(mem_details, alpha_pred)

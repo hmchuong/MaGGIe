@@ -252,7 +252,6 @@ class MGM(nn.Module):
         diff_pred = pred.pop('diff_pred', None)
 
         if diff_pred is not None:
-            logging.debug(f"device {diff_pred.device}: Fuse prediction")
             out_diff_pred = F.interpolate(diff_pred, size=(h, w), mode="bilinear", align_corners=False)
             out_diff_pred = torch.sigmoid(out_diff_pred)
             out_diff_pred = out_diff_pred.view(b, n_f, 1, h, w)
@@ -262,19 +261,19 @@ class MGM(nn.Module):
             
             
             # Fuse results with diff map
-            if n_f > 1:
-                logging.debug(f"device {diff_pred.device}: Fuse temporal alpha {alpha_pred.shape}")
-                temp_alpha_pred = alpha_pred.clone()
-                prev_alpha_pred = temp_alpha_pred[:, 0]
-                for i in range(1, n_f):
-                    prev_alpha_pred = prev_alpha_pred * (1.0 - diff_mask[:, i]) + temp_alpha_pred[:, i] * diff_mask[:, i]
-                    temp_alpha_pred[:, i] = prev_alpha_pred
-                
-                # Replace refined masks in testing
-                if not self.training:
-                    output['refined_masks'] = temp_alpha_pred
-                else:
-                    output['refined_masks_temp'] = temp_alpha_pred
+            # if n_f > 1:
+            #     logging.debug(f"Fuse temporal alpha {alpha_pred.shape}")
+            #     temp_alpha_pred = alpha_pred.clone()
+            #     prev_alpha_pred = temp_alpha_pred[:, 0]
+            #     for i in range(1, n_f):
+            #         prev_alpha_pred = prev_alpha_pred * (1.0 - diff_mask[:, i]) + temp_alpha_pred[:, i] * diff_mask[:, i]
+            #         temp_alpha_pred[:, i] = prev_alpha_pred
+            #     # import pdb; pdb.set_trace()
+            #     # Replace refined masks in testing
+            #     if not self.training:
+            #         output['refined_masks'] = temp_alpha_pred
+            #     else:
+            #         output['refined_masks_temp'] = temp_alpha_pred
 
         if self.training:
             alphas = alphas.view(-1, n_i, h, w)
@@ -297,7 +296,6 @@ class MGM(nn.Module):
                 loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
 
             if diff_pred is not None:
-                logging.debug(f"device {diff_pred.device}: Compute diff loss")
                 loss_dict['loss_diff'] = self.compute_loss_diff_pred(diff_pred, trans_gt)
                 loss_dict['total'] += loss_dict['loss_diff'] * 0.25
 
@@ -585,7 +583,10 @@ class MGM(nn.Module):
         gt = gt[:, 1:2].float()
         # import pdb; pdb.set_trace()
         pred = F.interpolate(pred, size=gt.shape[-2:], mode='bilinear', align_corners=False)
-        return F.binary_cross_entropy_with_logits(pred, gt)
+        bce_loss = F.binary_cross_entropy_with_logits(pred, gt)
+        diff_dtSSD = loss_dtSSD(pred[None].sigmoid(), gt[None], torch.ones_like(gt[None]))
+
+        return bce_loss + diff_dtSSD
 
 class MGM_SingInst(MGM):
     def forward(self, batch, **kwargs):

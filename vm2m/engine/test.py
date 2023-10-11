@@ -19,9 +19,9 @@ from vm2m.utils.metric import build_metric
 def save_visualization(image_names, alpha_names, alphas, transform_info, output, save_dir):
     trans_preds = None
     inc_bin_maps = None
-    if 'trans_preds' in output:
-        trans_preds = output['trans_preds'][0]
-        trans_preds = reverse_transform_tensor(trans_preds, transform_info).sigmoid().cpu().numpy()
+    if 'diff_pred' in output:
+        trans_preds = output['diff_pred']
+        trans_preds = reverse_transform_tensor(trans_preds, transform_info).cpu().numpy() #.sigmoid().cpu().numpy()
     if 'inc_bin_maps' in output:
         inc_bin_maps = output['inc_bin_maps'][0].float()
         inc_bin_maps = reverse_transform_tensor(inc_bin_maps, transform_info).cpu().numpy() > 0.5
@@ -54,9 +54,9 @@ def save_visualization(image_names, alpha_names, alphas, transform_info, output,
 
         if trans_preds is not None:
             # Save trans pred
-            trans_pred_path = os.path.join(save_dir, 'trans_pred', video_name)
+            trans_pred_path = os.path.join(save_dir, 'diff_pred', video_name)
             os.makedirs(trans_pred_path, exist_ok=True)
-
+            # import pdb; pdb.set_trace()
             trans_pred = (trans_preds[0, idx, 0] * 255).astype('uint8')
             if not os.path.isfile(os.path.join(trans_pred_path, image_name)):
                 cv2.imwrite(os.path.join(trans_pred_path, image_name), trans_pred)
@@ -167,11 +167,20 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                 
             alpha = output['refined_masks']
             alpha = alpha #.cpu().numpy()
+
             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
+            diff_pred = None
+            if 'diff_pred' in output:
+                diff_pred = reverse_transform_tensor(output['diff_pred'], transform_info).cpu().numpy()
+                diff_pred = (diff_pred > 0.5).astype('float32')
             
             # Threshold some high-low values
             alpha[alpha <= 1.0/255.0] = 0.0
             alpha[alpha >= 254.0/255.0] = 1.0
+
+            # Merge with prev_pred
+            # if prev_pred is not None and use_temp:
+            #     alpha[:, -1] = prev_pred * (1- diff_pred[:, -1]) + alpha[:, -1] * diff_pred[:, -1]
 
             if do_postprocessing:
                 alpha = postprocess(alpha)

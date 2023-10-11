@@ -170,9 +170,12 @@ class MultiInstVidDataset(Dataset):
             # iterations = np.random.randint(5, 15)
 
             k_size = self.random.choice(range(2, 5))
-            iterations = np.random.randint(3, 7)
+            iterations = np.random.randint(1, 3)
 
-            diff = np.abs(alphas[1:] - alphas[:-1])
+            diff = (np.abs(alphas[1:].float() - alphas[:-1].float()) > 5).type(torch.uint8) * 255
+
+            # import pdb; pdb.set_trace()
+
             # transition_gt = gen_transition_gt(alphas.flatten(0, 1)[:, None], masks.flatten(0, 1)[:, None], k_size, iterations)
             # transition_gt = transition_gt.reshape_as(alphas)
             # import pdb; pdb.set_trace()

@@ -7,6 +7,7 @@ def _loss_dtSSD(pred, gt, mask):
     b, n_f, _, h, w = pred.shape
     dadt = pred[:, 1:] - pred[:, :-1]
     dgdt = gt[:, 1:] - gt[:, :-1]
+    # import pdb; pdb.set_trace()
     diff = (dadt - dgdt) ** 2
     diff = diff * mask[:, 1:]
     # import pdb; pdb.set_trace()
@@ -35,8 +36,8 @@ def _loss_dtSSD_ohem_smooth_l1(pred, gt, mask, ratio=0.5, threshold=5e-5):
     return hard_loss
 
 def loss_dtSSD(pred, gt, mask):
-    # loss = _loss_dtSSD(pred, gt, mask) #+ _loss_dtSSD(torch.flip(pred, dims=(1,)), torch.flip(gt, dims=(1,)), torch.flip(mask, dims=(1,)))
-    loss = _loss_dtSSD_ohem_smooth_l1(pred, gt, mask)
+    loss = _loss_dtSSD(pred, gt, mask) #+ _loss_dtSSD(torch.flip(pred, dims=(1,)), torch.flip(gt, dims=(1,)), torch.flip(mask, dims=(1,)))
+    # loss = _loss_dtSSD_ohem_smooth_l1(pred, gt, mask)
     return loss
     # b, n_f, _, h, w = pred.shape
     # import pdb; pdb.set_trace()
