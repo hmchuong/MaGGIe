@@ -20,7 +20,7 @@ def resizeAnyShape(x, scale_factor=None, size=None, mode='bilinear', align_corne
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def compute_unknown(masks, k_size=30, is_train=False):
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+    # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
     
     h, w = masks.shape[-2:]
     uncertain = (masks > 1.0/255.0) & (masks < 254.0/255.0)

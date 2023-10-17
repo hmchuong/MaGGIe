@@ -21,6 +21,16 @@ CONFIG.train.val_metrics = ['MAD', 'MSE', 'dtSSD']
 CONFIG.train.val_best_metric = 'MAD'
 CONFIG.train.val_dist = True
 
+
+self_train = CN({}, new_allowed=True)
+self_train.use = False
+self_train.max_cycles = 10
+self_train.epoch_per_cycle = 10
+self_train.iter_per_epoch = 500
+self_train.start_ratio = 0.05
+self_train.end_ratio = 1.0
+CONFIG.train.self_train = self_train
+
 optimizer = CN({})
 optimizer.name = 'sgd' # sgd
 optimizer.lr = 1.0e-4
@@ -141,6 +151,9 @@ dataset.train.clip_length = 8
 dataset.train.short_size = 768
 dataset.train.use_single_instance_only = True
 dataset.train.downscale_mask = False
+
+# For real dataset in self-training
+dataset.train.ss_split = 'pexels-train'
 
 # For augmentation
 dataset.train.random_state = 2023

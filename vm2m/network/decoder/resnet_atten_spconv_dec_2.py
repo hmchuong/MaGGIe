@@ -308,15 +308,23 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         weight_os4 = compute_unknown(alpha_pred, k_size=30) * detail_mask
         weight_os4 = weight_os4.type(alpha_pred.dtype)
         alpha_pred_os4 = alpha_pred_os4.type(alpha_pred.dtype)
+        weight_os4 = weight_os4 * (alpha_pred_os4 > 1.0/255).float()
         alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
+        # cv2.imwrite("test_fuse.png", alpha_pred[0,0].detach().cpu().numpy() * 255)
+        # cv2.imwrite("test_fuse_wos4.png", weight_os4[0,0].detach().cpu().numpy() * 255)
+        # cv2.imwrite("test_fuse_os8.png", alpha_pred_os8[0,0].detach().cpu().numpy() * 255)
+        # cv2.imwrite("test_fuse_os4.png", alpha_pred_os4[0,0].detach().cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
+
         # weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
         weight_os1 = compute_unknown(alpha_pred, k_size=15) * detail_mask
         weight_os1 = weight_os1.type(alpha_pred.dtype)
         alpha_pred_os1 = alpha_pred_os1.type(alpha_pred.dtype)
+        weight_os1 = weight_os1 * (alpha_pred_os1 > 1.0/255).float()
         alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
 
         return alpha_pred, weight_os4, weight_os1
-    
+
     def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
         '''
         masks: [b * n_f * n_i, 1, H, W]
@@ -354,14 +362,14 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
                                                                             use_mask_atten=use_mask_atten, gt_mask=gt_masks)
 
         # Compute differences between current and previous frame
-        diff_pred = self.compute_diff(x, mem_feat[0] if mem_feat is not None else None)
-        prev_pred = mem_feat[1] if mem_feat is not None else None
+        # diff_pred = self.compute_diff(x, mem_feat[0] if mem_feat is not None else None)
+        # prev_pred = mem_feat[1] if mem_feat is not None else None
         mem_feat = x
 
         # If not training, compute new os8 based on diff_pred
-        if not self.training and prev_pred is not None and diff_pred is not None:
-            x_os8 = prev_pred * (1 - diff_pred) + diff_pred * x_os8
-            prev_pred = x_os8
+        # if not self.training and prev_pred is not None and diff_pred is not None:
+        #     x_os8 = prev_pred * (1 - diff_pred) + diff_pred * x_os8
+        #     prev_pred = x_os8
 
         # import pdb; pdb.set_trace()
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
@@ -411,7 +419,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # Update mem_feat
         alpha_pred, _, _ = self.fushion(ret, unknown_os8)
         # mem_feat = self.update_mem(mem_feat, alpha_pred)
-        mem_feat = (mem_feat, prev_pred)
+        # mem_feat = (mem_feat, prev_pred)
 
         # Update mem_details
         mem_details = self.update_detail_mem(mem_details, alpha_pred)
@@ -421,7 +429,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # ret['weight_os4'] = weight_os4
         # ret['weight_os1'] = weight_os1
         ret['detail_mask'] = unknown_os8
-        ret['diff_pred'] = diff_pred
+        # ret['diff_pred'] = diff_pred
         if self.training and iter >= self.warmup_mask_atten_iter:
             ret['loss_max_atten'] = loss_max_atten
             ret['loss_min_atten'] = loss_min_atten
@@ -684,6 +692,204 @@ class ResShortCut_AttenSpconv_InconsistTemp_Dec(ResShortCut_AttenSpconv_Dec):
                 final_results[k] = torch.stack(v).mean()
         return final_results
 
+class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        
+        # Module to compute the difference between two inputs
+        self.diff_module = nn.Sequential(
+            SpectralNorm(conv1x1(256, 64)),
+            self._norm_layer(64),
+            nn.ReLU(inplace=True),
+            SpectralNorm(conv3x3(64, 32)),
+            self._norm_layer(32),
+            nn.ReLU(inplace=True),
+            conv3x3(32, 1)
+        )
+
+    def bidirectional_fusion(self, feat, preds):
+        '''
+        Fuse forward and backward features
+        '''
+        n_f = feat.shape[1]
+        forward_diffs = []
+        backward_diffs = []
+        forward_preds = [preds[:, 0]]
+        backward_preds = [preds[:, n_f-1]]
+        fuse_preds = []
+
+        # forward
+        for i in range(1, n_f):
+            diff = self.diff_module(torch.cat([feat[:, i-1], feat[:, i]], dim=1))
+            diff = F.interpolate(diff, scale_factor=8.0, mode='bilinear', align_corners=False)
+            forward_diffs.append(diff)
+            pred = forward_preds[-1] * (1 - diff.sigmoid()) + preds[:, i] * diff.sigmoid()
+            forward_preds.append(pred)
+        
+        forward_diffs = [torch.zeros_like(forward_diffs[0])] + forward_diffs
+        forward_diffs = torch.stack(forward_diffs, dim=1)
+
+        # backward
+        for i in range(n_f-1, 0, -1):
+            diff = self.diff_module(torch.cat([feat[:, i], feat[:, i-1]], dim=1))
+            diff = F.interpolate(diff, scale_factor=8.0, mode='bilinear', align_corners=False)
+            backward_diffs.append(diff)
+            pred = backward_preds[-1] * (1 - diff.sigmoid()) + preds[:, i-1] * diff.sigmoid()
+            backward_preds.append(pred)
+        
+        backward_preds = backward_preds[::-1]
+        backward_diffs = backward_diffs[::-1]
+        backward_diffs = backward_diffs + [torch.zeros_like(backward_diffs[-1])]
+        backward_diffs = torch.stack(backward_diffs, dim=1)
+
+        # Fuse forward and backward
+        for i in range(n_f):
+            if i == 0:
+                fuse_preds.append(forward_preds[i])
+            elif i == n_f - 1:
+                fuse_preds.append(backward_preds[i])
+            else:
+                fuse_preds.append((forward_preds[i] + backward_preds[i]) / 2)
+        fuse_preds = torch.stack(fuse_preds, dim=1)
+        return forward_diffs, backward_diffs, fuse_preds
+    
+    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, spar_gt=None, **kwargs):
+        
+        '''
+        masks: [b * n_f * n_i, 1, H, W]
+        '''
+        # Reshape masks
+        masks = masks.reshape(b, n_f, n_i, masks.shape[2], masks.shape[3])
+        valid_masks = masks.flatten(0,1).sum((2, 3), keepdim=True) > 0
+        gt_masks = None
+        if self.training:
+            gt_masks = (gt_alphas > 0).reshape(b, n_f, n_i, gt_alphas.shape[2], gt_alphas.shape[3])
+
+        # OS32 -> OS 8
+        ret = {}
+        fea4, fea5 = mid_fea['shortcut']
+        
+        image = mid_fea['image']
+        x = self.layer1(x) + fea5
+        x = self.layer2(x) + fea4
+
+        # Predict OS8
+        # use mask attention during warmup of training
+        x_os8, x, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
+                                                                            prev_tokens=mem_query if self.use_query_temp else None, 
+                                                                            use_mask_atten=False, gt_mask=gt_masks)
+
+        # Predict temporal sparsity here, forward and backward
+        feat_os8 = x.view(b, n_f, *x.shape[1:])
+        # diff_forward01 = self.diff_module(torch.cat([feat_os8[:, 0], feat_os8[:, 1]], dim=1))
+        # diff_forward12 = self.diff_module(torch.cat([feat_os8[:, 1], feat_os8[:, 2]], dim=1))
+        # diff_backward21 = self.diff_module(torch.cat([feat_os8[:, 2], feat_os8[:, 1]], dim=1))
+
+        # Upscale diff
+        # diff_forward = F.interpolate(diff_forward, scale_factor=8.0, mode='bilinear', align_corners=False)
+        # diff_backward = F.interpolate(diff_backward, scale_factor=8.0, mode='bilinear', align_corners=False)
+            
+
+        # Upsample - normalize OS8 pred
+        x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
+        x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
+        if self.training:
+            x_os8 = x_os8 * valid_masks
+        else:
+            x_os8 = x_os8[:, :n_i]
+
+        # Smooth features
+        x = self.layer3(x)
+
+        # Warm-up - Using gt_alphas instead of x_os8 for later steps
+        guided_mask_os8 = x_os8
+        if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 3 and random.random() < 0.5)):
+            guided_mask_os8 = gt_alphas.clone()
+        
+        # Compute unknown regions
+        unknown_os8 = compute_unknown(guided_mask_os8, k_size=58, is_train=False)
+
+        # Dummy code to prevent all zeros
+        if unknown_os8.max() == 0 and self.training:
+            unknown_os8[:, :, 200: 250, 200: 250] = 1.0
+
+        # Predict details
+        if unknown_os8.sum() > 0 or self.training:
+            x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details)
+            x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
+            x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])
+
+            x_os4 = F.interpolate(x_os4, scale_factor=4.0, mode='bilinear', align_corners=False)
+            x_os4 = (torch.tanh(x_os4) + 1.0) / 2.0
+            x_os1 = (torch.tanh(x_os1) + 1.0) / 2.0
+        else:
+            x_os4 = torch.zeros((b * n_f, x_os8.shape[1], image.shape[2], image.shape[3]), device=x_os8.device)
+            x_os1 = torch.zeros_like(x_os4)
+        ret['alpha_os1'] = x_os1
+        ret['alpha_os4'] = x_os4
+        ret['alpha_os8'] = x_os8
+
+        # Fusion
+        alpha_pred, _, _ = self.fushion(ret, unknown_os8)
+
+        # Fuse temporal sparsity
+        temp_alpha = alpha_pred.view(b, n_f, *alpha_pred.shape[1:])
+        # temp_forward = temp_alpha[:, 0] * (1 - diff_forward.sigmoid()) + temp_alpha[:, 1] * diff_forward.sigmoid()
+        # temp_backward = temp_alpha[:, 2] * (1 - diff_backward.sigmoid()) + temp_alpha[:, 1] * diff_backward.sigmoid()
+        # temp_fused_alpha = (temp_forward + temp_backward) / 2.0
+
+        # if not self.training:
+        #     temp_alpha[:, 1] = temp_fused_alpha
+        diff_forward, diff_backward, temp_fused_alpha = self.bidirectional_fusion(feat_os8, temp_alpha)
+
+        ret['refined_masks'] = alpha_pred
+        ret['detail_mask'] = unknown_os8
+
+        ret['temp_alpha'] = temp_fused_alpha
+        ret['diff_forward'] = diff_forward.sigmoid()
+        ret['diff_backward'] = diff_backward.sigmoid()
+
+        # Adding some losses to the results
+        if self.training:
+            ret['loss_max_atten'] = loss_max_atten
+            ret['loss_min_atten'] = loss_min_atten
+
+            # Compute loss for temporal sparsity
+            ret.update(self.loss_temporal_sparsity(diff_forward, diff_backward, spar_gt, gt_alphas))
+
+        return ret
+    
+    def loss_temporal_sparsity(self, diff_forward, diff_backward, spar_gt, alphas_gt):
+        '''
+        Compute loss for temporal sparsity
+        '''
+        loss = {}
+
+        # BCE loss
+        spar_gt = spar_gt.view(diff_forward.shape[0], -1, *spar_gt.shape[1:])
+        bce_forward_loss = F.binary_cross_entropy_with_logits(diff_forward[:, 1:, 0], spar_gt[:, 1:, 0], reduction='mean')
+        bce_backward_loss = F.binary_cross_entropy_with_logits(diff_backward[:, :-1, 0], spar_gt[:, 1:, 0], reduction='mean')
+        # bce_loss = F.binary_cross_entropy_with_logits(torch.cat([diff_forward, diff_backward], dim=1), spar_gt[:, 1:, 0], reduction='mean')
+        loss['loss_temp_bce'] = bce_forward_loss + bce_backward_loss
+
+        # Fusion loss
+        
+        alphas_gt = alphas_gt.view(diff_forward.shape[0], -1, *alphas_gt.shape[1:])
+        temp_forward = alphas_gt[:, 0] * (1 - diff_forward[:, 1].sigmoid()) + alphas_gt[:, 1] * diff_forward[:, 1].sigmoid()
+        temp_backward = alphas_gt[:, 2] * (1 - diff_backward[:, 1].sigmoid()) + alphas_gt[:, 1] * diff_backward[:, 1].sigmoid()
+        fusion_loss = F.l1_loss(temp_forward, temp_backward, reduction='none') + \
+            F.l1_loss(temp_forward, alphas_gt[:, 1], reduction='none') + \
+                F.l1_loss(temp_backward, alphas_gt[:, 1], reduction='none')
+        
+        valid_masks = alphas_gt.sum((3, 4), keepdim=True)[:, 1] > 0
+        valid_masks = valid_masks.repeat(1, 1, *fusion_loss.shape[2:])
+        fusion_loss = fusion_loss[valid_masks].mean()
+        loss['loss_temp_fusion'] = fusion_loss
+
+        loss['loss_temp'] = loss['loss_temp_bce'] * 0.25 + fusion_loss
+
+        return loss
+
 def res_shortcut_attention_spconv_decoder_22(**kwargs):
     return ResShortCut_AttenSpconv_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)
 
@@ -695,3 +901,6 @@ def res_shortcut_attention_spconv_querytemp_decoder_22(**kwargs):
 
 def res_shortcut_attention_spconv_inconsisttemp_decoder_22(**kwargs):
     return ResShortCut_AttenSpconv_InconsistTemp_Dec(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)
+
+def res_shortcut_attention_spconv_bitempspar_decoder_22(**kwargs):
+    return ResShortCut_AttenSpconv_BiTempSpar_Dec(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)

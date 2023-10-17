@@ -26,6 +26,8 @@ def wandb_log_image(batch, output, iter):
     # Log transition_preds
     log_images = []
     index = random.randint(0, batch['image'].shape[1] - 1)
+    if batch['image'].shape[1] == 3:
+        index = 1
     valid_inst_index = batch['alpha'][0,index].sum((1, 2)) > 0
     inst_index = 0
     if valid_inst_index.sum() > 0:
@@ -35,9 +37,10 @@ def wandb_log_image(batch, output, iter):
     image = image * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
     image = (image * 255).permute(1, 2, 0).numpy().astype(np.uint8)
     log_images.append(wandb.Image(image, caption="image"))
-
+    
+    log_images.append(log_alpha(batch['mask'], 'mask_gt', index, inst_index))
     log_images.append(log_alpha(batch['alpha'], 'alpha_gt', index, inst_index))
-    log_images.append(log_alpha(batch['transition'], 'trans_gt', index, inst_index))
+    
     # alpha_gt = (batch['alpha'][0,0,0] * 255).cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(alpha_gt, caption="alpha_gt"))
     
@@ -46,8 +49,11 @@ def wandb_log_image(batch, output, iter):
     # alpha_pred = (output['refined_masks'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(alpha_pred, caption="alpha_pred"))
     
-
-    log_images.append(log_alpha(batch['mask'], 'mask_gt', index, inst_index))
+    if 'temp_alpha' in output:
+        log_images.append(log_alpha(output['temp_alpha'], 'alpha_temp_pred', index, inst_index))
+    if 'refined_masks_temp' in output:
+        log_images.append(log_alpha(output['refined_masks_temp'], 'alpha_temp_pred', index, inst_index))
+    
     # mask_gt = (batch['mask'][0,0,0] * 255).detach().cpu().numpy().astype('uint8')
     # log_images.append(wandb.Image(mask_gt, caption="mask_gt"))
 
@@ -56,11 +62,16 @@ def wandb_log_image(batch, output, iter):
     #     log_images.append(log_alpha(batch['alpha_gt_os4'], 'alpha_os4_gt', index, inst_index))
     #     log_images.append(log_alpha(batch['alpha_gt_os8'], 'alpha_os8_gt', index, inst_index))
     
-    if 'refined_masks_temp' in output:
-        log_images.append(log_alpha(output['refined_masks_temp'], 'alpha_temp_pred', index, inst_index))
+    log_images.append(log_alpha(batch['transition'], 'trans_gt', index, inst_index))
     if 'diff_pred' in output:
         log_images.append(log_alpha(output['diff_pred'], 'diff_pred', index, inst_index))
-
+    
+    if 'diff_pred_forward' in output:
+        log_images.append(log_alpha(output['diff_pred_forward'], 'forward_diff_pred', index, inst_index))
+    
+    if 'diff_pred_backward' in output:
+        log_images.append(log_alpha(output['diff_pred_backward'], 'backward_diff_pred', index, inst_index))
+    
     # For VM2M
     if 'trans_preds' in output:
         for i, trans_pred in enumerate(output['trans_preds']):
@@ -96,7 +107,6 @@ def load_state_dict(model, state_dict):
         if name not in current_state_dict:
             unexpected_keys.append(name)
         elif param.shape != current_state_dict[name].shape:
-            import pdb; pdb.set_trace()
             mismatch_keys.append(name)
         else:
             current_state_dict[name].copy_(param)

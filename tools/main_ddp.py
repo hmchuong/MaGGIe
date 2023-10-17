@@ -13,7 +13,7 @@ import torch.multiprocessing as mp
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from vm2m.utils import CONFIG
-from vm2m.engine import train, test
+from vm2m.engine import train, test, train_ss
 
 def main(cfg, eval_only=False, precision=32, is_sweep=False):
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -31,7 +31,7 @@ def main(cfg, eval_only=False, precision=32, is_sweep=False):
     else:
         rootLogger.setLevel('INFO')
 
-    if local_rank == 0 or os.getenv("DEBUG", False):
+    if local_rank == 0 or os.getenv("LOG_ALL", False):
         consoleHandler = logging.StreamHandler()
         consoleHandler.setFormatter(logFormatter)
         rootLogger.addHandler(consoleHandler)
@@ -58,6 +58,8 @@ def main(cfg, eval_only=False, precision=32, is_sweep=False):
             wandb.config.update(cfg, allow_val_change=True)
     if eval_only:
         test(cfg, local_rank, True)
+    elif cfg.train.self_train.use:
+        train_ss(cfg, local_rank, True, precision, global_rank)
     else:
         train(cfg, local_rank, True, precision, global_rank)
     

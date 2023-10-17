@@ -8,3 +8,4 @@ from .dummy import Dummy
 from .instmatt import InstMatt
 from .mgm_ss import MGM_SS
 from .mgm_lap import MGM_Laplacian
+from .mgm_tempspar import MGM_TempSpar

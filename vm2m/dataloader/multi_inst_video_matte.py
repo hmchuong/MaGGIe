@@ -38,6 +38,7 @@ class MultiInstVidDataset(Dataset):
         else:
             # Else, load clip_length with overlapping
             self.load_frame_ids(overlap)
+            
         self.random = np.random.RandomState(random_seed)
 
         self.transforms = [T.Load(), 
@@ -58,13 +59,17 @@ class MultiInstVidDataset(Dataset):
             self.transforms.append(T.GenMaskFromAlpha(1.0))
         if self.is_train:
             # self.transforms.append(T.RandomBinarizedMask(self.random, bin_alpha_max_k))
-            self.transforms.append(T.ChooseOne(self.random, [
-                T.ModifyMaskBoundary(self.random, modify_mask_p),
-                T.Compose([
+            # self.transforms.append(T.ChooseOne(self.random, [
+            #     T.ModifyMaskBoundary(self.random, modify_mask_p),
+            #     T.Compose([
+            #         T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+            #         T.DownUpMask(self.random, 0.125, downscale_mask_p)
+            #     ])
+            # ]))
+            self.transforms.append(T.Compose([
                     T.RandomBinarizedMask(self.random, bin_alpha_max_k),
                     T.DownUpMask(self.random, 0.125, downscale_mask_p)
-                ])
-            ]))
+                ]))
         else:
             if self.mask_dir_name == '':
                 self.transforms += [T.DownUpMask(self.random, 0.125, 1.0)]
@@ -126,6 +131,22 @@ class MultiInstVidDataset(Dataset):
                 alpha_path = alpha_path[:self.padding_inst]
             alpha_paths.extend(alpha_path)
 
+        # In training, drop randomly an instance:
+        if self.is_train and self.random.rand() < 0.2:
+            n_inst = len(alpha_paths) // len(frame_paths)
+            if n_inst > 1:
+                drop_inst_id = self.random.randint(0, n_inst)
+                new_alpha_paths = []
+                for j in range(len(alpha_paths)):
+                    if j % n_inst != drop_inst_id:
+                        new_alpha_paths.append(alpha_paths[j])
+                alpha_paths = new_alpha_paths
+
+        # import pdb; pdb.set_trace()
+        # TODO: Debug the mask guidance
+        # if len(alpha_paths) // len(frame_paths) == 3:
+        #     alpha_paths = alpha_paths[2::3]
+
         mask_paths = None
         if self.mask_dir_name != '' and not self.is_train:
             mask_paths = [x.replace(f'/{self.pha_dir}/', '/' + self.mask_dir_name + '/') for x in alpha_paths]
@@ -170,7 +191,7 @@ class MultiInstVidDataset(Dataset):
             # iterations = np.random.randint(5, 15)
 
             k_size = self.random.choice(range(2, 5))
-            iterations = np.random.randint(1, 3)
+            iterations = np.random.randint(3, 7)
 
             diff = (np.abs(alphas[1:].float() - alphas[:-1].float()) > 5).type(torch.uint8) * 255
 

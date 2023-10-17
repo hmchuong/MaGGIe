@@ -69,6 +69,176 @@ def save_visualization(image_names, alpha_names, alphas, transform_info, output,
             if not os.path.isfile(os.path.join(inc_bin_path, image_name)):
                 cv2.imwrite(os.path.join(inc_bin_path, image_name), inc_bin_pred)
 
+# @torch.no_grad()
+# def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
+    
+#     batch_time = AverageMeter('batch_time')
+#     data_time = AverageMeter('data_time')
+#     end_time = time.time()
+
+#     model.eval()
+#     torch.cuda.empty_cache()
+#     with torch.no_grad():
+#         mem_feat = None
+#         mem_query = None
+#         mem_details = None
+#         memory_interval = 5
+#         n_mem = 1
+#         video_name = None
+
+#         prev_pred = None
+#         prev_gt = None
+#         prev_trimap = None
+
+#         for i, batch in enumerate(val_loader):
+
+#             data_time.update(time.time() - end_time)
+
+#             image_names = batch.pop('image_names')
+#             alpha_names = None
+#             if 'alpha_names' in batch:
+#                 alpha_names = batch.pop('alpha_names')
+            
+#             transform_info = batch.pop('transform_info')
+#             trimap = batch.pop('trimap').numpy()
+#             alpha_gt = batch.pop('alpha').numpy()
+#             skip = batch.pop('skip').numpy()[0]
+            
+#             # Reset if new video
+#             if image_names[0][0].split('/')[-2] != video_name:
+
+#                 video_name = image_names[0][0].split('/')[-2]
+#                 mem_feat = None
+#                 mem_query = None
+#                 mem_details = None
+#                 processed_frames = 0
+#                 prev_gt = None
+#                 prev_pred = None
+#                 prev_trimap = None
+
+#             batch = {k: v.to(device) for k, v in batch.items()}
+
+#             end_time = time.time()
+#             if batch['mask'].sum() == 0:
+#                 continue
+#             # Adding prev_feat
+#             # prev_feat = {}
+#             # prev_mem = {}
+#             # if len(mem_feat) >= 1 and use_temp:
+#             #     prev_mem.append(mem_feat[-1])
+#             #     m_i = 2
+#             #     while len(mem_feat) - m_i >= 0:
+#             #         if m_i % memory_interval == 0:
+#             #             prev_mem.append(mem_feat[-m_i])
+#             #         m_i+= 1
+#             # if use_temp:
+#             #     for key in ['mem_os16', 'mem_os8']:
+#             #         if not key in mem_feat: continue
+#             #         prev_mem[key] = [mem_feat[key][-1]]
+#             #         m_i = 2
+#             #         while len(mem_feat[key]) - m_i >= 0:
+#             #             if m_i % memory_interval == 0:
+#             #                 prev_mem[key].append(mem_feat[key][-m_i])
+#             #             m_i+= 1
+#             #         prev_mem[key] = torch.stack(prev_mem[key], dim=1)
+#             # import pdb; pdb.set_trace()
+#             # output = model(batch, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
+#             # output = model(batch, mem_feat=prev_mem)
+#             output = model(batch, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details)
+
+#             batch_time.update(time.time() - end_time)
+#             processed_frames += 1
+
+#             # Save memory frames
+#             if use_temp and 'mem_queries' in output:
+#                 # mem_feat.append(output['mem_feat'].unsqueeze(1))
+#                 # if len(mem_feat) > memory_interval * n_mem:
+#                 #     mem_feat = mem_feat[-(memory_interval * n_mem):]
+#                 mem_query = output['mem_queries']
+#                 mem_details = output['mem_details']
+#                 mem_feat = output['mem_feat']
+#             # if use_temp:
+#                 # for key in ['mem_os16', 'mem_os8']:
+#                 #     if not key in output: continue
+#                 #     mem_feat[key] = mem_feat.get(key, []) + [output[key]]
+#                 #     if len(mem_feat[key]) > memory_interval * n_mem:
+#                 #         mem_feat[key] = mem_feat[key][-memory_interval * n_mem:]
+#             # import pdb; pdb.set_trace()
+                
+#             alpha = output['refined_masks']
+#             alpha = alpha #.cpu().numpy()
+
+#             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
+#             diff_pred = None
+#             if 'diff_pred' in output:
+#                 diff_pred = reverse_transform_tensor(output['diff_pred'], transform_info).cpu().numpy()
+#                 diff_pred = (diff_pred > 0.5).astype('float32')
+            
+#             # Threshold some high-low values
+#             alpha[alpha <= 1.0/255.0] = 0.0
+#             alpha[alpha >= 254.0/255.0] = 1.0
+
+#             # Merge with prev_pred
+#             if prev_pred is not None and use_temp:
+#                 # TODO: test the refined diff_pred
+#                 # temp_alpha = prev_pred * (1- diff_pred[:, -1]) + alpha[:, -1] * diff_pred[:, -1]
+#                 diff_pred[:, -1] = ((diff_pred[:, -1] + ((prev_pred < 254.0/255.0) & (prev_pred > 1.0/255.0))) > 0).astype('float32')
+#                 refined_temp_alpha = prev_pred * (1- diff_pred[:, -1]) + alpha[:, -1] * diff_pred[:, -1]
+#                 # cv2.imwrite("temp_alpha.png", (temp_alpha[0, 0] * 255).astype('uint8'))
+#                 # cv2.imwrite("temp_alpha_new.png", (refined_temp_alpha[0, 0] * 255).astype('uint8'))
+#                 # import pdb; pdb.set_trace()
+#                 alpha[:, -1] = refined_temp_alpha #prev_pred * (1- diff_pred[:, -1]) + alpha[:, -1] * diff_pred[:, -1]
+
+#             if do_postprocessing:
+#                 alpha = postprocess(alpha)
+
+#             current_metrics = {}
+#             for k, v in val_error_dict.items():
+#                 if k in ['dtSSD', 'MESSDdt', 'dtSSD_trimap', 'MESSDdt_trimap'] and use_temp:
+#                     if prev_gt is None:
+#                         continue
+#                     current_trimap = np.stack([prev_trimap, trimap[:, -1]], axis=1) if k.endswith("_trimap") else None
+#                     current_pred = np.stack([prev_pred, alpha[:, -1]], axis=1)
+#                     current_gt = np.stack([prev_gt, alpha_gt[:, -1]], axis=1)
+#                     current_metrics[k] = v.update(current_pred, current_gt, trimap=current_trimap)
+#                     continue
+#                 logging.debug(f"updating {k}...")
+#                 current_trimap = None
+#                 if k.endswith("_fg"):
+#                     current_trimap = (trimap[:, skip:] == 2).astype('float32')
+#                 elif k.endswith("_bg"):
+#                     current_trimap = (trimap[:, skip:] == 0).astype('float32')
+#                 elif k.endswith("_unk"):
+#                     current_trimap = (trimap[:, skip:] == 1).astype('float32')
+#                 # current_trimap = trimap[:, skip:] if k.endswith("_trimap") else None
+#                 # metric_time = time.time()
+#                 current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap, device=device)
+#                 # print(f"Metric {k} in {time.time() - metric_time}")
+#                 # if k.endswith("_bg"):
+#                 #     print(current_metrics[k])
+#                 #     import pdb; pdb.set_trace()
+#                 logging.debug(f"Done {k}!")
+            
+#             prev_gt = alpha_gt[:, -1]
+#             prev_pred = alpha[:, -1]
+#             prev_trimap = trimap[:, -1]
+
+#             # Logging
+#             if i % log_iter == 0:
+#                 log_str = "Validation: Iter {}/{}: ".format(i, len(val_loader))
+#                 for k, v in current_metrics.items():
+#                     log_str += "{} - {:.4f}, ".format(k, v)
+#                 memory = torch.cuda.max_memory_allocated() / 1024.0 / 1024.0
+#                 log_str += 'batch_time: {:.4f}, data_time: {:.4f}, memory: {:.4f} MB'.format(batch_time.avg, data_time.avg, memory)
+#                 logging.info(log_str)
+            
+#             # Visualization
+#             if callback:
+#                 callback(image_names, alpha_names, alpha, transform_info, output)
+
+#             end_time = time.time()
+#     return batch_time.avg, data_time.avg
+
 @torch.no_grad()
 def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
     
@@ -79,16 +249,13 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
     model.eval()
     torch.cuda.empty_cache()
     with torch.no_grad():
-        mem_feat = None
-        mem_query = None
-        mem_details = None
-        memory_interval = 5
-        n_mem = 1
         video_name = None
 
-        prev_pred = None
-        prev_gt = None
-        prev_trimap = None
+        all_preds = []
+        all_gts = []
+        all_trimap = []
+        all_input_masks = []
+        all_image_names = []
 
         for i, batch in enumerate(val_loader):
 
@@ -102,132 +269,106 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             transform_info = batch.pop('transform_info')
             trimap = batch.pop('trimap').numpy()
             alpha_gt = batch.pop('alpha').numpy()
-            skip = batch.pop('skip').numpy()[0]
             
             # Reset if new video
             if image_names[0][0].split('/')[-2] != video_name:
 
+                if len(all_preds) > 0:
+                    current_metrics = {}
+
+                    if callback:
+                        callback(all_image_names, None, all_preds[None], transform_info, {})
+                    # Compute the metrics
+                    for k, v in val_error_dict.items():
+                        current_trimap = None
+                        if k.endswith("_fg"):
+                            current_trimap = (all_trimap[None] == 2).astype('float32')
+                        elif k.endswith("_bg"):
+                            current_trimap = (all_trimap[None] == 0).astype('float32')
+                        elif k.endswith("_unk"):
+                            current_trimap = (all_trimap[None] == 1).astype('float32')
+                        current_metrics[k] = v.update(all_preds[None], all_gts[None], trimap=current_trimap, device=device)
+                    
+                    log_str = f"{video_name}: "
+                    for k, v in current_metrics.items():
+                        log_str += "{} - {:.4f}, ".format(k, v)
+                    logging.info(log_str)
+
+                    # Free the saving frames
+                    all_preds = []
+                    all_gts = []
+                    all_trimap = []
+                    all_image_names = []
+                
                 video_name = image_names[0][0].split('/')[-2]
-                mem_feat = None
-                mem_query = None
-                mem_details = None
-                processed_frames = 0
-                prev_gt = None
-                prev_pred = None
-                prev_trimap = None
 
             batch = {k: v.to(device) for k, v in batch.items()}
 
             end_time = time.time()
             if batch['mask'].sum() == 0:
                 continue
-            # Adding prev_feat
-            # prev_feat = {}
-            # prev_mem = {}
-            # if len(mem_feat) >= 1 and use_temp:
-            #     prev_mem.append(mem_feat[-1])
-            #     m_i = 2
-            #     while len(mem_feat) - m_i >= 0:
-            #         if m_i % memory_interval == 0:
-            #             prev_mem.append(mem_feat[-m_i])
-            #         m_i+= 1
-            # if use_temp:
-            #     for key in ['mem_os16', 'mem_os8']:
-            #         if not key in mem_feat: continue
-            #         prev_mem[key] = [mem_feat[key][-1]]
-            #         m_i = 2
-            #         while len(mem_feat[key]) - m_i >= 0:
-            #             if m_i % memory_interval == 0:
-            #                 prev_mem[key].append(mem_feat[key][-m_i])
-            #             m_i+= 1
-            #         prev_mem[key] = torch.stack(prev_mem[key], dim=1)
-            # import pdb; pdb.set_trace()
-            # output = model(batch, mem_feat=prev_mem, mem_query=mem_query, mem_details=mem_details)
-            # output = model(batch, mem_feat=prev_mem)
-            output = model(batch, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details)
+            output = model(batch, mem_feat=None, mem_query=None, mem_details=None)
 
             batch_time.update(time.time() - end_time)
-            processed_frames += 1
-
-            # Save memory frames
-            if use_temp and 'mem_queries' in output:
-                # mem_feat.append(output['mem_feat'].unsqueeze(1))
-                # if len(mem_feat) > memory_interval * n_mem:
-                #     mem_feat = mem_feat[-(memory_interval * n_mem):]
-                mem_query = output['mem_queries']
-                mem_details = output['mem_details']
-                mem_feat = output['mem_feat']
-            # if use_temp:
-                # for key in ['mem_os16', 'mem_os8']:
-                #     if not key in output: continue
-                #     mem_feat[key] = mem_feat.get(key, []) + [output[key]]
-                #     if len(mem_feat[key]) > memory_interval * n_mem:
-                #         mem_feat[key] = mem_feat[key][-memory_interval * n_mem:]
-            # import pdb; pdb.set_trace()
                 
             alpha = output['refined_masks']
-            alpha = alpha #.cpu().numpy()
-
             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
-            diff_pred = None
-            if 'diff_pred' in output:
-                diff_pred = reverse_transform_tensor(output['diff_pred'], transform_info).cpu().numpy()
-                diff_pred = (diff_pred > 0.5).astype('float32')
-            
+
             # Threshold some high-low values
             alpha[alpha <= 1.0/255.0] = 0.0
             alpha[alpha >= 254.0/255.0] = 1.0
 
-            # Merge with prev_pred
-            # if prev_pred is not None and use_temp:
-            #     alpha[:, -1] = prev_pred * (1- diff_pred[:, -1]) + alpha[:, -1] * diff_pred[:, -1]
+            # Fuse results
+            # If no previous results, use the two first results
+            if len(all_preds) == 0:
+                all_preds = alpha[0]
+                all_gts = alpha_gt[0]
+                all_trimap = trimap[0]
+                # import pdb; pdb.set_trace()
+                # all_input_masks = batch['mask'].cpu().numpy()[0]
+                all_image_names = image_names
+                   
+            else:
+                # Else use the previous result and update the middle one
+                all_gts = np.concatenate([all_gts, alpha_gt[0, 2:]], axis=0)
+                all_trimap = np.concatenate([all_trimap, trimap[0, 2:]], axis=0)
+                all_image_names += image_names[2:]
+                
+                # Fuse
+                if 'diff_pred_forward' in output:
+                    prev_pred = all_preds[-2]
+                    next_pred = alpha[0, -1]
+                    diff_forward = output['diff_pred_forward']
+                    diff_backward = output['diff_pred_backward']
+                    diff_forward = reverse_transform_tensor(diff_forward, transform_info).cpu().numpy()
+                    diff_backward = reverse_transform_tensor(diff_backward, transform_info).cpu().numpy()
+                
+                    # Hard fusion
+                    diff_forward = (diff_forward > 0.5).astype('float32')
+                    diff_backward = (diff_backward > 0.5).astype('float32')
 
-            if do_postprocessing:
-                alpha = postprocess(alpha)
+                    pred_forward01 = prev_pred * (1 - diff_forward[0, 1]) + alpha[0, 1] * diff_forward[0, 1]
+                    pred_backward21 = next_pred * (1 - diff_backward[0, 1]) + alpha[0, 1] * diff_backward[0, 1]
+                    fused_pred = (pred_forward01 + pred_backward21) / 2.0
 
-            current_metrics = {}
-            for k, v in val_error_dict.items():
-                if k in ['dtSSD', 'MESSDdt', 'dtSSD_trimap', 'MESSDdt_trimap'] and use_temp:
-                    if prev_gt is None:
-                        continue
-                    current_trimap = np.stack([prev_trimap, trimap[:, -1]], axis=1) if k.endswith("_trimap") else None
-                    current_pred = np.stack([prev_pred, alpha[:, -1]], axis=1)
-                    current_gt = np.stack([prev_gt, alpha_gt[:, -1]], axis=1)
-                    current_metrics[k] = v.update(current_pred, current_gt, trimap=current_trimap)
-                    continue
-                logging.debug(f"updating {k}...")
-                current_trimap = None
-                if k.endswith("_fg"):
-                    current_trimap = (trimap[:, skip:] == 2).astype('float32')
-                elif k.endswith("_bg"):
-                    current_trimap = (trimap[:, skip:] == 0).astype('float32')
-                elif k.endswith("_unk"):
-                    current_trimap = (trimap[:, skip:] == 1).astype('float32')
-                # current_trimap = trimap[:, skip:] if k.endswith("_trimap") else None
-                # metric_time = time.time()
-                current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap, device=device)
-                # print(f"Metric {k} in {time.time() - metric_time}")
-                # if k.endswith("_bg"):
-                #     print(current_metrics[k])
-                #     import pdb; pdb.set_trace()
-                logging.debug(f"Done {k}!")
-            
-            prev_gt = alpha_gt[:, -1]
-            prev_pred = alpha[:, -1]
-            prev_trimap = trimap[:, -1]
+                    # Ignore large difference in fusion
+                    # diff = np.abs(fused_pred - alpha[0, 1])
+                    # fused_pred[diff > 0.05] = alpha[0, 1][diff > 0.05]
+
+                    # For last frame
+                    pred_forward12 = fused_pred * (1 - diff_forward[0, 2]) + alpha[0, 2] * diff_forward[0, 2]
+
+                    all_preds[-1] = fused_pred
+                    all_preds = np.concatenate([all_preds, pred_forward12[None]], axis=0)
+                else:
+                    all_preds = np.concatenate([all_preds, alpha[0, 2:]], axis=0)
 
             # Logging
             if i % log_iter == 0:
                 log_str = "Validation: Iter {}/{}: ".format(i, len(val_loader))
-                for k, v in current_metrics.items():
-                    log_str += "{} - {:.4f}, ".format(k, v)
                 memory = torch.cuda.max_memory_allocated() / 1024.0 / 1024.0
                 log_str += 'batch_time: {:.4f}, data_time: {:.4f}, memory: {:.4f} MB'.format(batch_time.avg, data_time.avg, memory)
                 logging.info(log_str)
-            
-            # Visualization
-            if callback:
-                callback(image_names, alpha_names, alpha, transform_info, output)
 
             end_time = time.time()
     return batch_time.avg, data_time.avg

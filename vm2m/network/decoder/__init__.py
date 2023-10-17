@@ -10,7 +10,8 @@ from .resnet_idembed_dec import res_shortcut_id_embed_decoder_22
 from .resnet_atten_spconv_dec_2 import res_shortcut_attention_spconv_decoder_22, \
     res_shortcut_attention_spconv_temp_decoder_22, \
         res_shortcut_attention_spconv_querytemp_decoder_22, \
-            res_shortcut_attention_spconv_inconsisttemp_decoder_22
+            res_shortcut_attention_spconv_inconsisttemp_decoder_22, \
+                res_shortcut_attention_spconv_bitempspar_decoder_22
 # from .resnet_atten_spconv_mem_dec import res_shortcut_attention_spconv_decoder_22, res_shortcut_attention_spconv_temp_decoder_22
 from .resnet_atten_spconv_lap_dec import res_shortcut_attention_spconv_lap_decoder_22
 from .shm import shm

@@ -214,7 +214,7 @@ class MGM(nn.Module):
         
         pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, 
                             masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, 
-                            gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details)
+                            gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details, spar_gt=trans_gt)
         pred_notemp = None
         if isinstance(pred, tuple):
             pred, pred_notemp = pred
@@ -261,19 +261,19 @@ class MGM(nn.Module):
             
             
             # Fuse results with diff map
-            # if n_f > 1:
-            #     logging.debug(f"Fuse temporal alpha {alpha_pred.shape}")
-            #     temp_alpha_pred = alpha_pred.clone()
-            #     prev_alpha_pred = temp_alpha_pred[:, 0]
-            #     for i in range(1, n_f):
-            #         prev_alpha_pred = prev_alpha_pred * (1.0 - diff_mask[:, i]) + temp_alpha_pred[:, i] * diff_mask[:, i]
-            #         temp_alpha_pred[:, i] = prev_alpha_pred
-            #     # import pdb; pdb.set_trace()
-            #     # Replace refined masks in testing
-            #     if not self.training:
-            #         output['refined_masks'] = temp_alpha_pred
-            #     else:
-            #         output['refined_masks_temp'] = temp_alpha_pred
+            if n_f > 1:
+                logging.debug(f"Fuse temporal alpha {alpha_pred.shape}")
+                temp_alpha_pred = alpha_pred.clone()
+                prev_alpha_pred = temp_alpha_pred[:, 0]
+                for i in range(1, n_f):
+                    prev_alpha_pred = prev_alpha_pred * (1.0 - diff_mask[:, i]) + temp_alpha_pred[:, i] * diff_mask[:, i]
+                    temp_alpha_pred[:, i] = prev_alpha_pred
+                # import pdb; pdb.set_trace()
+                # Replace refined masks in testing
+                if not self.training:
+                    output['refined_masks'] = temp_alpha_pred
+                else:
+                    output['refined_masks_temp'] = temp_alpha_pred
 
         if self.training:
             alphas = alphas.view(-1, n_i, h, w)
@@ -355,6 +355,19 @@ class MGM(nn.Module):
             else:
                 raise NotImplementedError("NotImplemented loss type {}".format(loss_type))
     
+    @staticmethod
+    def custom_regression_loss(logit, target, loss_type='l1', weight=None):
+        if weight is None:
+            weight = torch.ones_like(logit)
+        
+        alpha = 0.05
+        gamma = 5
+        diff = F.l1_loss(logit * weight, target * weight, reduction='none')
+        y1 = gamma * diff
+        y2 = alpha * gamma + (diff - alpha)**2
+        loss = torch.where(diff <= alpha, y1, y2)
+        return loss.sum() / (torch.sum(weight) + 1e-8)
+
     def compute_loss_temp(self, pred, pred_notemp, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape):
         loss_dict = self.compute_loss(pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape)
 
@@ -479,6 +492,11 @@ class MGM(nn.Module):
             weight_os4 = weight_os4 * correct_weights
             weight_os8 = weight_os8 * correct_weights
 
+        unknown_gt = (alphas < 254.0/255.0) & (alphas > 1.0/255.0)
+        unknown_pred_os8 = (alpha_pred_os8 < 254.0/255.0) & (alpha_pred_os8 > 1.0/255.0)
+        weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype)
+        # import pdb; pdb.set_trace()
+
         # Add padding to alphas and trans_gt
         n_i = alphas.shape[1]
         if self.num_masks - n_i > 0:
@@ -486,13 +504,16 @@ class MGM(nn.Module):
             alphas = torch.cat([alphas, padding], dim=1)
             trans_gt = torch.cat([trans_gt, padding], dim=1)
 
+       
         # Reg loss
         total_loss = 0
         if self.loss_alpha_w > 0:
             logging.debug("Computing alpha loss")
-            ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
-            ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
-            ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
+            ref_alpha_os1 = self.custom_regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
+            ref_alpha_os4 = self.custom_regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
+            ref_alpha_os8 = self.custom_regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
+            # import pdb; pdb.set_trace()
+
             ref_alpha_loss = (ref_alpha_os1 * 2 + ref_alpha_os4 * 1 + ref_alpha_os8 * 1) / 5.0
             loss_dict['loss_rec_os1'] = ref_alpha_os1
             loss_dict['loss_rec_os4'] = ref_alpha_os4

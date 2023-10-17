@@ -398,8 +398,16 @@ class RandomBinarizedMask(RandomBinarizeAlpha):
         alphas: (T, H, W)
         masks: (T, H, W) from alphas
         '''
+        frames = input_dict["frames"]
         masks = input_dict["masks"]
-        input_dict["masks"] = np.stack([self._gen_single_mask(alpha) for alpha in masks], axis=0)
+        
+        n_inst = len(masks) // len(frames) 
+        # The same mask augmentation for the same instance
+        for i in range(n_inst):
+            alpha = masks[i::n_inst].transpose(1, 2, 0)
+            masks[i::n_inst] = self._gen_single_mask(alpha).transpose(2, 0, 1)
+        
+        # input_dict["masks"] = np.stack([self._gen_single_mask(alpha) for alpha in masks], axis=0)
         return input_dict
 
 class GenMaskFromAlpha(object):

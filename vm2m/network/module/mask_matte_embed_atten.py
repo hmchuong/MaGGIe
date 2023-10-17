@@ -269,6 +269,9 @@ class MaskMatteEmbAttenHead(nn.Module):
         max_loss = 0
         min_loss = 0
         mem_tokens = None
+
+        # import pdb; pdb.set_trace()
+
         # For each iteration:
         for i in range(self.n_block):
             
