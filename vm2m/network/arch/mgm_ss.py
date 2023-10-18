@@ -195,6 +195,7 @@ class MGM_SS(MGM_TempSpar):
         
         
         iter = batch["iter"]
+        valid_masks = batch['mask'].sum((-1, -2), keepdim=True) > 0
         
         # Apply motion blur to the input without gt and generate additional input
         motion_kernel = self.motion_aug.get_params()["kernel"]
@@ -219,14 +220,18 @@ class MGM_SS(MGM_TempSpar):
         # Compute motion consistency loss for the input without gt
         # weight = alpha_pred_warp['alpha_os1'].sum((-1, -2), keepdim=True)
         # import pdb; pdb.set_trace()
+        weight = torch.ones_like(alpha_pred_warp['alpha_os1'])
+        weight = weight * valid_masks
+        
+
         loss_dict = {}
-        loss_dict['loss_mo_os1'] = self.custom_regression_loss(alpha_pred_warp['alpha_os1'], alpha_pred['alpha_os1']) # F.l1_loss(alpha_pred_warp['alpha_os1'], alpha_pred['alpha_os1'], reduction='sum') / weight.sum()
+        loss_dict['loss_mo_os1'] = self.custom_regression_loss(alpha_pred_warp['alpha_os1'].detach(), alpha_pred['alpha_os1'], weight=weight) # F.l1_loss(alpha_pred_warp['alpha_os1'], alpha_pred['alpha_os1'], reduction='sum') / weight.sum()
         # weight = alpha_pred_warp['alpha_os4'].sum((-1, -2), keepdim=True)
         # loss_dict['loss_mo_os4'] = F.l1_loss(alpha_pred_warp['alpha_os4'], alpha_pred['alpha_os4'], reduction='sum') / weight.sum()
-        loss_dict['loss_mo_os4'] = self.custom_regression_loss(alpha_pred_warp['alpha_os4'], alpha_pred['alpha_os4'])
+        loss_dict['loss_mo_os4'] = self.custom_regression_loss(alpha_pred_warp['alpha_os4'].detach(), alpha_pred['alpha_os4'], weight=weight)
         # weight = alpha_pred_warp['alpha_os8'].sum((-1, -2), keepdim=True)
         # loss_dict['loss_mo_os8'] = F.l1_loss(alpha_pred_warp['alpha_os8'], alpha_pred['alpha_os8'], reduction='sum') / weight.sum()
-        loss_dict['loss_mo_os8'] = self.custom_regression_loss(alpha_pred_warp['alpha_os8'], alpha_pred['alpha_os8'])
+        loss_dict['loss_mo_os8'] = self.custom_regression_loss(alpha_pred_warp['alpha_os8'].detach(), alpha_pred['alpha_os8'], weight=weight)
         loss_dict['loss_mo'] = (loss_dict['loss_mo_os1'] * 2 + loss_dict['loss_mo_os4'] + loss_dict['loss_mo_os8']) / 5.0
         loss_dict['total'] = loss_dict['loss_mo']
 

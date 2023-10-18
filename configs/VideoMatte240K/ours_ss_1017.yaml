@@ -141,10 +141,10 @@ train:
   self_train:
     use: true
     max_cycles: 20
-    epoch_per_cycle: 20
+    epoch_per_cycle: 5
     iter_per_epoch: 150
-    start_ratio: 0.05
-    end_ratio: 1.0
+    start_ratio: 0.0
+    end_ratio: 0.5
   num_workers: 8
   optimizer:
     betas:

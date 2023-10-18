@@ -180,15 +180,25 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 train_syn_sampler._iterator._reset(train_syn_sampler)
                 train_real_sampler._iterator._reset(train_real_sampler)
             
+            train_real_iterator = iter(train_real_loader)
+            train_syn_iterator = iter(train_syn_loader)
             for step in range(n_iters):
                 # Train here
                 global_step = i_cycle * n_epochs * n_iters + epoch * n_iters + step
                 is_real = real_masks[step]
                 batch = None
                 if is_real:
-                    batch = next(iter(train_real_loader))
+                    try:
+                        batch = next(train_real_iterator)
+                    except StopIteration:
+                        train_real_iterator = iter(train_real_loader)
+                        batch = next(train_real_iterator)
                 else:
-                    batch = next(iter(train_syn_loader))
+                    try:
+                        batch = next(train_syn_iterator)
+                    except StopIteration:
+                        train_syn_iterator = iter(train_syn_loader)
+                        batch = next(train_syn_iterator)
                 
                 data_time.update(time.time() - end_time)
 
