@@ -239,6 +239,13 @@ def save_visualization(image_names, alpha_names, alphas, transform_info, output,
 #             end_time = time.time()
 #     return batch_time.avg, data_time.avg
 
+kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)) 
+def gen_roi_mask(prev_pred, curr_pred):
+    prev_dilated = cv2.dilate((prev_pred.transpose(1,2,0) > 0.5).astype('uint8') * 255, kernel) > 0
+    cur_dilated = cv2.dilate((curr_pred.transpose(1,2,0) > 0.5).astype('uint8')  * 255, kernel) > 0
+    union = prev_dilated | cur_dilated
+    return union.transpose(2,0,1)
+
 @torch.no_grad()
 def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
     
@@ -256,6 +263,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
         all_trimap = []
         all_input_masks = []
         all_image_names = []
+        mem_feats = None
 
         for i, batch in enumerate(val_loader):
 
@@ -299,6 +307,8 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                     all_gts = []
                     all_trimap = []
                     all_image_names = []
+                    mem_feats = None
+                    torch.cuda.empty_cache()
                 
                 video_name = image_names[0][0].split('/')[-2]
 
@@ -307,7 +317,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             end_time = time.time()
             if batch['mask'].sum() == 0:
                 continue
-            output = model(batch, mem_feat=None, mem_query=None, mem_details=None)
+            output = model(batch, mem_feat=mem_feats, mem_query=None, mem_details=None)
 
             batch_time.update(time.time() - end_time)
                 
@@ -317,6 +327,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
             # Threshold some high-low values
             alpha[alpha <= 1.0/255.0] = 0.0
             alpha[alpha >= 254.0/255.0] = 1.0
+            # alpha = postprocess(alpha)
 
             # Fuse results
             # If no previous results, use the two first results
@@ -347,21 +358,49 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
                     diff_forward = (diff_forward > 0.5).astype('float32')
                     diff_backward = (diff_backward > 0.5).astype('float32')
 
+                    # Separate mask for each instance
+
+                    # 2. Intersection of diff forward and union
+                    diff_forward[0, 1] = diff_forward[0, 1] * gen_roi_mask(prev_pred, alpha[0, 1])
+                    diff_backward[0, 1] = diff_backward[0, 1] * gen_roi_mask(next_pred, alpha[0, 1])
+
                     pred_forward01 = prev_pred * (1 - diff_forward[0, 1]) + alpha[0, 1] * diff_forward[0, 1]
                     pred_backward21 = next_pred * (1 - diff_backward[0, 1]) + alpha[0, 1] * diff_backward[0, 1]
                     fused_pred = (pred_forward01 + pred_backward21) / 2.0
-
+                    # fused_pred = pred_forward01
+                    # if os.path.basename(image_names[1][0]) == '00016.jpg':
+                    #     import pdb; pdb.set_trace()
                     # Ignore large difference in fusion
                     # diff = np.abs(fused_pred - alpha[0, 1])
                     # fused_pred[diff > 0.05] = alpha[0, 1][diff > 0.05]
 
+                    diff_forward[0, 2] = diff_forward[0, 2] * gen_roi_mask(fused_pred, alpha[0, 2])
+
                     # For last frame
                     pred_forward12 = fused_pred * (1 - diff_forward[0, 2]) + alpha[0, 2] * diff_forward[0, 2]
 
+                    # if use hard fusion
                     all_preds[-1] = fused_pred
                     all_preds = np.concatenate([all_preds, pred_forward12[None]], axis=0)
+
+                    # if not using fusion
+                    # all_preds[-1] = alpha[0, 1]
+                    # all_preds = np.concatenate([all_preds, alpha[0, 2][None]], axis=0)
                 else:
                     all_preds = np.concatenate([all_preds, alpha[0, 2:]], axis=0)
+
+            # Add first frame features to mem_feat
+            if mem_feats is None and 'mem_feat' in output:
+                # mem_feats = output['mem_feat'][None, 0:1]
+                if isinstance(output['mem_feat'], tuple):
+                    mem_feats = tuple(x[:, 0] for x in output['mem_feat'])
+                # mem_feats = output['mem_feat'][:, 0]
+            # else:
+            #     mem_feats = torch.cat([mem_feats, output['mem_feat'][None, 0:1]], axis=1)
+            
+            # Keep at most 2 frames in mem_feat
+            # if mem_feats.shape[1] > 2:
+            #     mem_feats = mem_feats[:, -2:]
 
             # Logging
             if i % log_iter == 0:

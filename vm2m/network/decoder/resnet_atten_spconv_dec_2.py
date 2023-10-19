@@ -15,6 +15,8 @@ from vm2m.network.module.instance_matte_head import InstanceMatteHead
 from vm2m.network.module.temporal_nn import TemporalNN
 from vm2m.network.module.ligru_conv import LiGRUConv
 from vm2m.network.module.stm_2 import STM
+from vm2m.network.module.conv_gru import ConvGRU
+from vm2m.network.module.stm_window import WindowSTM
 from vm2m.network.module.detail_aggregation import DetailAggregation
 from vm2m.network.module.instance_query_atten import InstanceQueryAttention
 from vm2m.utils.utils import compute_unknown
@@ -696,6 +698,10 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         
+        # self.os8_temp_module = WindowSTM(128, os=8, mask_channel=kwargs["embed_dim"])
+        self.os16_temp_module = ConvGRU(256)
+        self.os8_temp_module = ConvGRU(128)
+
         # Module to compute the difference between two inputs
         self.diff_module = nn.Sequential(
             SpectralNorm(conv1x1(256, 64)),
@@ -765,13 +771,50 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         if self.training:
             gt_masks = (gt_alphas > 0).reshape(b, n_f, n_i, gt_alphas.shape[2], gt_alphas.shape[3])
 
+        mem_os16, mem_os8 = None, None
+        if mem_feat is not None:
+            mem_os16, mem_os8 = mem_feat
+
         # OS32 -> OS 8
         ret = {}
         fea4, fea5 = mid_fea['shortcut']
         
         image = mid_fea['image']
         x = self.layer1(x) + fea5
+
+        # Temporal aggregation
+        x = x.view(b, n_f, *x.shape[1:])
+        x, mem_os16 = self.os16_temp_module(x, mem_os16)
+        x = x.view(b * n_f, *x.shape[2:])
+        # import pdb; pdb.set_trace()
+
         x = self.layer2(x) + fea4
+
+        # feat os8 to compute the differences
+        # feat_os8 = x.view(b, n_f, *x.shape[1:])
+
+        # Perform temporal aggregation here: 
+        # x = x.view(b, n_f, *x.shape[1:])
+        # feat0 = x[:, 0]
+        # mem_feats = []
+        # if mem_feat is not None:
+        #     feat0 = self.os8_temp_module(x[:, 0], mem_feat)
+        #     mem_feats.append(mem_feat)
+        # mem_feats.append(feat0[:, None])
+        # feat1 = self.os8_temp_module(x[:, 1], torch.cat(mem_feats, dim=1))
+        # mem_feats.append(feat1[:, None])
+        # feat2 = self.os8_temp_module(x[:, 2], torch.cat(mem_feats, dim=1))
+
+        # x = torch.cat([feat0[:, None], feat1[:, None], feat2[:, None]], dim=1)
+        # x = x.view(b * n_f, *x.shape[2:])
+
+        # For ConvGRU
+        x = x.view(b, n_f, *x.shape[1:])
+        x, mem_os8 = self.os8_temp_module(x, mem_os8)
+        x = x.view(b * n_f, *x.shape[2:])
+        # import pdb; pdb.set_trace()
+        
+        mem_feat = (mem_os16, mem_os8)
 
         # Predict OS8
         # use mask attention during warmup of training
@@ -781,6 +824,8 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
 
         # Predict temporal sparsity here, forward and backward
         feat_os8 = x.view(b, n_f, *x.shape[1:])
+
+
         # diff_forward01 = self.diff_module(torch.cat([feat_os8[:, 0], feat_os8[:, 1]], dim=1))
         # diff_forward12 = self.diff_module(torch.cat([feat_os8[:, 1], feat_os8[:, 2]], dim=1))
         # diff_backward21 = self.diff_module(torch.cat([feat_os8[:, 2], feat_os8[:, 1]], dim=1))
@@ -825,9 +870,11 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         else:
             x_os4 = torch.zeros((b * n_f, x_os8.shape[1], image.shape[2], image.shape[3]), device=x_os8.device)
             x_os1 = torch.zeros_like(x_os4)
+        
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
+        ret['mem_feat'] = mem_feat
 
         # Fusion
         alpha_pred, _, _ = self.fushion(ret, unknown_os8)

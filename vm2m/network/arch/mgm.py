@@ -492,9 +492,9 @@ class MGM(nn.Module):
             weight_os4 = weight_os4 * correct_weights
             weight_os8 = weight_os8 * correct_weights
 
-        # unknown_gt = (alphas < 254.0/255.0) & (alphas > 1.0/255.0)
-        # unknown_pred_os8 = (alpha_pred_os8 < 254.0/255.0) & (alpha_pred_os8 > 1.0/255.0)
-        # weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype)
+        unknown_gt = (alphas < 254.0/255.0) & (alphas > 1.0/255.0)
+        unknown_pred_os8 = (alpha_pred_os8 < 254.0/255.0) & (alpha_pred_os8 > 1.0/255.0)
+        weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype)
         # import pdb; pdb.set_trace()
 
         # Add padding to alphas and trans_gt
