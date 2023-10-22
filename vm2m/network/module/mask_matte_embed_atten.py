@@ -148,7 +148,7 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         return cur_max_loss, cur_min_loss
 
-    def forward(self, ori_feat, mask, prev_tokens=None, use_mask_atten=True, gt_mask=None, aggregate_mem_fn=None):
+    def forward(self, ori_feat, mask, prev_tokens=None, use_mask_atten=True, gt_mask=None, aggregate_mem_fn=None, prev_h_state=None, temp_method='bi'):
         '''
         Params:
         -----
@@ -365,8 +365,54 @@ class MaskMatteEmbAttenHead(nn.Module):
             
             # Features propagation here?
             if aggregate_mem_fn is not None:
-                feat = feat.reshape(h, w, n_f, b, -1)
-                feat, hidden_state = aggregate_mem_fn(x=feat.permute(3, 2, 4, 0, 1))
+                feat = feat.reshape(h, w, n_f, b, -1).permute(3, 2, 4, 0, 1)
+
+                # import cv2
+                # for a in range(3):
+                #     all_maps = []
+                #     for i_c in range(16):
+                #         vis_map = feat[0, a, i_c * 8]
+                #         vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min())
+                #         all_maps.append(vis_map)
+                #     all_maps = torch.cat([torch.cat(all_maps[k*4:k*4 + 4], dim=1) for k in range(4)], dim=0)
+                #     cv2.imwrite(f"feat_atten_before_{a}.png", all_maps.cpu().numpy() * 255)
+
+                # Forward
+                if temp_method == 'none':
+                    all_x = []
+                    for j in range(n_f):
+                        o, hidden_state = aggregate_mem_fn(x=feat[:, j], h=None)
+                        all_x.append(o)
+                    feat = torch.stack(all_x, dim=1)
+                else:
+                    feat_forward, hidden_state = aggregate_mem_fn(x=feat, h=prev_h_state)
+
+                    if temp_method == 'bi':
+                        # Backward
+                        feat_backward, _ = aggregate_mem_fn(x=torch.flip(feat[:, :-1], dims=(1,)), h=hidden_state[:, -1])
+                        feat_backward = torch.flip(feat_backward, dims=(1,))
+                        feat = feat_forward
+                        feat[:, :-1] = (feat_forward[:, :-1] + feat_backward) / 2
+                    else:
+                        feat = feat_forward
+            
+                # for a in range(3):
+                #     all_maps = []
+                #     for i_c in range(16):
+                #         vis_map = feat[0, a, i_c * 8]
+                #         vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min())
+                #         all_maps.append(vis_map)
+                #     all_maps = torch.cat([torch.cat(all_maps[k*4:k*4 + 4], dim=1) for k in range(4)], dim=0)
+                #     cv2.imwrite(f"feat_atten_after_{a}.png", all_maps.cpu().numpy() * 255)
+
+                # import pdb; pdb.set_trace()
+
+                # all_x = []
+                # for j in range(n_f):
+                #     o, hidden_state = aggregate_mem_fn(x=feat[:, j])
+                #     all_x.append(o)
+                # feat = torch.stack(all_x, dim=1)
+
                 # b, n_f, c, h, w --> h, w, n_f, b, c
                 feat = feat.permute(3, 4, 1, 0, 2).reshape(h * w * n_f, b, -1)
                 feat = self.temp_layernorm(feat)

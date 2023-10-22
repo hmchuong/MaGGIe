@@ -6,16 +6,17 @@ from spconv.pytorch import functional as Fsp
 class ConvGRU(nn.Module):
     def __init__(self,
                  channels: int,
+                 dilation: int=1,
                  kernel_size: int = 3,
                  padding: int = 1):
         super().__init__()
         self.channels = channels
         self.ih = nn.Sequential(
-            nn.Conv2d(channels * 2, channels * 2, kernel_size, padding=padding),
+            nn.Conv2d(channels * 2, channels * 2, kernel_size, dilation=dilation, padding=padding),
             nn.Sigmoid()
         )
         self.hh = nn.Sequential(
-            nn.Conv2d(channels * 2, channels, kernel_size, padding=padding),
+            nn.Conv2d(channels * 2, channels, kernel_size, dilation=dilation, padding=padding),
             nn.Tanh()
         )
         
@@ -23,6 +24,7 @@ class ConvGRU(nn.Module):
         
         r, z = self.ih(torch.cat([x, h], dim=1)).split(self.channels, dim=1)
         c = self.hh(torch.cat([x, r * h], dim=1))
+        # import pdb; pdb.set_trace()
         h = (1 - z) * h + z * c
         return h, h
     

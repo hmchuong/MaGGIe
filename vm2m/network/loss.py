@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
@@ -23,16 +24,18 @@ def _loss_dtSSD_ohem_smooth_l1(pred, gt, mask, ratio=0.5, threshold=5e-5):
     dgdt = torch.abs(gt[:, 1:] - gt[:, :-1])
     diff = F.smooth_l1_loss(dadt, dgdt, reduction='none', beta=0.5)
     diff = diff * mask[:, 1:]
+    if mask[:, 1:].sum() == 0:
+        return diff.mean()
     diff = diff[mask[:, 1:] > 0]
     
     # Ohem
     diff, _ = torch.sort(diff, descending=True)
     
-    min_value = diff[int(diff.numel() * ratio)]
+    min_value = diff[int(math.floor(diff.numel() * ratio))]
     min_value = max(min_value, threshold)
     min_value = min(min_value, diff.max())
 
-    hard_loss = diff[diff > min_value].mean()
+    hard_loss = diff[diff >= min_value].mean()
     return hard_loss
 
 def loss_dtSSD(pred, gt, mask):

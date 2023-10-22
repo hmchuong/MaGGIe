@@ -16,7 +16,7 @@ except ImportError:
 class MultiInstVidDataset(Dataset):
     def __init__(self, root_dir, split, clip_length, overlap=2, padding_inst=10, is_train=False, short_size=576, 
                     crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-                    max_step_size=5, random_seed=2023, modify_mask_p=0.1, mask_dir_name='', downscale_mask_p=0.5, pha_dir='pha', weight_mask_dir='', **kwargs):
+                    max_step_size=5, random_seed=2023, modify_mask_p=0.1, mask_dir_name='', downscale_mask_p=0.5, pha_dir='pha', weight_mask_dir='', is_ss_dataset=False, **kwargs):
         super().__init__()
         self.root_dir = os.path.join(root_dir, split)
         self.is_train = is_train
@@ -57,7 +57,7 @@ class MultiInstVidDataset(Dataset):
             ])
         if self.is_train or self.mask_dir_name == '':
             self.transforms.append(T.GenMaskFromAlpha(1.0))
-        if self.is_train:
+        if self.is_train and not is_ss_dataset:
             # self.transforms.append(T.RandomBinarizedMask(self.random, bin_alpha_max_k))
             self.transforms.append(T.ChooseOne(self.random, [
                 T.ModifyMaskBoundary(self.random, modify_mask_p),
@@ -230,14 +230,14 @@ class MultiInstVidDataset(Dataset):
         return out
 
 if __name__ == "__main__":
-    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=3, overlap=2, padding_inst=10, is_train=True, short_size=576, 
-                    crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-                    max_step_size=5, random_seed=2023)
+    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=3, overlap=2, padding_inst=10, is_train=True, short_size=576, 
+    #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
+    #                 max_step_size=5, random_seed=2023)
     # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="test", clip_length=8, overlap=2, is_train=False, short_size=576, 
     #                 random_seed=2023)
-    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VIPSeg", split="out", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
-    #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-    #                 max_step_size=5, random_seed=2023, pha_dir='pha_vid_0911_from-seg', weight_mask_dir='')
+    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/syn", split="pexels-train", clip_length=8, overlap=2, padding_inst=10, is_train=False, short_size=576, 
+                    crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
+                    max_step_size=5, random_seed=2023, mask_dir_name='xmem_rename', pha_dir='xmem_rename', weight_mask_dir='')
     import shutil
     for batch in dataset:
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))

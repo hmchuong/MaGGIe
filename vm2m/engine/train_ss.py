@@ -26,9 +26,10 @@ def create_train_dataset(cfg):
                                             crop=dataset_cfg.crop, flip_p=dataset_cfg.flip_prob,
                                             max_step_size=dataset_cfg.max_step_size, random_seed=cfg.train.seed)
     real_dataset = MultiInstVidDataset(root_dir=dataset_cfg.root_dir, split=dataset_cfg.ss_split, 
-                                            clip_length=dataset_cfg.clip_length, padding_inst=dataset_cfg.padding_inst, is_train=True, short_size=dataset_cfg.short_size, 
+                                            clip_length=3, padding_inst=dataset_cfg.padding_inst, is_train=True, short_size=dataset_cfg.short_size, 
                                             crop=dataset_cfg.crop, flip_p=dataset_cfg.flip_prob,
-                                            max_step_size=dataset_cfg.max_step_size, random_seed=cfg.train.seed, pha_dir=dataset_cfg.mask_dir_name)
+                                            max_step_size=dataset_cfg.max_step_size, random_seed=cfg.train.seed, 
+                                            pha_dir=dataset_cfg.mask_dir_name, mask_dir_name=dataset_cfg.mask_dir_name, is_ss_dataset=True)
     return syn_dataset, real_dataset
 
 def create_test_dataset(cfg):
@@ -210,11 +211,17 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                         _, loss = model(batch, mem_feat=None, is_real=is_real)
                 else:
                     _, loss = model(batch, mem_feat=None, is_real=is_real)
+                
+                # logging.info("Is real: {}".format(is_real))
+                # logging.info("batch size {}".format(batch['mask'].shape))
+                # logging.info("Done forward {}".format(loss['total']))
 
                 if precision == 16:
                     scaler.scale(loss['total']).backward()
                 else:
                     loss['total'].backward()
+
+                # logging.info("Done backward")
 
                 # Clip norm
                 if precision == 16:
@@ -222,6 +229,8 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 all_params = itertools.chain(*[x["params"] for x in optimizer.param_groups])
                 torch.nn.utils.clip_grad_norm_(all_params, 0.01)
                 
+                # logging.info("Done clipnorm")
+
                 # Update
                 if precision == 16:
                     scaler.step(optimizer)
@@ -231,6 +240,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
 
                 lr_scheduler.step()
                 batch_time.update(time.time() - end_time)
+                # logging.info("Done optimizing")
 
                 # Store to log_metrics
                 for k, v in loss.items():
@@ -272,6 +282,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 _ = [v.reset() for v in val_real_error_dict.values()]
                 logging.info("Evaluating the synthetic dataset...")
                 _ = val(val_model, val_syn_loader, device, cfg.test.log_iter, val_syn_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+            
                 logging.info("Evaluating the real dataset...")
                 _ = val(val_model, val_real_loader, device, cfg.test.log_iter, val_real_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
 

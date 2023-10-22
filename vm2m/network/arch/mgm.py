@@ -580,6 +580,7 @@ class MGM(nn.Module):
             total_loss += multi_inst_os8 * self.loss_multi_inst_w
 
         if self.loss_dtSSD_w > 0:
+            # import pdb; pdb.set_trace()
             alpha_pred_os8 = alpha_pred_os8.reshape(*alpha_shape)
             alpha_pred_os4 = alpha_pred_os4.reshape(*alpha_shape)
             alpha_pred_os1 = alpha_pred_os1.reshape(*alpha_shape)

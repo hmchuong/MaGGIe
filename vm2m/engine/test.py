@@ -275,7 +275,13 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
 
                     pred_forward01 = prev_pred * (1 - diff_forward[0, 1]) + alpha[0, 1] * diff_forward[0, 1]
                     pred_backward21 = next_pred * (1 - diff_backward[0, 1]) + alpha[0, 1] * diff_backward[0, 1]
-                    fused_pred = (pred_forward01 + pred_backward21) / 2.0
+
+                    # TODO: Check the diff --> update the diff forward --> fused pred based on diff forward
+                    diff = np.abs(pred_forward01 - pred_backward21)
+                    pred_forward01[diff > 0.0] = alpha[0, 1][diff > 0.0]
+                    fused_pred = pred_forward01
+
+                    # fused_pred = (pred_forward01 + pred_backward21) / 2.0
                     # fused_pred = pred_forward01
                     # if os.path.basename(image_names[1][0]) == '00016.jpg':
                     #     import pdb; pdb.set_trace()
@@ -289,12 +295,12 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
                     pred_forward12 = fused_pred * (1 - diff_forward[0, 2]) + alpha[0, 2] * diff_forward[0, 2]
 
                     # if use hard fusion
-                    # all_preds[-1] = fused_pred
-                    # all_preds = np.concatenate([all_preds, pred_forward12[None]], axis=0)
+                    all_preds[-1] = fused_pred
+                    all_preds = np.concatenate([all_preds, pred_forward12[None]], axis=0)
 
                     # if not using fusion
-                    all_preds[-1] = alpha[0, 1]
-                    all_preds = np.concatenate([all_preds, alpha[0, 2][None]], axis=0)
+                    # all_preds[-1] = alpha[0, 1]
+                    # all_preds = np.concatenate([all_preds, alpha[0, 2][None]], axis=0)
                 else:
                     all_preds = np.concatenate([all_preds, alpha[0, 2:]], axis=0)
 

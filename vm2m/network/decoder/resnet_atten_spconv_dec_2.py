@@ -696,14 +696,17 @@ class ResShortCut_AttenSpconv_InconsistTemp_Dec(ResShortCut_AttenSpconv_Dec):
         return final_results
 
 class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
-    def __init__(self, use_temp=True, **kwargs):
+    def __init__(self, temp_method='bi', **kwargs):
         super().__init__(**kwargs)
         
-        self.use_temp = use_temp
+        self.temp_method = temp_method.split("_")[0]
+        self.use_fusion = 'fusion' in temp_method
+        self.use_temp = temp_method != 'none'
+        # import pdb; pdb.set_trace()
 
         # self.os8_temp_module = WindowSTM(128, os=8, mask_channel=kwargs["embed_dim"])
         # self.os16_temp_module = ConvGRU(256)
-        self.os8_temp_module = ConvGRU(128)
+        self.os8_temp_module = ConvGRU(128, dilation=1, padding=1)
 
         # Module to compute the difference between two inputs
         self.diff_module = nn.Sequential(
@@ -863,10 +866,11 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         #                                                                     use_mask_atten=False, gt_mask=gt_masks, 
         #                                                                     aggregate_mem_fn=None)
         
-        x_os8, x, hidden_state, _, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
+        x_os8, x, hidden_state, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
                                                                             prev_tokens=mem_query if self.use_query_temp else None, 
                                                                             use_mask_atten=False, gt_mask=gt_masks, 
-                                                                            aggregate_mem_fn=partial(self.os8_temp_module.forward, h=mem_feat))
+                                                                            aggregate_mem_fn=self.os8_temp_module.forward, prev_h_state=mem_feat, temp_method=self.temp_method)
+        
         mem_feat = hidden_state
 
         # Predict temporal sparsity here, forward and backward
@@ -937,9 +941,6 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
-        
-        if self.use_temp:
-            ret['mem_feat'] = mem_feat
 
         # Fusion
         alpha_pred, _, _ = self.fushion(ret, unknown_os8)
@@ -952,12 +953,18 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
 
         # if not self.training:
         #     temp_alpha[:, 1] = temp_fused_alpha
+
+        if self.use_temp:
+            ret['mem_feat'] = mem_feat
+        
+        
         diff_forward, diff_backward, temp_fused_alpha = self.bidirectional_fusion(feat_os8, temp_alpha)
 
         ret['refined_masks'] = alpha_pred
         ret['detail_mask'] = unknown_os8
 
-        if self.use_temp:
+        # import pdb; pdb.set_trace()
+        if (not self.training and self.use_fusion) or self.training:
             ret['temp_alpha'] = temp_fused_alpha
             ret['diff_forward'] = diff_forward.sigmoid()
             ret['diff_backward'] = diff_backward.sigmoid()

@@ -478,6 +478,9 @@ class MESSDdt(Metric):
         return error, num
     
     def update(self, pred, gt, trimap=None, **kargs):
+        if pred.ndim == 5:
+            pred = pred.squeeze(0)
+            gt = gt.squeeze(0)
         mask = None
         if trimap is not None:
             mask = (trimap == 1).astype('float32')
@@ -486,6 +489,7 @@ class MESSDdt(Metric):
 
         error = 0
         count = 0
+        
         for i in range(len(pred)):
             try:
                 e, c = self.compute_single_video(pred[i], gt[i], mask[i])
@@ -494,6 +498,8 @@ class MESSDdt(Metric):
                 continue
             error += e * 1000
             count += c
+        # all_omegas = Parallel(n_jobs=len(pred))(delayed(self.compute_single_video)(pred[i], gt[i], mask[i]) for intersection in all_intersections)
+            
         self.score += error
         self.count += count
         return error / (count + 1e-8)
