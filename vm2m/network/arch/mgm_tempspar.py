@@ -123,13 +123,14 @@ class MGM_TempSpar(MGM):
         diff_pred_backward = pred.pop('diff_backward', None)
         temp_alpha = pred.pop('temp_alpha', None)
 
-        # Adding diff_pred and temp_alpha for visualization
-        diff_pred_backward = diff_pred_backward.repeat(1, 1, n_i, 1, 1)
-        diff_pred_forward = diff_pred_forward.repeat(1, 1, n_i, 1, 1)
-        # temp_alpha = temp_alpha[:, None].repeat(1, n_f, 1, 1, 1)
-        output['diff_pred_backward'] = diff_pred_backward
-        output['diff_pred_forward'] = diff_pred_forward
-        output['temp_alpha'] = temp_alpha
+        if diff_pred_backward is not None:
+            # Adding diff_pred and temp_alpha for visualization
+            diff_pred_backward = diff_pred_backward.repeat(1, 1, n_i, 1, 1)
+            diff_pred_forward = diff_pred_forward.repeat(1, 1, n_i, 1, 1)
+            # temp_alpha = temp_alpha[:, None].repeat(1, n_f, 1, 1, 1)
+            output['diff_pred_backward'] = diff_pred_backward
+            output['diff_pred_forward'] = diff_pred_forward
+            output['temp_alpha'] = temp_alpha
 
         if self.training:
             alphas = alphas.view(-1, n_i, h, w)
@@ -151,9 +152,12 @@ class MGM_TempSpar(MGM):
     
             if 'loss_temp' in pred:
                 loss_dict['loss_temp_bce'] = pred['loss_temp_bce']
-                loss_dict['loss_temp_fusion'] = pred['loss_temp_fusion']
                 loss_dict['loss_temp'] = pred['loss_temp']
                 loss_dict['total'] += pred['loss_temp']
+            if 'loss_temp_fusion' in pred:
+                loss_dict['loss_temp_fusion'] = pred['loss_temp_fusion']
+            if 'loss_temp_dtssd' in pred:
+                loss_dict['loss_temp_dtssd'] = pred['loss_temp_dtssd']
 
             # Add loss max and min attention
             if 'loss_max_atten' in pred and self.loss_atten_w > 0:

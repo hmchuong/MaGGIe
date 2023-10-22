@@ -167,6 +167,7 @@ def val(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=F
 
             # DEBUG: Load masks for instmatt
             import glob
+            # import pdb; pdb.set_trace()
             all_alpha_paths = sorted(glob.glob(image_names[0][0].replace('/images/', f'/{matte_dir}/').replace(".jpg", "/*.png")))
             all_alphas = []
             for alpha_path in all_alpha_paths:

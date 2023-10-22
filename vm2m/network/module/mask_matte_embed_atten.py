@@ -109,7 +109,9 @@ class MaskMatteEmbAttenHead(nn.Module):
                                     dim_feedforward=attention_dim,
                                     dropout=0.0,
                                     normalize_before=False)
-            
+        
+        self.temp_layernorm = nn.LayerNorm(attention_dim)
+
         if temporal_query and 'lstm' in temporal_query:
             self.query_lstm = nn.LSTM(attention_dim, attention_dim, batch_first=True)
             # self.temp_layernorm = nn.LayerNorm(attention_dim)
@@ -146,7 +148,7 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         return cur_max_loss, cur_min_loss
 
-    def forward(self, ori_feat, mask, prev_tokens=None, use_mask_atten=True, gt_mask=None):
+    def forward(self, ori_feat, mask, prev_tokens=None, use_mask_atten=True, gt_mask=None, aggregate_mem_fn=None):
         '''
         Params:
         -----
@@ -198,7 +200,7 @@ class MaskMatteEmbAttenHead(nn.Module):
         
 
         # Learnable Token feat
-        tokens = self.query_feat.weight[None, None].repeat(b, n_f, 1, 1) # (b, n_f, max_inst,  c_atten)
+        tokens = self.query_feat.weight[None].repeat(b, 1, 1) # (b, max_inst,  c_atten)
         # mask = mask.view(b, n_f, -1, 1, h * w)
         # tokens = (feat * mask).sum(dim=-1) / (mask.sum(dim=-1) + 1e-6) # (b, n_f, n_i, c)
         # if tokens.shape[2] < self.max_inst:
@@ -208,7 +210,7 @@ class MaskMatteEmbAttenHead(nn.Module):
         # Token pos: ID embedding + Temporal position embedding
         id_token_pos = torch.arange(1, self.max_inst + 1, device=tokens.device)[None, None, :] # (1, 1, max_inst)
         id_token_pos = self.id_embedding(id_token_pos.long()) # (1, 1, max_inst, c_atten_id)
-        id_token_pos = id_token_pos.repeat(b, n_f, 1, 1) # (b, n_f, max_inst, c_atten_id)
+        id_token_pos = id_token_pos.repeat(b, 1, 1, 1).squeeze(1) # (b, max_inst, c_atten_id)
         if temp_feat_pos is not None:
             temp_token_pos = temp_feat_pos[:, :, :, None, 0, 0].permute(0, 2, 3, 1).repeat(1, 1, self.max_inst, 1) # (b, n_f, max_inst, c_atten_temp)
             token_pos = torch.cat([id_token_pos, temp_token_pos], dim=-1) # (b, n_f, max_inst, c_atten)
@@ -218,8 +220,8 @@ class MaskMatteEmbAttenHead(nn.Module):
         # import pdb; pdb.set_trace()
 
         # Reshape feat to h * w, n_f * b, c
-        feat = feat.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c)
-        feat_pos = feat_pos.permute(4, 2, 1, 0, 3).reshape(h * w, n_f * b, -1) # (h * w, n_f * b, c_atten)
+        feat = feat.permute(4, 2, 1, 0, 3).reshape(h * w * n_f, b, -1) # (h * w * n_f, b, c)
+        feat_pos = feat_pos.permute(4, 2, 1, 0, 3).reshape(h * w * n_f, b, -1) # (h * w * n_f, b, c_atten)
 
         # TODO: Test the similarity between token_pos and feat_pos
         # mat1 = feat_pos.permute(1, 0, 2) # (n_f * b, h * w, c_atten)
@@ -240,9 +242,9 @@ class MaskMatteEmbAttenHead(nn.Module):
         # import pdb; pdb.set_trace()
         n_i = self.max_inst
 
-        # Reshape tokens to n_i * n_f, b, c_atten
-        tokens = tokens.permute(2, 1, 0, 3).reshape(-1, b, self.atten_dim)
-        token_pos = token_pos.permute(2, 1, 0, 3).reshape(-1, b, self.atten_dim)
+        # Reshape tokens to n_i, b, c_atten
+        tokens = tokens.permute(1, 0, 2).reshape(-1, b, self.atten_dim)
+        token_pos = token_pos.permute(1, 0, 2).reshape(-1, b, self.atten_dim)
 
         # combine with previous tokens
         # if prev_tokens is not None:
@@ -265,30 +267,52 @@ class MaskMatteEmbAttenHead(nn.Module):
             invalid_m = invalid_m[:, :, None].repeat(1, 1, h * w)
             atten_padding_m[invalid_m] = True
             atten_padding_m = ~atten_padding_m
+            
+            # For the same instance queries
+            atten_padding_m = atten_padding_m.reshape(n_f, b, n_i, -1).permute(1, 2, 3, 0).flatten(2, 3)
+            guidance_mask = guidance_mask.reshape(n_f, b, n_i, -1).permute(1, 2, 3, 0).flatten(2, 3)
         
         max_loss = 0
         min_loss = 0
         mem_tokens = None
 
         # import pdb; pdb.set_trace()
+        hidden_state = None
+
+        valid_tokens = mask.sum((1, 3, 4)) > 0
+        token_padding_mask = torch.zeros((b, n_i), device=tokens.device).bool()
+        if valid_tokens.shape[1] < n_i:
+            valid_tokens = torch.cat([valid_tokens, torch.zeros((b, n_i - valid_tokens.shape[1]), device=tokens.device).bool()], dim=1)
+        token_padding_mask[~valid_tokens] = True
 
         # For each iteration:
         for i in range(self.n_block):
             
             # - Self-attention between tokens in the same image (temporal attention, instance-wise attention)
             # Q, KV: n_i * n_f, b, c_atten
-            tokens = tokens.reshape(n_i * n_f, b, -1)
-            token_pos = token_pos.reshape(n_i * n_f, b, -1)
-            tokens = self.sa_layers[i](tokens, 
-                                            tgt_mask=None, 
-                                            tgt_key_padding_mask=None, 
-                                            query_pos=token_pos)
-            tokens = tokens.reshape(n_i, n_f * b, -1)
-            token_pos = token_pos.reshape(n_i, n_f * b, -1)
+            # tokens = tokens.reshape(n_i * n_f, b, -1)
+            # token_pos = token_pos.reshape(n_i * n_f, b, -1)
+            # tokens = self.sa_layers[i](tokens, 
+            #                                 tgt_mask=None, 
+            #                                 tgt_key_padding_mask=None, 
+            #                                 query_pos=token_pos)
+            # tokens = tokens.reshape(n_i, n_f * b, -1)
+            # token_pos = token_pos.reshape(n_i, n_f * b, -1)
+
+            # TODO: It's may not good at the first iteration? Moving to the end
+            # DEBUG: Single query for instance
+            # tokens = tokens.reshape(n_i, b, -1)
+            # token_pos = token_pos.reshape(n_i, b, -1)
+            # tokens = self.sa_layers[i](tokens, 
+            #                                 tgt_mask=None, 
+            #                                 tgt_key_padding_mask=None, 
+            #                                 query_pos=token_pos)
+            # tokens = tokens.reshape(n_i, b, -1)
+            # token_pos = token_pos.reshape(n_i, b, -1)
 
             # - tokens to feat attention (spatial attention)
-            # Q: n_i, n_f * b, c_atten
-            # KV: h * w, n_f * b, c_atten
+            # Q: n_i, b, c_atten
+            # KV: h * w * n_f, b, c_atten
             # import pdb; pdb.set_trace()
             
             # import pdb; pdb.set_trace()
@@ -298,7 +322,10 @@ class MaskMatteEmbAttenHead(nn.Module):
                 memory_key_padding_mask=None,
                 pos=feat_pos if self.use_id_pe else None, query_pos=token_pos if self.use_id_pe else None
             )
-
+            # attention = atten_mat.view(n_f, n_i, h, w)
+            # import cv2
+            # cv2.imwrite("attention.png", (attention[2,0].cpu().numpy() > 0.0001) * 255)
+            # import pdb; pdb.set_trace()
             if self.training and not use_mask_atten:
                 cur_max_loss, cur_min_loss = self.compute_atten_loss(b, n_f, guidance_mask, atten_mat)
                 max_loss += cur_max_loss
@@ -322,23 +349,37 @@ class MaskMatteEmbAttenHead(nn.Module):
             tokens = self.mlp_layers[i](tokens)
 
             # - feat to token attention
-            # Q: h * w, n_f * b, c_atten
-            # KV: n_i, n_f * b, c_atten
+            # Q: h * w * n_f, b, c_atten
+            # KV: n_i * n_f, b, c_atten
             feat, _ = self.feat_token_ca_layers[i](
                 feat, tokens,
                 memory_mask=None,
-                memory_key_padding_mask=None,
+                memory_key_padding_mask=token_padding_mask,
                 pos=token_pos if self.use_id_pe else None, query_pos=feat_pos if self.use_id_pe else None
             )
 
+            tokens = self.sa_layers[i](tokens, 
+                                            tgt_mask=None, 
+                                            tgt_key_padding_mask=token_padding_mask, 
+                                            query_pos=token_pos)
+            
+            # Features propagation here?
+            if aggregate_mem_fn is not None:
+                feat = feat.reshape(h, w, n_f, b, -1)
+                feat, hidden_state = aggregate_mem_fn(x=feat.permute(3, 2, 4, 0, 1))
+                # b, n_f, c, h, w --> h, w, n_f, b, c
+                feat = feat.permute(3, 4, 1, 0, 2).reshape(h * w * n_f, b, -1)
+                feat = self.temp_layernorm(feat)
             # TODO: Add previous tokens here
             # if self.temporal_query and prev_tokens and i == 0:
             #     tokens = tokens + prev_tokens
             #     mem_tokens = tokens
+
+        
         
         # tokens to features attention
-        # Q: n_i, n_f * b, c_atten
-        # KV: h * w, n_f * b, c_atten
+        # Q: n_i, b, c_atten
+        # KV: h * w, b, c_atten
         tokens, atten_mat = self.final_token_feat_ca(
             tokens, feat,
             memory_mask=atten_padding_m if use_mask_atten else None,
@@ -391,6 +432,7 @@ class MaskMatteEmbAttenHead(nn.Module):
             feat = ori_feat + feat
             # feat = torch.cat([ori_feat, feat], dim=1)
             # feat = self.up_conv(feat)
+        
 
         if self.return_feat:
             out_feat = self.conv_out(feat) # (b * n_f, c, h, w)
@@ -399,15 +441,26 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         
         # MLP to build kernel
-        tokens = self.final_mlp(tokens) # (n_i, n_f * b, c_out)
-        tokens = tokens.reshape(n_i, n_f, b, -1)
-        tokens = tokens.permute(2, 1, 0, 3) # (b, n_f, n_i, c_out)
-        tokens = tokens.reshape(b * n_f, n_i, -1) # (b * n_f, n_i, c_out)
+        tokens = self.final_mlp(tokens) # (n_i, b, c_out)
+        tokens = tokens.reshape(n_i, b, -1)
+        tokens = tokens.permute(1, 0, 2) # (b, n_i, c_out)
+        tokens = tokens.reshape(b, n_i, -1) # (b, n_i, c_out)
         tokens = self.decoder_norm(tokens)
 
         # Dot product feat with kernel to have matte
-        output_mask = torch.einsum('bqc,bchw->bqhw', tokens, feat) # (b * n_f, n_i, h, w)
+        # import pdb; pdb.set_trace()
+
+        output_mask = torch.einsum('bqc,btchw->btqhw', tokens, feat.reshape(b, n_f, -1, h, w)) # (b, n_f, n_i, h, w)
+        output_mask = output_mask.flatten(0, 1)
+        
+        
+        # out_debug = torch.einsum('c,chw->hw', tokens[0,0], feat[1])
+        # out_debug = (torch.tanh(out_debug) + 1.0) / 2.0
+        # import cv2
+        # output_mask = (torch.tanh(output_mask) + 1.0) / 2.0
+        # cv2.imwrite("test_mask.png", output_mask[0, 0].detach().cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
         
         if self.return_feat:
-            return output_mask, out_feat, mem_tokens, max_loss, min_loss
+            return output_mask, out_feat, hidden_state, mem_tokens, max_loss, min_loss
         return output_mask, mem_tokens, max_loss, min_loss

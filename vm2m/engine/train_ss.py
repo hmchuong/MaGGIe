@@ -15,7 +15,7 @@ from vm2m.utils.dist import AverageMeter, reduce_dict
 from vm2m.utils.metric import build_metric
 
 from .optim import build_optim_lr_scheduler
-from .test import val
+from .test import val_video as val
 from .train import load_state_dict
 
 def create_train_dataset(cfg):

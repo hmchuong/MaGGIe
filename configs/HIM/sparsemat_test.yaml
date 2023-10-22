@@ -1,0 +1,126 @@
+dataset:
+  test:
+    alpha_dir_name: alphas
+    clip_length: 8
+    clip_overlap: 2
+    downscale_mask: true
+    mask_dir_name: ''
+    name: HIM
+    root_dir: /mnt/localssd/HIM2K
+    short_size: 576
+    split: natural
+    use_thresh_mask: false
+  train:
+    bg_dir: ''
+    bin_alpha_max_k: 30
+    blur_kernel_size:
+    - 5
+    - 15
+    - 25
+    blur_prob: 0.5
+    blur_sigma:
+    - 1.0
+    - 1.5
+    - 3.0
+    - 5.0
+    clip_length: 8
+    crop:
+    - 512
+    - 512
+    downscale_mask: false
+    downscale_mask_p: 0.5
+    flip_prob: 0.5
+    mask_dir_name: masks_matched
+    max_inst: 3
+    max_step_size: 2
+    modify_mask_p: 0.1
+    name: HIM
+    padding_inst: 10
+    random_state: 2023
+    root_dir: /mnt/localssd/HHM
+    short_size: 576
+    split: synthesized
+    use_maskrcnn_p: 0.2
+    use_single_instance_only: true
+model:
+  arch: SparseMat_SingInst
+  backbone: lpn
+  backbone_args:
+    num_mask: 1
+    mid_chn: 32
+  decoder: shm
+  decoder_args:
+    inc: 4
+  loss_alpha_grad_w: 0.0
+  loss_alpha_lap_w: 1.0
+  loss_alpha_type: l1
+  loss_alpha_w: 1.0
+  loss_comp_w: 0.0
+  refinement:
+    n_test_points: 16000
+    n_train_points: 2048
+  shm:
+    dilation_kernel: 15
+    lr_scale: 0.5
+    max_n_pixel: 4000000
+    mgm_weights: ''
+  shortcut_dims:
+  - 32
+  - 32
+  - 64
+  - 128
+  - 256
+  weights: ''
+name: ours_short-576-512x512_bs12_nnodes-2_gpus-4_52k_adamw_1.5e-4_0903
+output_dir: output/HIM
+test:
+  batch_size: 1
+  log_iter: 100
+  metrics:
+  - MAD
+  - MSE
+  - SAD
+  - Grad
+  - Conn
+  # - ConnTorch
+  num_workers: 4
+  postprocessing: false
+  save_dir: logs
+  save_results: true
+  temp_aggre: false
+  use_trimap: true
+train:
+  batch_size: 12
+  log_iter: 10
+  max_iter: 52000
+  num_workers: 4
+  optimizer:
+    betas:
+    - 0.9
+    - 0.999
+    lr: 0.00015
+    momentum: 0.9
+    name: adamw
+    weight_decay: 0.01
+  resume: ''
+  resume_last: true
+  scheduler:
+    gamma: 0.1
+    name: cosine
+    power: 0.9
+    step_size: 10000
+    warmup_iters: 1000
+  seed: 1234
+  val_best_metric: MAD
+  val_dist: false
+  val_iter: 500
+  val_metrics:
+  - MAD
+  - MSE
+  - SAD
+  vis_iter: 50
+wandb:
+  entity: research-dmo
+  id: ''
+  project: video-maskg-matting
+  use: true

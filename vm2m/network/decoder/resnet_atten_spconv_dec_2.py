@@ -21,6 +21,7 @@ from vm2m.network.module.detail_aggregation import DetailAggregation
 from vm2m.network.module.instance_query_atten import InstanceQueryAttention
 from vm2m.utils.utils import compute_unknown
 from .resnet_dec import BasicBlock
+from vm2m.network.loss import loss_dtSSD
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
@@ -695,11 +696,13 @@ class ResShortCut_AttenSpconv_InconsistTemp_Dec(ResShortCut_AttenSpconv_Dec):
         return final_results
 
 class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
-    def __init__(self, **kwargs):
+    def __init__(self, use_temp=True, **kwargs):
         super().__init__(**kwargs)
         
+        self.use_temp = use_temp
+
         # self.os8_temp_module = WindowSTM(128, os=8, mask_channel=kwargs["embed_dim"])
-        self.os16_temp_module = ConvGRU(256)
+        # self.os16_temp_module = ConvGRU(256)
         self.os8_temp_module = ConvGRU(128)
 
         # Module to compute the difference between two inputs
@@ -771,9 +774,9 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         if self.training:
             gt_masks = (gt_alphas > 0).reshape(b, n_f, n_i, gt_alphas.shape[2], gt_alphas.shape[3])
 
-        mem_os16, mem_os8 = None, None
-        if mem_feat is not None:
-            mem_os16, mem_os8 = mem_feat
+        # mem_os16, mem_os8 = None, None
+        # if mem_feat is not None:
+        #     mem_os16, mem_os8 = mem_feat
 
         # OS32 -> OS 8
         ret = {}
@@ -783,9 +786,17 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         x = self.layer1(x) + fea5
 
         # Temporal aggregation
-        x = x.view(b, n_f, *x.shape[1:])
-        x, mem_os16 = self.os16_temp_module(x, mem_os16)
-        x = x.view(b * n_f, *x.shape[2:])
+        # x = x.view(b, n_f, *x.shape[1:])
+        # if self.use_temp:
+        #     x, mem_os16 = self.os16_temp_module(x, mem_os16)
+        # else:
+        #     all_x = []
+        #     for i in range(n_f):
+        #         o, _ = self.os16_temp_module(x[:, i], None)
+        #         all_x.append(o)
+        #     x = torch.stack(all_x, dim=1)
+
+        # x = x.view(b * n_f, *x.shape[2:])
         # import pdb; pdb.set_trace()
 
         x = self.layer2(x) + fea4
@@ -809,22 +820,66 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         # x = x.view(b * n_f, *x.shape[2:])
 
         # For ConvGRU
-        x = x.view(b, n_f, *x.shape[1:])
-        x, mem_os8 = self.os8_temp_module(x, mem_os8)
-        x = x.view(b * n_f, *x.shape[2:])
-        # import pdb; pdb.set_trace()
+        # x = x.view(b, n_f, *x.shape[1:])
         
-        mem_feat = (mem_os16, mem_os8)
+        # for i in range(3):
+        #     all_maps = []
+        #     for j in range(16):
+        #         vis_map = x[0,i, j * 8]
+        #         vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min())
+        #         all_maps.append(vis_map)
+        #     all_maps = torch.cat([torch.cat(all_maps[k*4:k*4 + 4], dim=1) for k in range(4)], dim=0)
+        #     cv2.imwrite(f"feat_before_{i}.png", all_maps.cpu().numpy() * 255)
+        
+        # x, mem_os8 = self.os8_temp_module(x, mem_os8)
+
+        # if self.use_temp:
+        #     x, mem_os8 = self.os8_temp_module(x, mem_os8)
+        # else:
+        #     all_x = []
+        #     for i in range(n_f):
+        #         o, _ = self.os8_temp_module(x[:, i], None)
+        #         all_x.append(o)
+        #     x = torch.stack(all_x, dim=1)
+
+        # for i in range(3):
+        #     all_maps = []
+        #     for j in range(16):
+        #         vis_map = x[0,i, j * 8]
+        #         vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min())
+        #         all_maps.append(vis_map)
+        #     all_maps = torch.cat([torch.cat(all_maps[k*4:k*4 + 4], dim=1) for k in range(4)], dim=0)
+        #     cv2.imwrite(f"feat_after_{i}.png", all_maps.cpu().numpy() * 255)
+
+        # x = x.view(b * n_f, *x.shape[2:])
+
+        # mem_feat = (mem_os16, mem_os8)
+        # mem_feat = None
 
         # Predict OS8
         # use mask attention during warmup of training
-        x_os8, x, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
+        # x_os8, x, _, _, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
+        #                                                                     prev_tokens=mem_query if self.use_query_temp else None, 
+        #                                                                     use_mask_atten=False, gt_mask=gt_masks, 
+        #                                                                     aggregate_mem_fn=None)
+        
+        x_os8, x, hidden_state, _, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
                                                                             prev_tokens=mem_query if self.use_query_temp else None, 
-                                                                            use_mask_atten=False, gt_mask=gt_masks)
+                                                                            use_mask_atten=False, gt_mask=gt_masks, 
+                                                                            aggregate_mem_fn=partial(self.os8_temp_module.forward, h=mem_feat))
+        mem_feat = hidden_state
 
         # Predict temporal sparsity here, forward and backward
         feat_os8 = x.view(b, n_f, *x.shape[1:])
 
+        # for i in range(3):
+        #     all_maps = []
+        #     for j in range(16):
+        #         vis_map = feat_os8[0,i, j * 8]
+        #         vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min())
+        #         all_maps.append(vis_map)
+        #     all_maps = torch.cat([torch.cat(all_maps[k*4:k*4 + 4], dim=1) for k in range(4)], dim=0)
+        #     cv2.imwrite(f"feat_atten_{i}.png", all_maps.cpu().numpy() * 255)
 
         # diff_forward01 = self.diff_module(torch.cat([feat_os8[:, 0], feat_os8[:, 1]], dim=1))
         # diff_forward12 = self.diff_module(torch.cat([feat_os8[:, 1], feat_os8[:, 2]], dim=1))
@@ -838,6 +893,14 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         # Upsample - normalize OS8 pred
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
+
+        # for i in range(3):
+        #     vis_map = mem_os8[0,i].mean(0)
+        #     vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min())
+        #     cv2.imwrite(f"hidden_{i}.png", vis_map.cpu().numpy() * 255)
+        #     cv2.imwrite(f"os8_{i}.png", x_os8[i,0].cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
+
         if self.training:
             x_os8 = x_os8 * valid_masks
         else:
@@ -874,7 +937,9 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
-        ret['mem_feat'] = mem_feat
+        
+        if self.use_temp:
+            ret['mem_feat'] = mem_feat
 
         # Fusion
         alpha_pred, _, _ = self.fushion(ret, unknown_os8)
@@ -892,9 +957,10 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         ret['refined_masks'] = alpha_pred
         ret['detail_mask'] = unknown_os8
 
-        ret['temp_alpha'] = temp_fused_alpha
-        ret['diff_forward'] = diff_forward.sigmoid()
-        ret['diff_backward'] = diff_backward.sigmoid()
+        if self.use_temp:
+            ret['temp_alpha'] = temp_fused_alpha
+            ret['diff_forward'] = diff_forward.sigmoid()
+            ret['diff_backward'] = diff_backward.sigmoid()
 
         # Adding some losses to the results
         if self.training:
@@ -920,20 +986,24 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         loss['loss_temp_bce'] = bce_forward_loss + bce_backward_loss
 
         # Fusion loss
-        
-        alphas_gt = alphas_gt.view(diff_forward.shape[0], -1, *alphas_gt.shape[1:])
-        temp_forward = alphas_gt[:, 0] * (1 - diff_forward[:, 1].sigmoid()) + alphas_gt[:, 1] * diff_forward[:, 1].sigmoid()
-        temp_backward = alphas_gt[:, 2] * (1 - diff_backward[:, 1].sigmoid()) + alphas_gt[:, 1] * diff_backward[:, 1].sigmoid()
-        fusion_loss = F.l1_loss(temp_forward, temp_backward, reduction='none') + \
-            F.l1_loss(temp_forward, alphas_gt[:, 1], reduction='none') + \
-                F.l1_loss(temp_backward, alphas_gt[:, 1], reduction='none')
-        
-        valid_masks = alphas_gt.sum((3, 4), keepdim=True)[:, 1] > 0
-        valid_masks = valid_masks.repeat(1, 1, *fusion_loss.shape[2:])
-        fusion_loss = fusion_loss[valid_masks].mean()
-        loss['loss_temp_fusion'] = fusion_loss
+        # import pdb; pdb.set_trace()
+        dtSSD_forward = loss_dtSSD(diff_forward[:, 1:].sigmoid(), spar_gt[:, 1:, 0:1], torch.ones_like(spar_gt[:, 1:, 0:1]))
+        dtSSD_backward = loss_dtSSD(diff_backward[:, :-1].sigmoid(), spar_gt[:, 1:, 0:1], torch.ones_like(spar_gt[:, 1:, 0:1]))
+        loss['loss_temp_dtssd'] = dtSSD_forward + dtSSD_backward
 
-        loss['loss_temp'] = loss['loss_temp_bce'] * 0.25 + fusion_loss
+        # alphas_gt = alphas_gt.view(diff_forward.shape[0], -1, *alphas_gt.shape[1:])
+        # temp_forward = alphas_gt[:, 0] * (1 - diff_forward[:, 1].sigmoid()) + alphas_gt[:, 1] * diff_forward[:, 1].sigmoid()
+        # temp_backward = alphas_gt[:, 2] * (1 - diff_backward[:, 1].sigmoid()) + alphas_gt[:, 1] * diff_backward[:, 1].sigmoid()
+        # fusion_loss = F.l1_loss(temp_forward, temp_backward, reduction='none') + \
+        #     F.l1_loss(temp_forward, alphas_gt[:, 1], reduction='none') + \
+        #         F.l1_loss(temp_backward, alphas_gt[:, 1], reduction='none')
+        
+        # valid_masks = alphas_gt.sum((3, 4), keepdim=True)[:, 1] > 0
+        # valid_masks = valid_masks.repeat(1, 1, *fusion_loss.shape[2:])
+        # fusion_loss = fusion_loss[valid_masks].mean()
+        # loss['loss_temp_fusion'] = fusion_loss
+
+        loss['loss_temp'] = (loss['loss_temp_bce'] + dtSSD_forward + dtSSD_backward) * 0.25
 
         return loss
 

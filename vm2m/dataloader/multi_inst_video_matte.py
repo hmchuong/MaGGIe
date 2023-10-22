@@ -59,17 +59,17 @@ class MultiInstVidDataset(Dataset):
             self.transforms.append(T.GenMaskFromAlpha(1.0))
         if self.is_train:
             # self.transforms.append(T.RandomBinarizedMask(self.random, bin_alpha_max_k))
-            # self.transforms.append(T.ChooseOne(self.random, [
-            #     T.ModifyMaskBoundary(self.random, modify_mask_p),
-            #     T.Compose([
-            #         T.RandomBinarizedMask(self.random, bin_alpha_max_k),
-            #         T.DownUpMask(self.random, 0.125, downscale_mask_p)
-            #     ])
-            # ]))
-            self.transforms.append(T.Compose([
+            self.transforms.append(T.ChooseOne(self.random, [
+                T.ModifyMaskBoundary(self.random, modify_mask_p),
+                T.Compose([
                     T.RandomBinarizedMask(self.random, bin_alpha_max_k),
                     T.DownUpMask(self.random, 0.125, downscale_mask_p)
-                ]))
+                ])
+            ]))
+            # self.transforms.append(T.Compose([
+            #         T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+            #         T.DownUpMask(self.random, 0.125, downscale_mask_p)
+            #     ]))
         else:
             if self.mask_dir_name == '':
                 self.transforms += [T.DownUpMask(self.random, 0.125, 1.0)]
@@ -230,7 +230,7 @@ class MultiInstVidDataset(Dataset):
         return out
 
 if __name__ == "__main__":
-    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
+    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=3, overlap=2, padding_inst=10, is_train=True, short_size=576, 
                     crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
                     max_step_size=5, random_seed=2023)
     # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="test", clip_length=8, overlap=2, is_train=False, short_size=576, 
@@ -238,11 +238,13 @@ if __name__ == "__main__":
     # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VIPSeg", split="out", clip_length=8, overlap=2, padding_inst=10, is_train=True, short_size=576, 
     #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
     #                 max_step_size=5, random_seed=2023, pha_dir='pha_vid_0911_from-seg', weight_mask_dir='')
+    import shutil
     for batch in dataset:
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
         weights = batch["weight"]
         print(frames.shape, masks.shape, alphas.shape, transition_gt.shape)
-        
+        shutil.rmtree("debug", ignore_errors=True)
+        os.makedirs("debug", exist_ok=True)
         for idx in range(len(frames)):
             frame = frames[idx]
             mask = masks[idx]
@@ -252,11 +254,15 @@ if __name__ == "__main__":
 
             frame = frame * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
             frame = (frame * 255).permute(1, 2, 0).numpy().astype(np.uint8)
+            
             cv2.imwrite("debug/frame_{}.png".format(idx), frame[:, :, ::-1])
+            valid_masks = mask.sum((1,2)) > 0
             for inst_i in range(mask.shape[0]):
-                cv2.imwrite("debug/mask_{}_{}.png".format(idx, inst_i), mask[inst_i].numpy() * 255)
-                cv2.imwrite("debug/alpha_{}_{}.png".format(idx, inst_i), alpha[inst_i].numpy() * 255)
-                cv2.imwrite("debug/weight_{}_{}.png".format(idx, inst_i), weight[inst_i].numpy() * 255)
+                if not valid_masks[inst_i]:
+                    continue
+                cv2.imwrite("debug/mask_{}_{}.png".format(inst_i, idx), mask[inst_i].numpy() * 255)
+                cv2.imwrite("debug/alpha_{}_{}.png".format(inst_i, idx), alpha[inst_i].numpy() * 255)
+                cv2.imwrite("debug/weight_{}_{}.png".format(inst_i, idx), weight[inst_i].numpy() * 255)
                 # cv2.imwrite("debug/transition_{}_{}.png".format(idx, inst_i), transition[inst_i].numpy() * 120)
             cv2.imwrite("debug/transition_{}.png".format(idx), transition[0].numpy() * 255)
         import pdb; pdb.set_trace()

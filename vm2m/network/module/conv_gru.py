@@ -20,6 +20,7 @@ class ConvGRU(nn.Module):
         )
         
     def forward_single_frame(self, x, h):
+        
         r, z = self.ih(torch.cat([x, h], dim=1)).split(self.channels, dim=1)
         c = self.hh(torch.cat([x, r * h], dim=1))
         h = (1 - z) * h + z * c
@@ -28,6 +29,7 @@ class ConvGRU(nn.Module):
     def forward_time_series(self, x, h):
         o = []
         all_h = []
+
         for xt in x.unbind(dim=1):
             ot, h = self.forward_single_frame(xt, h)
             o.append(ot)

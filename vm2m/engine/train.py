@@ -15,7 +15,7 @@ from vm2m.utils.dist import AverageMeter, reduce_dict
 from vm2m.utils.metric import build_metric
 
 from .optim import build_optim_lr_scheduler
-from .test import val
+from .test import val_image, val_video
 
 def log_alpha(tensor, tag, index=0, inst_idx=0):
     alpha = tensor[0,index,inst_idx].detach().cpu().numpy()
@@ -256,6 +256,8 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
     logging.info("Iter: {}, len dataloader: {}".format(iter, len(train_loader)))
     epoch =  iter // len(train_loader)
     scaler = GradScaler() if precision == 16 else None
+
+    val = val_video if cfg.dataset.test.name == 'MultiInstVideo' else val_image
     while iter < cfg.train.max_iter:
         
         for _, batch in enumerate(train_loader):
