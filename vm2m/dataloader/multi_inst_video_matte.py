@@ -172,6 +172,7 @@ class MultiInstVidDataset(Dataset):
             alphas = output_dict["ori_alphas"]
         
         if (masks.sum() == 0 or alphas.sum() == 0 or (masks.sum((1, 2, 3)) == 0).any()) and self.is_train:
+            logging.error("Mask or alpha is zero: {}".format(idx))
             return self.__getitem__(self.random.randint(0, len(self)))
         
         # Padding instances
@@ -223,6 +224,7 @@ class MultiInstVidDataset(Dataset):
         if self.is_train:
             small_masks = resizeAnyShape(masks, scale_factor=0.125, use_max_pool=True)
             if small_masks.sum() == 0:
+                logging.error("Small masks is zero: {}".format(idx))
                 return self.__getitem__(self.random.randint(0, len(self)))
         
         out =  {'image': frames,

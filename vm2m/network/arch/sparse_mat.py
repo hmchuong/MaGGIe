@@ -128,8 +128,7 @@ class SparseMat(nn.Module):
         lr_inp = self.gen_lr_batch(input_dict, scale=0.5)
         # with torch.no_grad():
         #     lr_out = self.mgm(lr_inp, return_ctx=True)
-
-        xlr = torch.cat([lr_inp['image'], lr_inp['mask']], dim=2).flatten(1, 2)
+        xlr = torch.cat([lr_inp['image'], lr_inp['mask']], dim=2).flatten(0, 1)
         lr_pred, ctx = self.lpn(xlr)
 
         # lr_pred = lr_out['refined_masks'].clone().detach()
@@ -166,6 +165,9 @@ class SparseMat(nn.Module):
         pred_list = self.shm(sparse_inputs, lr_pred, coords, xhr.size(0), mask.size()[2:], ctx=ctx)
         final_mask = pred_list[-1]
         final_mask = final_mask.reshape(b, n_f, -1, h, w)
+        mask = mask.reshape(b, n_f, -1, h, w)
+        lr_pred = lr_pred.reshape(b, n_f, -1, h, w)
+        
         final_mask = final_mask * mask + lr_pred * (1-mask)
         output = {'refined_masks': final_mask}
         if self.training:
@@ -217,7 +219,9 @@ class SparseMat(nn.Module):
             mask = mask.view(-1, 1, *mask.shape[-2:])
 
         pred_list = [upas(pred, alphas) for pred in pred_list]
-
+        # import pdb; pdb.set_trace()
+        mask = mask.view_as(alphas)
+        lr_pred = lr_pred.view_as(alphas)
         for i in range(len(pred_list)):
             pred_list[i] = pred_list[i] * mask + lr_pred * (1-mask)
 

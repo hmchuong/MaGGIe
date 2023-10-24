@@ -4,9 +4,8 @@ from vm2m.network.module.fam import FeatureAggregationModule
 from .resnet_dec import BasicBlock, ResShortCut_D_Dec
 
 class ResShortCut_D_Dec_FAM(ResShortCut_D_Dec):
-    def __init__(self, block, layers, norm_layer=None, large_kernel=False, late_downsample=False):
-        super().__init__(block, layers, norm_layer, large_kernel,
-                                                late_downsample=late_downsample)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
         self.fam = FeatureAggregationModule(128, reduction=1, window=9)
     
@@ -18,9 +17,9 @@ class ResShortCut_D_Dec_FAM(ResShortCut_D_Dec):
 
     def forward(self, inputs, mid_fea, xb=None, xf=None, mask=None):
         fea1, fea2, fea3, fea4, fea5 = mid_fea
-        with torch.no_grad():
-            x = self.layer1(inputs) + fea5
-            x = self.layer2(x) + fea4
+        # with torch.no_grad():
+        x = self.layer1(inputs) + fea5
+        x = self.layer2(x) + fea4
         features = x
         if xb is None:
             attb = None
@@ -53,9 +52,9 @@ class ResShortCut_D_Dec_FAM(ResShortCut_D_Dec):
             
         return ret, features, attb, attf, mask
 
-def _res_shortcut_D_dec_fam(block, layers, **kwargs):
-    model = ResShortCut_D_Dec_FAM(block, layers, **kwargs)
+def _res_shortcut_D_dec_fam(**kwargs):
+    model = ResShortCut_D_Dec_FAM(**kwargs)
     return model
 
 def res_shortcut_decoder_fam_22(**kwargs):
-    return _res_shortcut_D_dec_fam(BasicBlock, [2, 3, 3, 2], **kwargs)
+    return _res_shortcut_D_dec_fam(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)
