@@ -1,5 +1,7 @@
 
+from functools import partial
 import os
+import signal
 import itertools
 import random
 import time
@@ -17,6 +19,9 @@ from vm2m.utils.metric import build_metric
 from .optim import build_optim_lr_scheduler
 from .test import val_video as val
 from .train import load_state_dict
+
+global batch
+batch = None
 
 def create_train_dataset(cfg):
     # create syn dataset and real dataset
@@ -43,10 +48,59 @@ def create_test_dataset(cfg):
                                       random_seed=cfg.train.seed, mask_dir_name=dataset_cfg.mask_dir_name, pha_dir=dataset_cfg.alpha_dir_name)
     return syn_dataset, real_dataset
 
+def evaluation_ss(val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratio, global_step):
+    logging.info("Start validation...")
+    _ = [v.reset() for v in val_syn_error_dict.values()]
+    _ = [v.reset() for v in val_real_error_dict.values()]
+    logging.info("Evaluating the synthetic dataset...")
+    _ = val(val_model, val_syn_loader, device, cfg.test.log_iter, val_syn_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+
+    logging.info("Evaluating the real dataset...")
+    _ = val(val_model, val_real_loader, device, cfg.test.log_iter, val_real_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+
+    log_str = "Validation syn data:"
+    for k, v in val_syn_error_dict.items():
+        log_str += "{}: {:.4f}, ".format(k, v.average())
+    logging.info(log_str)
+
+    log_str = "Validation real data:"
+    for k, v in val_real_error_dict.items():
+        log_str += "{}: {:.4f}, ".format(k, v.average())
+    logging.info(log_str)
+
+    # Log wandb
+    if cfg.wandb.use:
+        for k, v in val_syn_error_dict.items():
+            wandb.log({"val/syn_" + k: v.average()}, commit=False)
+        for k, v in val_real_error_dict.items():
+            wandb.log({"val/real_" + k: v.average()}, commit=False)
+        wandb.log({"val/epoch": epoch, 
+                    "val/cycle": i_cycle,
+                    "val/real_ratio": real_ratio,
+                    "val/global_step": global_step
+                    }, commit=True)
+
+
+
+
+def graceful_exit_handler(signum, frame, global_rank):
+    global batch
+    logging.info(f"Exit {signum} Saving batch...")
+    import pickle
+    pickle.dump(batch, open(f"batch_{global_rank}.pkl", "wb"))
+    exit(1)
+
 def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
     if global_rank is None:
         global_rank = rank
     
+    global batch
+    
+    # signal.signal(signal.SIGTERM, partial(graceful_exit_handler, global_rank=global_rank))
+    # signal.signal(signal.SIGINT, partial(graceful_exit_handler, global_rank=global_rank))
+    # signal.signal(signal.SIGQUIT, partial(graceful_exit_handler, global_rank=global_rank))
+    # signal.signal(signal.SIGABRT, partial(graceful_exit_handler, global_rank=global_rank)) 
+
     device = f'cuda:{rank}'
 
     # Create dataset
@@ -134,7 +188,32 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
         if len(mismatch_keys) > 0:
             logging.warn("Mismatch keys: {}".format(mismatch_keys))
 
+    # TODO: Resume training
+    start_epoch = 0
+    start_cycle = 0
+    if cfg.train.resume_last:
+        if os.path.exists(os.path.join(cfg.output_dir, 'last_opt.pth')):
+            logging.info("Resuming last model from {}".format(cfg.output_dir))
+            try:
+                opt_dict = torch.load(os.path.join(cfg.output_dir, 'last_opt.pth'), map_location=device)
+                start_epoch = opt_dict['epoch']
+                start_cycle = opt_dict['cycle']
+                # Load optimizer and lr_scheduler
+                optimizer.load_state_dict(opt_dict['optimizer'])
+                lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
+                logging.info("Done loading optimizer and lr_scheduler")
 
+                model_name = 'model_{}_{}.pth'.format(start_cycle, start_epoch)
+                logging.info("Loading model from {}".format(model_name))
+                state_dict = torch.load(os.path.join(cfg.output_dir, model_name), map_location=device)
+                start_epoch = start_epoch + 1
+                if is_dist:
+                    model.module.load_state_dict(state_dict, strict=True)
+                else:
+                    model.load_state_dict(state_dict, strict=True)
+                logging.info("Resumed from cycle {}, epoch {}".format( start_cycle, start_epoch))
+            except:
+                logging.info("Cannot resume last model from {}".format(cfg.output_dir))
 
 
     batch_time = AverageMeter('batch_time')
@@ -158,9 +237,26 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
 
     real_ratios = torch.linspace(cfg.train.self_train.start_ratio, cfg.train.self_train.end_ratio, n_epochs)
     scaler = GradScaler() if precision == 16 else None
-    for i_cycle in range(n_cycles):
+    syn_epoch = 0
+    real_epoch = 0
+    
+    # Set the epoch
+    if is_dist:
+        train_syn_sampler.set_epoch(syn_epoch)
+        train_real_sampler.set_epoch(real_epoch)
+
+    train_real_iterator = iter(train_real_loader)
+    train_syn_iterator = iter(train_syn_loader)
+    
+    if global_rank == 0 and start_epoch == 0 and start_cycle == 0:
+        model.eval()
+        val_model = model.module if is_dist else model
+        evaluation_ss(val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, 0, 0, 0, 0)
+
+    for i_cycle in range(start_cycle, n_cycles):
         logging.info("Starting cycle: {}".format(i_cycle))
-        for epoch in range(n_epochs):
+        
+        for epoch in range(start_epoch, n_epochs):
             model.train()
 
             # Recompute the ratio of syn and real across GPUs
@@ -172,141 +268,161 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
 
             if is_dist:
                 torch.distributed.broadcast(real_masks, 0)
-
-                # Set the dataset samplers
-                train_syn_sampler.set_epoch(epoch + i_cycle * n_epochs)
-                train_real_sampler.set_epoch(epoch + i_cycle * n_epochs)
-            else:
-                # Reset the dataloader
-                train_syn_sampler._iterator._reset(train_syn_sampler)
-                train_real_sampler._iterator._reset(train_real_sampler)
             
-            train_real_iterator = iter(train_real_loader)
-            train_syn_iterator = iter(train_syn_loader)
             for step in range(n_iters):
-                # Train here
-                global_step = i_cycle * n_epochs * n_iters + epoch * n_iters + step
-                is_real = real_masks[step]
-                batch = None
-                if is_real:
+                try:
+                    # Train here
+                    global_step = i_cycle * n_epochs * n_iters + epoch * n_iters + step
+                    is_real = real_masks[step]
+                    batch = None
+                    if is_real:
+                        try:
+                            batch = next(train_real_iterator)
+                        except StopIteration:
+                            logging.info("End of real dataset, resetting...")
+                            if is_dist:
+                                real_epoch += 1
+                                train_real_sampler.set_epoch(real_epoch)
+                            train_real_iterator = iter(train_real_loader)
+                            batch = next(train_real_iterator)
+                    else:
+                        try:
+                            batch = next(train_syn_iterator)
+                        except StopIteration:
+                            logging.info("End of syn dataset, resetting...")
+                            if is_dist:
+                                syn_epoch += 1
+                                train_syn_sampler.set_epoch(syn_epoch)
+                            train_syn_iterator = iter(train_syn_loader)
+                            batch = next(train_syn_iterator)
+                    
+                    data_time.update(time.time() - end_time)
+
+                    batch = {k: v.to(device) for k, v in batch.items()}
+                    batch['iter'] = global_step
+                    optimizer.zero_grad()
                     try:
-                        batch = next(train_real_iterator)
-                    except StopIteration:
-                        train_real_iterator = iter(train_real_loader)
-                        batch = next(train_real_iterator)
-                else:
-                    try:
-                        batch = next(train_syn_iterator)
-                    except StopIteration:
-                        train_syn_iterator = iter(train_syn_loader)
-                        batch = next(train_syn_iterator)
+                        if precision == 16:
+                            with autocast():
+                                _, loss = model(batch, mem_feat=None, is_real=is_real)
+                        else:
+                            _, loss = model(batch, mem_feat=None, is_real=is_real)
+                    except ValueError as e:
+                        import pickle
+                        pickle.dump(batch, open(f"error_batch_{global_rank}.pkl", "wb"))
+                        raise e
+                    
+                    # import pickle
+                    # pickle.dump(batch, open(f"batch_{global_rank}.pkl", "wb"))
+                    # logging.info("Is real: {}".format(is_real))
+                    # logging.info("batch size {}".format(batch['mask'].shape))
+                    # logging.info("Done forward {}".format(loss['total']))
+
+                    if precision == 16:
+                        scaler.scale(loss['total']).backward()
+                    else:
+                        loss['total'].backward()
+
+                    # logging.info("Done backward")
+
+                    # Clip norm
+                    if precision == 16:
+                        scaler.unscale_(optimizer)
+                    all_params = itertools.chain(*[x["params"] for x in optimizer.param_groups])
+                    torch.nn.utils.clip_grad_norm_(all_params, 0.01)
+                    
+                    # logging.info("Done clipnorm")
+
+                    # Update
+                    if precision == 16:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
+
+                    lr_scheduler.step()
+                    batch_time.update(time.time() - end_time)
+                    # logging.info("Done optimizing")
+
+                    # Store to log_metrics
+                    for k, v in loss.items():
+                        if k not in log_metrics:
+                            log_metrics[k] = AverageMeter(k)
+                        log_metrics[k].update(v.item())
+
+                    # logging.info("Cycle: {}, Epoch: {}, Iter: {}, is_real: {}".format(i_cycle, epoch, step, is_real))
+                    # Logging
+                    if step % cfg.train.log_iter == 0:
+                        log_str = "Cycle: {}, Epoch: {}, Iter: {}, is_real: {}".format(i_cycle, epoch, step, is_real)
+                        for k, v in log_metrics.items():
+                            log_str += ", {}: {:.4f}".format(k, v.avg)
+                        log_str += ", lr: {:.6f}".format(lr_scheduler.get_last_lr()[0])
+                        log_str += ", batch_time: {:.4f}s".format(batch_time.avg)
+                        log_str += ", data_time: {:.4f}s".format(data_time.avg)
+
+                    logging.info(log_str)
+
+                    if global_rank == 0 and cfg.wandb.use and step % cfg.train.log_iter == 0:
+                        for k, v in log_metrics.items():
+                            wandb.log({"train/" + k: v.val}, commit=False)
+                        wandb.log({"train/lr": lr_scheduler.get_last_lr()[0]}, commit=False)
+                        wandb.log({"train/batch_time": batch_time.val}, commit=False)
+                        wandb.log({"train/data_time": data_time.val}, commit=False)
+                        wandb.log({"train/cycle": i_cycle}, commit=False)
+                        wandb.log({"train/epoch": epoch}, commit=False)
+                        wandb.log({"train/iter": step}, commit=False)
+                        wandb.log({"train/global_step": global_step}, commit=True)
+
+                    end_time = time.time()
                 
-                data_time.update(time.time() - end_time)
-
-                batch = {k: v.to(device) for k, v in batch.items()}
-                batch['iter'] = global_step
-                optimizer.zero_grad()
-                if precision == 16:
-                    with autocast():
-                        _, loss = model(batch, mem_feat=None, is_real=is_real)
-                else:
-                    _, loss = model(batch, mem_feat=None, is_real=is_real)
-                
-                # logging.info("Is real: {}".format(is_real))
-                # logging.info("batch size {}".format(batch['mask'].shape))
-                # logging.info("Done forward {}".format(loss['total']))
-
-                if precision == 16:
-                    scaler.scale(loss['total']).backward()
-                else:
-                    loss['total'].backward()
-
-                # logging.info("Done backward")
-
-                # Clip norm
-                if precision == 16:
-                    scaler.unscale_(optimizer)
-                all_params = itertools.chain(*[x["params"] for x in optimizer.param_groups])
-                torch.nn.utils.clip_grad_norm_(all_params, 0.01)
-                
-                # logging.info("Done clipnorm")
-
-                # Update
-                if precision == 16:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-
-                lr_scheduler.step()
-                batch_time.update(time.time() - end_time)
-                # logging.info("Done optimizing")
-
-                # Store to log_metrics
-                for k, v in loss.items():
-                    if k not in log_metrics:
-                        log_metrics[k] = AverageMeter(k)
-                    log_metrics[k].update(v.item())
-
-                # logging.info("Cycle: {}, Epoch: {}, Iter: {}, is_real: {}".format(i_cycle, epoch, step, is_real))
-                # Logging
-                if step % cfg.train.log_iter == 0:
-                    log_str = "Cycle: {}, Epoch: {}, Iter: {}, is_real: {}".format(i_cycle, epoch, step, is_real)
-                    for k, v in log_metrics.items():
-                        log_str += ", {}: {:.4f}".format(k, v.avg)
-                    log_str += ", lr: {:.6f}".format(lr_scheduler.get_last_lr()[0])
-                    log_str += ", batch_time: {:.4f}s".format(batch_time.avg)
-                    log_str += ", data_time: {:.4f}s".format(data_time.avg)
-
-                logging.info(log_str)
-
-                if global_rank == 0 and cfg.wandb.use and step % cfg.train.log_iter == 0:
-                    for k, v in log_metrics.items():
-                        wandb.log({"train/" + k: v.val}, commit=False)
-                    wandb.log({"train/lr": lr_scheduler.get_last_lr()[0]}, commit=False)
-                    wandb.log({"train/batch_time": batch_time.val}, commit=False)
-                    wandb.log({"train/data_time": data_time.val}, commit=False)
-                    wandb.log({"train/cycle": i_cycle}, commit=False)
-                    wandb.log({"train/epoch": epoch}, commit=False)
-                    wandb.log({"train/iter": step}, commit=False)
-                    wandb.log({"train/global_step": global_step}, commit=True)
-
-                end_time = time.time()
-
+                except KeyboardInterrupt as e:
+                    logging.info("Keyboard: Saving batch...")
+                    # import pickle
+                    # pickle.dump(batch, open(f"batch_{global_rank}.pkl", "wb"))
+                    raise e
+                except RuntimeError as e:
+                    logging.info("Runtime: Saving batch...")
+                    # import pickle
+                    # pickle.dump(batch, open(f"batch_{global_rank}.pkl", "wb"))
+                    raise e
+            
             # Evaluate here, both syn and real
             if global_rank == 0:
-                logging.info("Start validation...")
                 model.eval()
                 val_model = model.module if is_dist else model
-                _ = [v.reset() for v in val_syn_error_dict.values()]
-                _ = [v.reset() for v in val_real_error_dict.values()]
-                logging.info("Evaluating the synthetic dataset...")
-                _ = val(val_model, val_syn_loader, device, cfg.test.log_iter, val_syn_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+                evaluation_ss(val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratios[epoch], global_step)
+                # logging.info("Start validation...")
+                # model.eval()
+                # val_model = model.module if is_dist else model
+                # _ = [v.reset() for v in val_syn_error_dict.values()]
+                # _ = [v.reset() for v in val_real_error_dict.values()]
+                # logging.info("Evaluating the synthetic dataset...")
+                # _ = val(val_model, val_syn_loader, device, cfg.test.log_iter, val_syn_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
             
-                logging.info("Evaluating the real dataset...")
-                _ = val(val_model, val_real_loader, device, cfg.test.log_iter, val_real_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+                # logging.info("Evaluating the real dataset...")
+                # _ = val(val_model, val_real_loader, device, cfg.test.log_iter, val_real_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
 
-                log_str = "Validation syn data:"
-                for k, v in val_syn_error_dict.items():
-                    log_str += "{}: {:.4f}, ".format(k, v.average())
-                logging.info(log_str)
+                # log_str = "Validation syn data:"
+                # for k, v in val_syn_error_dict.items():
+                #     log_str += "{}: {:.4f}, ".format(k, v.average())
+                # logging.info(log_str)
 
-                log_str = "Validation real data:"
-                for k, v in val_real_error_dict.items():
-                    log_str += "{}: {:.4f}, ".format(k, v.average())
-                logging.info(log_str)
+                # log_str = "Validation real data:"
+                # for k, v in val_real_error_dict.items():
+                #     log_str += "{}: {:.4f}, ".format(k, v.average())
+                # logging.info(log_str)
 
-                # Log wandb
-                if cfg.wandb.use:
-                    for k, v in val_syn_error_dict.items():
-                        wandb.log({"val/syn_" + k: v.average()}, commit=False)
-                    for k, v in val_real_error_dict.items():
-                        wandb.log({"val/real_" + k: v.average()}, commit=False)
-                    wandb.log({"val/epoch": epoch, 
-                               "val/cycle": i_cycle,
-                               "val/real_ratio": real_ratios[epoch],
-                               "val/global_step": global_step
-                               }, commit=True)
+                # # Log wandb
+                # if cfg.wandb.use:
+                #     for k, v in val_syn_error_dict.items():
+                #         wandb.log({"val/syn_" + k: v.average()}, commit=False)
+                #     for k, v in val_real_error_dict.items():
+                #         wandb.log({"val/real_" + k: v.average()}, commit=False)
+                #     wandb.log({"val/epoch": epoch, 
+                #                "val/cycle": i_cycle,
+                #                "val/real_ratio": real_ratios[epoch],
+                #                "val/global_step": global_step
+                #                }, commit=True)
 
                 # Save the model
                 logging.info("Saving the model...")
@@ -322,7 +438,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 save_path = os.path.join(cfg.output_dir, 'model_{}_{}.pth'.format(i_cycle, epoch))
                 torch.save(val_model.state_dict(), save_path)
 
-
+        start_epoch = 0
     # while iter < cfg.train.max_iter:
         
     #     for _, batch in enumerate(train_loader):

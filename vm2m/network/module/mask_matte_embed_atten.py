@@ -7,7 +7,7 @@ from .mask_attention import MLP, SelfAttentionLayer, CrossAttentionLayer, FFNLay
 
 class MaskMatteEmbAttenHead(nn.Module):
     def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_head=4, 
-                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True, temporal_query='none'):
+                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True, use_temp=False):
         super().__init__()
         
         self.n_block = n_block
@@ -103,21 +103,21 @@ class MaskMatteEmbAttenHead(nn.Module):
             self.ori_feat_proj = nn.Conv2d(input_dim, attention_dim, kernel_size=1, stride=1, padding=0, bias=False)
             nn.init.xavier_uniform_(self.ori_feat_proj.weight)
 
-        self.temporal_query = temporal_query
-        if temporal_query and 'mlp' in temporal_query:
-            self.mem_mlp = FFNLayer(d_model=attention_dim,
-                                    dim_feedforward=attention_dim,
-                                    dropout=0.0,
-                                    normalize_before=False)
-        
-        self.temp_layernorm = nn.LayerNorm(attention_dim)
+        # self.temporal_query = temporal_query
+        # if temporal_query and 'mlp' in temporal_query:
+        #     self.mem_mlp = FFNLayer(d_model=attention_dim,
+        #                             dim_feedforward=attention_dim,
+        #                             dropout=0.0,
+        #                             normalize_before=False)
+        if use_temp:
+            self.temp_layernorm = nn.LayerNorm(attention_dim)
 
-        if temporal_query and 'lstm' in temporal_query:
-            self.query_lstm = nn.LSTM(attention_dim, attention_dim, batch_first=True)
-            # self.temp_layernorm = nn.LayerNorm(attention_dim)
-            for p in self.query_lstm.parameters():
-                if p.dim() > 1:
-                    nn.init.xavier_uniform_(p)
+        # if temporal_query and 'lstm' in temporal_query:
+        #     self.query_lstm = nn.LSTM(attention_dim, attention_dim, batch_first=True)
+        #     # self.temp_layernorm = nn.LayerNorm(attention_dim)
+        #     for p in self.query_lstm.parameters():
+        #         if p.dim() > 1:
+        #             nn.init.xavier_uniform_(p)
     
     def compute_atten_loss(self, b, n_f, guidance_mask, atten_mat):
         # Compute loss on attention mat: max at guidance, min at non-guidance
@@ -168,7 +168,7 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         # Build tokens from mask and feat with MAP + Conv
         scale_factor = feat.shape[-1] * 1.0 / mask.shape[-1] * 1.0
-        mask = resizeAnyShape(mask, scale_factor=scale_factor, use_max_pool=True) 
+        mask = resizeAnyShape(mask, scale_factor=scale_factor, use_avg_pool_binary=True) 
         b, n_f= mask.shape[:2]
         h, w = feat.shape[-2:]
 
@@ -434,25 +434,25 @@ class MaskMatteEmbAttenHead(nn.Module):
         )
 
         # TODO: Aggregate the memory here
-        mem_tokens = None
-        if self.temporal_query and self.temporal_query != 'none': # and prev_tokens is not None:
-            # tokens = tokens + prev_tokens
+        # mem_tokens = None
+        # if self.temporal_query and self.temporal_query != 'none': # and prev_tokens is not None:
+        #     # tokens = tokens + prev_tokens
             
-            if 'lstm' in self.temporal_query:
-                if prev_tokens is None:
-                    tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None])
-                else:
-                    tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None], prev_tokens) 
-                tokens = tokens.reshape(-1, n_f * b, self.atten_dim)
-                mem_tokens = (h_mem, c_mem)
-            elif prev_tokens is not None:
-                tokens = tokens + prev_tokens
-            # tokens = self.temp_layernorm(tokens)
+        #     if 'lstm' in self.temporal_query:
+        #         if prev_tokens is None:
+        #             tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None])
+        #         else:
+        #             tokens, (h_mem, c_mem) = self.query_lstm(tokens.flatten(0,1)[:, None], prev_tokens) 
+        #         tokens = tokens.reshape(-1, n_f * b, self.atten_dim)
+        #         mem_tokens = (h_mem, c_mem)
+        #     elif prev_tokens is not None:
+        #         tokens = tokens + prev_tokens
+        #     # tokens = self.temp_layernorm(tokens)
 
-            if 'mlp' in self.temporal_query:
-                tokens = self.mem_mlp(tokens) 
-            if mem_tokens is None:
-                mem_tokens = tokens
+        #     if 'mlp' in self.temporal_query:
+        #         tokens = self.mem_mlp(tokens) 
+        #     if mem_tokens is None:
+        #         mem_tokens = tokens
 
 
         

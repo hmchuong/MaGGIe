@@ -13,6 +13,10 @@ sh scripts/prepare_him_syn.sh
 echo "Starting training..."
 cd $ROOT_DIR
 
-CONFIG=configs/HIM/mgm_spconv_multi-inst_atten-loss_him_bs12_1007.yaml
+CONFIG=configs/HIM/ours_1023.yaml
+NAME=ours_1023
+# torchrun --standalone --nproc_per_node=$RUNAI_NUM_OF_GPUS  tools/main_ddp.py \
+#                     --config $CONFIG --precision 16 name $NAME
+
 torchrun --nproc_per_node=$RUNAI_NUM_OF_GPUS --nnodes=$WORLD_SIZE --node_rank=$RANK --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT  tools/main_ddp.py \
-                    --config $CONFIG --precision 16 name ours_1007_1 model.loss_alpha_grad_w 0.0
+                    --config $CONFIG --precision 16 name $NAME

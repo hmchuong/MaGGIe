@@ -6,6 +6,7 @@ import logging
 import torch
 from torch.nn import functional as F
 from torch.utils.data import Dataset
+from vm2m.utils.utils import resizeAnyShape
 try:
     from . import transforms as T
     from .utils import gen_transition_temporal_gt, gen_transition_gt, gen_diff_mask
@@ -26,6 +27,7 @@ class MultiInstVidDataset(Dataset):
         self.mask_dir_name = mask_dir_name
         self.pha_dir = pha_dir
         self.weight_mask_dir = weight_mask_dir
+        self.is_ss_dataset = is_ss_dataset
 
         self.video_infos = {} # {video_name: [list of sorted frame names]}
         self.frame_ids = [] # (video_name, start_frame_id)
@@ -101,6 +103,8 @@ class MultiInstVidDataset(Dataset):
         fg_dir = os.path.join(self.root_dir, self.pha_dir)
         for video_name in sorted(os.listdir(fg_dir)):
             self.load_video_frame(video_name, overlap)
+        # self.frame_ids = [x for x in self.frame_ids if x[0] == '6_production_id_4880458_2160p']
+        # self.frame_ids = self.frame_ids[-100:]
     
     def __getitem__(self, idx):
         video_name, start_frame_id = self.frame_ids[idx]
@@ -132,7 +136,7 @@ class MultiInstVidDataset(Dataset):
             alpha_paths.extend(alpha_path)
 
         # In training, drop randomly an instance:
-        if self.is_train and self.random.rand() < 0.2:
+        if self.is_train and self.random.rand() < 0.2 and not self.is_ss_dataset:
             n_inst = len(alpha_paths) // len(frame_paths)
             if n_inst > 1:
                 drop_inst_id = self.random.randint(0, n_inst)
@@ -167,7 +171,7 @@ class MultiInstVidDataset(Dataset):
         if not self.is_train:
             alphas = output_dict["ori_alphas"]
         
-        if (masks.sum() == 0 or alphas.sum() == 0) and self.is_train:
+        if (masks.sum() == 0 or alphas.sum() == 0 or (masks.sum((1, 2, 3)) == 0).any()) and self.is_train:
             return self.__getitem__(self.random.randint(0, len(self)))
         
         # Padding instances
@@ -210,7 +214,17 @@ class MultiInstVidDataset(Dataset):
         alphas = alphas * 1.0 / 255
         masks = masks * 1.0 / 255
         weights = weights * 1.0 / 255
-
+        
+        # Small masks may caused error in attention
+        
+       
+        # if small_masks.sum() == 0:
+        #     print(small_masks.sum())
+        if self.is_train:
+            small_masks = resizeAnyShape(masks, scale_factor=0.125, use_max_pool=True)
+            if small_masks.sum() == 0:
+                return self.__getitem__(self.random.randint(0, len(self)))
+        
         out =  {'image': frames,
                 'mask': masks.float(),
                 'alpha': alphas.float(), 
@@ -235,11 +249,22 @@ if __name__ == "__main__":
     #                 max_step_size=5, random_seed=2023)
     # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="test", clip_length=8, overlap=2, is_train=False, short_size=576, 
     #                 random_seed=2023)
-    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/syn", split="pexels-train", clip_length=8, overlap=2, padding_inst=10, is_train=False, short_size=576, 
+    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/syn", split="pexels-train", clip_length=8, overlap=2, padding_inst=10, is_train=False, short_size=576, 
+    #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
+    #                 max_step_size=5, random_seed=2023, mask_dir_name='xmem_rename', pha_dir='xmem_rename', weight_mask_dir='', is_ss_dataset=True)
+    # from torch.utils import data as torch_data
+
+    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/syn/benchmark", split="real_qual_filtered", clip_length=3, overlap=2, padding_inst=10, is_train=False, short_size=576, 
                     crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-                    max_step_size=5, random_seed=2023, mask_dir_name='xmem_rename', pha_dir='xmem_rename', weight_mask_dir='')
+                    max_step_size=5, random_seed=2023, mask_dir_name='xmem', pha_dir='xmem', weight_mask_dir='', is_ss_dataset=False)
+    # dataloader = torch_data.DataLoader(
+    #     dataset, batch_size=1, shuffle=False, pin_memory=True,
+    #     sampler=None,
+    #     num_workers=16)
     import shutil
-    for batch in dataset:
+    for batch_i, batch in enumerate(dataset):
+        # print(batch_i, len(dataloader))
+        # continue
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
         weights = batch["weight"]
         print(frames.shape, masks.shape, alphas.shape, transition_gt.shape)

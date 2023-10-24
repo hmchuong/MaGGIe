@@ -1,5 +1,6 @@
 import glob
 import os
+import logging
 import numpy as np
 from PIL import Image
 import torch
@@ -187,7 +188,9 @@ class HIMDataset(Dataset):
         
         if not self.is_train:
             alpha = output_dict["ori_alphas"]
-
+        if mask.sum() == 0:
+            logging.warning("Mask is empty")
+            return self.__getitem__(self.random.randint(0, len(self.data)))
         alpha = alpha * 1.0 / 255
         mask = mask * 1.0 / 255
         add_padding = self.padding_inst - len(alphas)

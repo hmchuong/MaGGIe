@@ -14,7 +14,8 @@ if [ ! -d "syn" ]; then
     sudo mv s5cmd /usr/local/bin/s5cmd
     s5cmd cp -n -s -u --sp "s3://a-chuonghm/syn_new/*" syn/
     cd syn
-    s5cmd cp -n -s -u --sp "s3://a-chuonghm/pexels-train/*" pexels-train/
+    mkdir pexels-train
     cd pexels-train
-    mv fg fgr
+    s5cmd cp -n -s -u --sp "s3://a-chuonghm/pexels-train/fgr_clean/*" fgr/
+    s5cmd cp -n -s -u --sp "s3://a-chuonghm/pexels-train/xmem_clean/*" xmem/
 fi

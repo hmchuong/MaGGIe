@@ -54,7 +54,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
                  late_downsample=False, final_channel=32,
                  atten_dim=128, atten_block=2, 
                  atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000,
-                  use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, **kwargs):
+                  use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, \
+                    use_temp=False, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -107,7 +108,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             return_feat=True,
             use_temp_pe=False,
             use_id_pe=use_id_pe,
-            temporal_query=use_query_temp
+            use_temp=use_temp
         )
         relu_layer = nn.ReLU(inplace=True)
         # Image low-level feature extractor
@@ -360,7 +361,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # use mask attention during warmup of training
         use_mask_atten = iter < self.warmup_mask_atten_iter and self.training
         # import pdb; pdb.set_trace()
-        x_os8, x, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
+        x_os8, x, _, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
                                                                             prev_tokens=mem_query if self.use_query_temp else None, 
                                                                             use_mask_atten=use_mask_atten, gt_mask=gt_masks)
 
@@ -697,7 +698,7 @@ class ResShortCut_AttenSpconv_InconsistTemp_Dec(ResShortCut_AttenSpconv_Dec):
 
 class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
     def __init__(self, temp_method='bi', **kwargs):
-        super().__init__(**kwargs)
+        super().__init__(use_temp=True, **kwargs)
         
         self.temp_method = temp_method.split("_")[0]
         self.use_fusion = 'fusion' in temp_method
@@ -897,6 +898,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         # Upsample - normalize OS8 pred
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
+        # import pdb; pdb.set_trace()
 
         # for i in range(3):
         #     vis_map = mem_os8[0,i].mean(0)
@@ -916,6 +918,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
         guided_mask_os8 = x_os8
         if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 3 and random.random() < 0.5)):
+            logging.error('error happening')
             guided_mask_os8 = gt_alphas.clone()
         
         # Compute unknown regions

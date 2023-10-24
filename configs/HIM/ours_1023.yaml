@@ -1,14 +1,15 @@
 dataset:
   test:
-    alpha_dir_name: pha
-    clip_length: 3
+    alpha_dir_name: alphas
+    clip_length: 8
     clip_overlap: 2
-    downscale_mask: false
+    downscale_mask: true
     mask_dir_name: ''
-    name: MultiInstVideo
-    root_dir: /mnt/localssd/syn/benchmark
+    name: HIM
+    random_seed: 2023
+    root_dir: /mnt/localssd/HIM2K
     short_size: 576
-    split: comp_medium
+    split: comp
     use_thresh_mask: false
   train:
     bg_dir: ''
@@ -30,23 +31,22 @@ dataset:
     downscale_mask: false
     downscale_mask_p: 0.5
     flip_prob: 0.5
-    mask_dir_name: xmem
-    max_inst: 2
-    max_step_size: 5
+    mask_dir_name: masks_matched
+    max_inst: 3
+    max_step_size: 2
     modify_mask_p: 0.1
-    name: MultiInstVideo
+    name: HIM
     padding_inst: 10
+    pha_dir: pha
     random_state: 2023
-    root_dir: /mnt/localssd/syn
+    root_dir: /mnt/localssd/HHM
     short_size: 576
-    split: train
-    ss_split: pexels-train
+    split: synthesized
     use_maskrcnn_p: 0.2
     use_single_instance_only: true
+    weight_mask_dir: ''
 model:
-  sync_bn: true
-  arch: MGM_SS
-  # arch: MGM
+  arch: MGM
   aspp:
     in_channels: 512
     out_channels: 512
@@ -55,7 +55,6 @@ model:
     num_embed: 3
     num_mask: 10
     pretrained: true
-    shortcut_dropout: 0.0
   breakdown:
     in_channels:
     - 32
@@ -64,26 +63,19 @@ model:
     in_features:
     - os4
     - os1
-  # decoder: res_shortcut_attention_spconv_inconsisttemp_decoder_22
-  # decoder: res_shortcut_attention_spconv_decoder_22
-  decoder: res_shortcut_attention_spconv_bitempspar_decoder_22
+  decoder: res_shortcut_attention_spconv_decoder_22
   decoder_args:
     atten_block: 2
     atten_dim: 128
     atten_head: 1
     atten_stride: 1
-    embed_dim: 3
+    detail_mask_dropout: 0.1
     final_channel: 64
     head_channel: 120
     max_inst: 10
-    stm_dropout: 0.0
-    use_detail_temp: False
-    use_id_pe: True
-    # use_query_temp: False
-    use_query_temp: False #'mlp'
+    use_id_pe: true
+    warmup_detail_iter: 3000
     warmup_mask_atten_iter: 0
-    warmup_detail_iter: 0 #1000
-    temp_method: 'bi_fusion'
   dynamic_kernel:
     dec_layers: 5
     dim_feedforward: 256
@@ -98,18 +90,18 @@ model:
     out_incoherence: 157
     out_pixeldecoder: 864
     pre_norm: false
-  loss_alpha_grad_w: 0.0 #25
+  loss_alpha_grad_w: 0.0
   loss_alpha_lap_w: 0.25
   loss_alpha_type: l1
   loss_alpha_w: 1.0
   loss_atten_w: 1.0
   loss_comp_w: 0.0
-  loss_dtSSD_w: 1.0
+  loss_dtSSD_w: 0.0
   loss_multi_inst_type: smooth_l1_0.5
   loss_multi_inst_w: 0.25
-  loss_multi_inst_warmup: 0 #1500
+  loss_multi_inst_warmup: 4000
   mgm:
-    warmup_iter: 0 #1000
+    warmup_iter: 3000
   refinement:
     n_test_points: 16000
     n_train_points: 2048
@@ -124,17 +116,19 @@ model:
   - 64
   - 128
   - 256
-  weights: output/VHM/ours_vhm_atten-conv-gru-os8-x2/best_model.pth
-name: ours_ss_1022
-output_dir: output/VHM
+  sync_bn: true
+  weights: ''
+name: ours_1023
+output_dir: output/HIM
 test:
   batch_size: 1
-  log_iter: 50
+  log_iter: 100
   metrics:
   - MAD
   - MSE
   - SAD
-  - dtSSD
+  - Grad
+  - Conn
   num_workers: 4
   postprocessing: false
   save_dir: logs
@@ -142,21 +136,15 @@ test:
   temp_aggre: false
   use_trimap: true
 train:
-  batch_size: 6
-  log_iter: 1
-  self_train:
-    use: true
-    max_cycles: 10
-    epoch_per_cycle: 10
-    iter_per_epoch: 500
-    start_ratio: 0.01
-    end_ratio: 0.2
-  num_workers: 8
+  batch_size: 12
+  log_iter: 10
+  max_iter: 52000
+  num_workers: 4
   optimizer:
     betas:
     - 0.9
     - 0.999
-    lr: 0.00001
+    lr: 0.00015
     momentum: 0.9
     name: adamw
     weight_decay: 0.01
@@ -168,15 +156,14 @@ train:
     power: 0.9
     step_size: 10000
     warmup_iters: 1000
-  seed: 1105
+  seed: 1234
   val_best_metric: MAD
-  val_dist: False
+  val_dist: true
   val_iter: 500
   val_metrics:
   - MAD
   - MSE
   - SAD
-  - dtSSD
   vis_iter: 50
 wandb:
   entity: research-dmo
