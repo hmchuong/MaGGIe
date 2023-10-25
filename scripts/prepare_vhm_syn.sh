@@ -14,9 +14,9 @@ if [ ! -d "syn" ]; then
     sudo mv s5cmd /usr/local/bin/s5cmd
     s5cmd cp -n -s -u --sp "s3://a-chuonghm/syn_new/*" syn/
 fi
-if [ ! -d "VIPSeg" ]; then
-    mkdir -p VIPSeg
-    cd VIPSeg
-    rsync -P /sensei-fs/users/chuongh/data/vm2m/VIPSeg_filter_human.zip .
-    unzip -q VIPSeg_filter_human.zip
-fi
+# if [ ! -d "VIPSeg" ]; then
+#     mkdir -p VIPSeg
+#     cd VIPSeg
+#     rsync -P /sensei-fs/users/chuongh/data/vm2m/VIPSeg_filter_human.zip .
+#     unzip -q VIPSeg_filter_human.zip
+# fi
