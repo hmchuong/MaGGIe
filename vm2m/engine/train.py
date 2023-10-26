@@ -96,7 +96,7 @@ def wandb_log_image(batch, output, iter):
         log_images.append(log_alpha(output['alpha_os4'], 'alpha_os4_pred', index, inst_index))
     if 'alpha_os8' in output:
         log_images.append(log_alpha(output['alpha_os8'], 'alpha_os8_pred', index, inst_index))
-    wandb.log({"examples/all": log_images}, step=iter, commit=True)
+    wandb.log({"examples/all": log_images}, commit=False)
 
 def load_state_dict(model, state_dict):
     current_state_dict = model.state_dict()

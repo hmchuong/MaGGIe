@@ -18,7 +18,7 @@ from vm2m.utils.metric import build_metric
 
 from .optim import build_optim_lr_scheduler
 from .test import val_video as val
-from .train import load_state_dict
+from .train import load_state_dict, wandb_log_image
 
 global batch
 batch = None
@@ -206,12 +206,12 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 model_name = 'model_{}_{}.pth'.format(start_cycle, start_epoch)
                 logging.info("Loading model from {}".format(model_name))
                 state_dict = torch.load(os.path.join(cfg.output_dir, model_name), map_location=device)
-                start_epoch = start_epoch + 1
                 if is_dist:
                     model.module.load_state_dict(state_dict, strict=True)
                 else:
                     model.load_state_dict(state_dict, strict=True)
                 logging.info("Resumed from cycle {}, epoch {}".format( start_cycle, start_epoch))
+                start_epoch = start_epoch + 1
             except:
                 logging.info("Cannot resume last model from {}".format(cfg.output_dir))
 
@@ -248,7 +248,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
     train_real_iterator = iter(train_real_loader)
     train_syn_iterator = iter(train_syn_loader)
     
-    if global_rank == 0 and start_epoch == 0 and start_cycle == 0:
+    if global_rank == 0:
         model.eval()
         val_model = model.module if is_dist else model
         evaluation_ss(val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, 0, 0, 0, 0)
@@ -297,21 +297,35 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                             batch = next(train_syn_iterator)
                     
                     data_time.update(time.time() - end_time)
+                    
+                    # import pickle
+                    # load_batch = pickle.load(open(f'/home/chuongh/vm2m/error_batch_{global_rank}.pkl', 'rb'))
+                    # is_real = True
+                    # batch = {k: v.to(device) for k, v in load_batch.items() if k != 'iter'}
+                    # batch['iter'] = load_batch['iter']
 
                     batch = {k: v.to(device) for k, v in batch.items()}
                     batch['iter'] = global_step
+
                     optimizer.zero_grad()
                     try:
                         if precision == 16:
                             with autocast():
-                                _, loss = model(batch, mem_feat=None, is_real=is_real)
+                                output, loss = model(batch, mem_feat=None, is_real=is_real)
                         else:
-                            _, loss = model(batch, mem_feat=None, is_real=is_real)
+                            output, loss = model(batch, mem_feat=None, is_real=is_real)
                     except ValueError as e:
                         import pickle
                         pickle.dump(batch, open(f"error_batch_{global_rank}.pkl", "wb"))
                         raise e
                     
+                    if global_rank == 0 and is_real and cfg.wandb.use:
+                        # Visualize to wandb
+                        try:
+                            wandb_log_image(batch, output, global_step)
+                        except:
+                            pass
+
                     # import pickle
                     # pickle.dump(batch, open(f"batch_{global_rank}.pkl", "wb"))
                     # logging.info("Is real: {}".format(is_real))

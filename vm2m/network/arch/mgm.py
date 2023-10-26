@@ -133,7 +133,7 @@ class MGM(nn.Module):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
         ### Progressive Refinement Module in MGMatting Paper
-        alpha_pred = alpha_pred_os8.clone().detach()
+        alpha_pred = alpha_pred_os8.clone()
         weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
         alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
         weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)

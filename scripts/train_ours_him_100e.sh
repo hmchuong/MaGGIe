@@ -13,8 +13,8 @@ sh scripts/prepare_him_syn.sh
 echo "Starting training..."
 cd $ROOT_DIR
 
-CONFIG=configs/HIM/ours_1023.yaml
-NAME=ours_1023
+CONFIG=configs/HIM/ours_1025.yaml
+NAME=ours_1025_no-mask-mod_eval-natural
 # torchrun --standalone --nproc_per_node=$RUNAI_NUM_OF_GPUS  tools/main_ddp.py \
 #                     --config $CONFIG --precision 16 name $NAME
 

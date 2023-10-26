@@ -151,7 +151,7 @@ def gen_roi_mask(prev_pred, curr_pred):
     union = prev_dilated | cur_dilated
     return union.transpose(2,0,1)
 
-def get_single_vide_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device):
+def get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device):
     current_metrics = {}
 
     if callback:
@@ -209,7 +209,7 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
 
                 if len(all_preds) > 0:
                     
-                    get_single_vide_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
+                    get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
 
                     # Free the saving frames
                     all_preds = []
@@ -318,7 +318,7 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             #     mem_feats = mem_feats[:, -2:]
 
             if i == len(val_loader) - 1:
-                get_single_vide_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
+                get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
 
             # Logging
             if i % log_iter == 0:

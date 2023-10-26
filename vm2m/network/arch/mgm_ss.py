@@ -1,3 +1,4 @@
+import cv2
 import torch
 from torch.nn import functional as F
 import albumentations as A
@@ -9,6 +10,9 @@ class MGM_SS(MGM_TempSpar):
         
         # Add the motion consistency loss
         self.motion_aug = A.MotionBlur(p=1.0, blur_limit=(3, 49))
+
+        kernel_size = 30
+        self.dilate_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
     
     def generate_motion_input(self, images, masks, kernel):
         '''
@@ -72,17 +76,19 @@ class MGM_SS(MGM_TempSpar):
         alpha_os1 = out['alpha_os1']
         alpha_os4 = out['alpha_os4']
         alpha_os8 = out['alpha_os8']
+        refined_masks = out['refined_masks']
         n_samples = alpha_os1.shape[0]
 
         alpha_pred = {
             "alpha_os1": alpha_os1[n_samples//2:],
             "alpha_os4": alpha_os4[n_samples//2:],
-            "alpha_os8": alpha_os8[n_samples//2:]
+            "alpha_os8": alpha_os8[n_samples//2:],
+            "refined_masks": refined_masks[n_samples//2:],
         }
 
         # warp alpha
         b, n_f, n_i, h, w = alpha_os1.shape
-        inputs = torch.cat([alpha_os1[:n_samples//2], alpha_os4[:n_samples//2], alpha_os8[:n_samples//2]], dim=1)
+        inputs = torch.cat([alpha_os1[:n_samples//2], alpha_os4[:n_samples//2], alpha_os8[:n_samples//2], refined_masks[:n_samples//2]], dim=1)
         inputs = inputs.flatten(0,1)
         kernel = kernel.type_as(inputs)
         kernel = kernel.expand(inputs.shape[1], 1, -1, -1)
@@ -93,7 +99,8 @@ class MGM_SS(MGM_TempSpar):
         alpha_pred_warp = {
             "alpha_os1": out[:, :n_f],
             "alpha_os4": out[:, n_f:2*n_f],
-            "alpha_os8": out[:, 2*n_f:]
+            "alpha_os8": out[:, 2*n_f:3*n_f],
+            "refined_masks": out[:, 3*n_f:]
         }
         return alpha_pred_warp, alpha_pred
     
@@ -113,6 +120,18 @@ class MGM_SS(MGM_TempSpar):
             merged_out[k] = new_out
         return merged_out
 
+    def dilate_mask(self, mask):
+        mask_shape = mask.shape
+        mask_device = mask.device
+        mask_type = mask.dtype
+        mask = mask.flatten(0, 2)
+        mask = mask.permute(1, 2, 0)
+        mask = mask.detach().cpu().numpy().astype('uint8')
+        mask = cv2.dilate(mask, self.dilate_kernel)
+        mask = torch.from_numpy(mask).to(mask_device).type(mask_type)
+        mask = mask.permute(2, 0, 1)
+        mask = mask.view(*mask_shape)
+        return mask
 
     def forward(self, batch, is_real=False,**kwargs):
         
@@ -193,12 +212,17 @@ class MGM_SS(MGM_TempSpar):
         if not is_real:
             return super().forward(batch, **kwargs)
         
+        # import pdb; pdb.set_trace()
         
         iter = batch["iter"]
         valid_masks = batch['mask'].sum((-1, -2), keepdim=True) > 0
         
         # Apply motion blur to the input without gt and generate additional input
         motion_kernel = self.motion_aug.get_params()["kernel"]
+        # import pickle
+        # device_id = batch["image"].device.index
+        # pickle.dump(motion_kernel, open(f"motion_kernel_{device_id}.pkl", "wb"))
+
         motion_kernel = torch.from_numpy(motion_kernel).to(batch["image"].device)
 
         motioned_images, motioned_masks = self.generate_motion_input(batch["image"], batch["mask"], motion_kernel)
@@ -220,9 +244,73 @@ class MGM_SS(MGM_TempSpar):
         # Compute motion consistency loss for the input without gt
         # weight = alpha_pred_warp['alpha_os1'].sum((-1, -2), keepdim=True)
         # import pdb; pdb.set_trace()
-        weight = torch.ones_like(alpha_pred_warp['alpha_os1'])
-        weight = weight * valid_masks
+
+        # weight = torch.ones_like(alpha_pred_warp['alpha_os1'])
+        # weight = weight * valid_masks
+
+        # Combine OS8, OS4, and OS1
+        pred_warp = alpha_pred_warp["refined_masks"]
+        pred = alpha_pred["refined_masks"]
         
+        # FG/ Unknown mask: Dilate the input masks and union them
+        dilated_masks = self.dilate_mask(real_batch['mask'])
+        dilated_masks = dilated_masks.sum(0, keepdim=True)
+        # cv2.imwrite("test_dilate_mask.png", real_batch['mask'][0,0, 2].cpu().numpy()* 255) 
+        # cv2.imwrite("test_dilate_mask.png", dilated_masks[0,0, 2].cpu().numpy()* 255)
+        # import pdb; pdb.set_trace()
+
+        # BG loss outside the mask region to remove noise
+        bg_masks = (dilated_masks < 0.5).float()
+
+        # FG loss inside the mask region
+        loss_dict = {}
+        loss_dict['loss_fg'] = self.custom_regression_loss(pred_warp, pred, weight=dilated_masks)
+        loss_dict['loss_bg_warp'] = self.custom_regression_loss(pred_warp, torch.zeros_like(pred_warp), weight=bg_masks)
+        loss_dict['loss_bg_pred'] = self.custom_regression_loss(pred, torch.zeros_like(pred), weight=bg_masks)
+        
+        loss_dict['total'] = loss_dict['loss_fg'] + loss_dict['loss_bg_warp'] + loss_dict['loss_bg_pred']
+
+        return real_out, loss_dict
+
+        # import cv2
+        # Check images
+        # for i_f in range(weight.shape[1]):
+        #     image_before = real_batch['image'][0,i_f]
+        #     image_after = real_batch['image'][1,i_f]
+        #     denorm_image_before = image_before * torch.tensor([0.229, 0.224, 0.225], device=image_before.device).view(3,1,1) + torch.tensor([0.485, 0.456, 0.406], device=image_before.device).view(3,1,1)
+        #     denorm_image_after = image_after * torch.tensor([0.229, 0.224, 0.225], device=image_after.device).view(3,1,1) + torch.tensor([0.485, 0.456, 0.406], device=image_after.device).view(3,1,1)
+        #     denorm_image_before = denorm_image_before.permute(1,2,0).cpu().numpy()
+        #     denorm_image_after = denorm_image_after.permute(1,2,0).cpu().numpy()
+        #     import cv2
+        #     cv2.imwrite(f"image_before.png", denorm_image_before[:, :, ::-1] * 255)
+        #     cv2.imwrite(f"image_after.png", denorm_image_after[:, :, ::-1] * 255)
+        #     import pdb; pdb.set_trace()
+
+        # Check masks
+
+        # for i_f in range(weight.shape[1]):
+        #     valid_mask_ids = torch.nonzero(weight.sum((0, 1, 3, 4))).flatten()
+        #     for id in valid_mask_ids:
+        #         mask_before = real_batch['mask'][0,i_f,id]
+        #         mask_after = real_batch['mask'][1,i_f,id]
+        #         alpha_before = real_out['alpha_os8'][0,i_f,id]
+        #         alpha_after = real_out['alpha_os8'][1,i_f,id]
+        #         alpha_correct =  alpha_pred_warp['alpha_os8'][0,i_f,id]
+        #         alpha_pred_motion = alpha_pred['alpha_os8'][0,i_f,id]
+        #         denorm_mask_before = mask_before.float().cpu().numpy()
+        #         denorm_mask_after = mask_after.float().cpu().numpy()
+        #         denorm_alpha_before = alpha_before.float().detach().cpu().numpy()
+        #         denorm_alpha_after = alpha_after.float().detach().cpu().numpy()
+        #         denorm_alpha_correct = alpha_correct.float().detach().cpu().numpy()
+        #         denorm_alpha_pred_motion = alpha_pred_motion.float().detach().cpu().numpy()
+                
+        #         cv2.imwrite(f"mask_before.png", denorm_mask_before * 255)
+        #         cv2.imwrite(f"mask_after.png", denorm_mask_after * 255)
+        #         cv2.imwrite(f"alpha_before.png", denorm_alpha_before * 255)
+        #         cv2.imwrite(f"alpha_after.png", denorm_alpha_after * 255)
+        #         cv2.imwrite(f"alpha_correct.png", denorm_alpha_correct * 255)
+        #         cv2.imwrite(f"alpha_pred_motion.png", denorm_alpha_pred_motion * 255)
+        #         import pdb; pdb.set_trace()
 
         loss_dict = {}
         loss_dict['loss_mo_os1'] = self.custom_regression_loss(alpha_pred_warp['alpha_os1'].detach(), alpha_pred['alpha_os1'], weight=weight) # F.l1_loss(alpha_pred_warp['alpha_os1'], alpha_pred['alpha_os1'], reduction='sum') / weight.sum()

@@ -91,17 +91,25 @@ class HIMDataset(Dataset):
             T.Stack()
         ]
         if self.is_train:
+            # self.transforms += [
+            #     T.RandomCropByAlpha(crop, self.random),
+            #     T.RandomHorizontalFlip(self.random, flip_p),
+            #     T.ChooseOne(self.random, [
+            #         T.ModifyMaskBoundary(self.random, modify_mask_p),
+            #         T.Compose([
+            #             T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+            #             T.DownUpMask(self.random, 0.125, downscale_mask_p)
+            #         ])
+            #     ])
+                
+            # ]
             self.transforms += [
                 T.RandomCropByAlpha(crop, self.random),
                 T.RandomHorizontalFlip(self.random, flip_p),
-                T.ChooseOne(self.random, [
-                    T.ModifyMaskBoundary(self.random, modify_mask_p),
-                    T.Compose([
-                        T.RandomBinarizedMask(self.random, bin_alpha_max_k),
-                        T.DownUpMask(self.random, 0.125, downscale_mask_p)
-                    ])
+                T.Compose([
+                    T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+                    T.DownUpMask(self.random, 0.125, downscale_mask_p)
                 ])
-                
             ]
         else:
             if self.mask_dir_name == '':
