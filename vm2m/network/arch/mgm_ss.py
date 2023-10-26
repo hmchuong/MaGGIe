@@ -245,8 +245,46 @@ class MGM_SS(MGM_TempSpar):
         # weight = alpha_pred_warp['alpha_os1'].sum((-1, -2), keepdim=True)
         # import pdb; pdb.set_trace()
 
-        # weight = torch.ones_like(alpha_pred_warp['alpha_os1'])
-        # weight = weight * valid_masks
+        weight = torch.ones_like(alpha_pred_warp['alpha_os1'])
+        weight = weight * valid_masks
+
+        # import cv2
+        # Check images
+        # for i_f in range(weight.shape[1]):
+        #     image_before = real_batch['image'][0,i_f]
+        #     image_after = real_batch['image'][1,i_f]
+        #     denorm_image_before = image_before * torch.tensor([0.229, 0.224, 0.225], device=image_before.device).view(3,1,1) + torch.tensor([0.485, 0.456, 0.406], device=image_before.device).view(3,1,1)
+        #     denorm_image_after = image_after * torch.tensor([0.229, 0.224, 0.225], device=image_after.device).view(3,1,1) + torch.tensor([0.485, 0.456, 0.406], device=image_after.device).view(3,1,1)
+        #     denorm_image_before = denorm_image_before.permute(1,2,0).cpu().numpy()
+        #     denorm_image_after = denorm_image_after.permute(1,2,0).cpu().numpy()
+        #     cv2.imwrite(f"image_before_{i_f}.png", denorm_image_before[:, :, ::-1] * 255)
+        #     cv2.imwrite(f"image_after_{i_f}.png", denorm_image_after[:, :, ::-1] * 255)
+
+        # Check masks
+
+        # for i_f in range(weight.shape[1]):
+        #     valid_mask_ids = torch.nonzero(weight.sum((0, 1, 3, 4))).flatten()
+        #     for id in valid_mask_ids:
+        #         mask_before = real_batch['mask'][0,i_f,id]
+        #         mask_after = real_batch['mask'][1,i_f,id]
+        #         alpha_before = real_out['refined_masks'][0,i_f,id]
+        #         alpha_after = real_out['refined_masks'][1,i_f,id]
+        #         alpha_correct =  alpha_pred_warp['refined_masks'][0,i_f,id]
+        #         alpha_pred_motion = alpha_pred['refined_masks'][0,i_f,id]
+        #         denorm_mask_before = mask_before.float().cpu().numpy()
+        #         denorm_mask_after = mask_after.float().cpu().numpy()
+        #         denorm_alpha_before = alpha_before.float().detach().cpu().numpy()
+        #         denorm_alpha_after = alpha_after.float().detach().cpu().numpy()
+        #         denorm_alpha_correct = alpha_correct.float().detach().cpu().numpy()
+        #         denorm_alpha_pred_motion = alpha_pred_motion.float().detach().cpu().numpy()
+                
+        #         cv2.imwrite(f"mask_before.png", denorm_mask_before * 255)
+        #         cv2.imwrite(f"mask_after.png", denorm_mask_after * 255)
+        #         cv2.imwrite(f"alpha_before.png", denorm_alpha_before * 255)
+        #         cv2.imwrite(f"alpha_after.png", denorm_alpha_after * 255)
+        #         cv2.imwrite(f"alpha_correct.png", denorm_alpha_correct * 255)
+        #         cv2.imwrite(f"alpha_pred_motion.png", denorm_alpha_pred_motion * 255)
+        #         import pdb; pdb.set_trace()
 
         # Combine OS8, OS4, and OS1
         pred_warp = alpha_pred_warp["refined_masks"]
@@ -271,46 +309,6 @@ class MGM_SS(MGM_TempSpar):
         loss_dict['total'] = loss_dict['loss_fg'] + loss_dict['loss_bg_warp'] + loss_dict['loss_bg_pred']
 
         return real_out, loss_dict
-
-        # import cv2
-        # Check images
-        # for i_f in range(weight.shape[1]):
-        #     image_before = real_batch['image'][0,i_f]
-        #     image_after = real_batch['image'][1,i_f]
-        #     denorm_image_before = image_before * torch.tensor([0.229, 0.224, 0.225], device=image_before.device).view(3,1,1) + torch.tensor([0.485, 0.456, 0.406], device=image_before.device).view(3,1,1)
-        #     denorm_image_after = image_after * torch.tensor([0.229, 0.224, 0.225], device=image_after.device).view(3,1,1) + torch.tensor([0.485, 0.456, 0.406], device=image_after.device).view(3,1,1)
-        #     denorm_image_before = denorm_image_before.permute(1,2,0).cpu().numpy()
-        #     denorm_image_after = denorm_image_after.permute(1,2,0).cpu().numpy()
-        #     import cv2
-        #     cv2.imwrite(f"image_before.png", denorm_image_before[:, :, ::-1] * 255)
-        #     cv2.imwrite(f"image_after.png", denorm_image_after[:, :, ::-1] * 255)
-        #     import pdb; pdb.set_trace()
-
-        # Check masks
-
-        # for i_f in range(weight.shape[1]):
-        #     valid_mask_ids = torch.nonzero(weight.sum((0, 1, 3, 4))).flatten()
-        #     for id in valid_mask_ids:
-        #         mask_before = real_batch['mask'][0,i_f,id]
-        #         mask_after = real_batch['mask'][1,i_f,id]
-        #         alpha_before = real_out['alpha_os8'][0,i_f,id]
-        #         alpha_after = real_out['alpha_os8'][1,i_f,id]
-        #         alpha_correct =  alpha_pred_warp['alpha_os8'][0,i_f,id]
-        #         alpha_pred_motion = alpha_pred['alpha_os8'][0,i_f,id]
-        #         denorm_mask_before = mask_before.float().cpu().numpy()
-        #         denorm_mask_after = mask_after.float().cpu().numpy()
-        #         denorm_alpha_before = alpha_before.float().detach().cpu().numpy()
-        #         denorm_alpha_after = alpha_after.float().detach().cpu().numpy()
-        #         denorm_alpha_correct = alpha_correct.float().detach().cpu().numpy()
-        #         denorm_alpha_pred_motion = alpha_pred_motion.float().detach().cpu().numpy()
-                
-        #         cv2.imwrite(f"mask_before.png", denorm_mask_before * 255)
-        #         cv2.imwrite(f"mask_after.png", denorm_mask_after * 255)
-        #         cv2.imwrite(f"alpha_before.png", denorm_alpha_before * 255)
-        #         cv2.imwrite(f"alpha_after.png", denorm_alpha_after * 255)
-        #         cv2.imwrite(f"alpha_correct.png", denorm_alpha_correct * 255)
-        #         cv2.imwrite(f"alpha_pred_motion.png", denorm_alpha_pred_motion * 255)
-        #         import pdb; pdb.set_trace()
 
         loss_dict = {}
         loss_dict['loss_mo_os1'] = self.custom_regression_loss(alpha_pred_warp['alpha_os1'].detach(), alpha_pred['alpha_os1'], weight=weight) # F.l1_loss(alpha_pred_warp['alpha_os1'], alpha_pred['alpha_os1'], reduction='sum') / weight.sum()

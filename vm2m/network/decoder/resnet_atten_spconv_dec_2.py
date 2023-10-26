@@ -393,10 +393,11 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
             # print(guided_mask_os8.sum(), guided_mask_os8.max())
 
-        
-
         # unknown_os8 = self.compute_unknown(guided_mask_os8)
         unknown_os8 = compute_unknown(guided_mask_os8, k_size=30, is_train=self.training)
+
+        # Convert masks to discrete values: 1 and 0.5 --> Weak guidance to the network
+        guided_mask_os8[guided_mask_os8 < 254.0/255.0] = 0.5
 
         if unknown_os8.max() == 0 and self.training:
             unknown_os8[:, :, 200: 250, 200: 250] = 1.0
@@ -418,6 +419,11 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
 
+        # diff_os4 = torch.abs(x_os4 - x_os8 * unknown_os8)
+        # diff_os1 = torch.abs(x_os1 - x_os8 * unknown_os8)
+        # cv2.imwrite("test_diff_os4.png", diff_os4[0,1].detach().cpu().numpy() * 255)
+        # cv2.imwrite("test_diff_os1.png", diff_os1[0,1].detach().cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
         # if not self.training:
         #     import pdb; pdb.set_trace()
         # Update mem_feat
@@ -940,7 +946,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         else:
             x_os4 = torch.zeros((b * n_f, x_os8.shape[1], image.shape[2], image.shape[3]), device=x_os8.device)
             x_os1 = torch.zeros_like(x_os4)
-        
+
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8

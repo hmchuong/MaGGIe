@@ -16,6 +16,6 @@ CONFIG=configs/VideoMatte240K/ours_ss_1022.yaml
 # export NCCL_DEBUG_SUBSYS=ALL
 export TORCH_DISTRIBUTED_DEBUG=INFO
 torchrun --nproc_per_node=$RUNAI_NUM_OF_GPUS --nnodes=$WORLD_SIZE --node_rank=$RANK --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT tools/main_ddp.py \
-            --config $CONFIG --precision 16 name ours_ss_1025 train.self_train.end_ratio 0.2
+            --config $CONFIG --precision 16 name ours_ss_1025 train.self_train.end_ratio 0.2 wandb.use True wandb.id kov6klv9 train.resume_last True
 
 # torchrun --standalone --nnodes=1 --nproc_per_node=1 tools/main_ddp.py --config $CONFIG --precision 16 name debug wandb.use False train.resume_last False

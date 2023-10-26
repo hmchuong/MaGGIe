@@ -48,28 +48,33 @@ def create_test_dataset(cfg):
                                       random_seed=cfg.train.seed, mask_dir_name=dataset_cfg.mask_dir_name, pha_dir=dataset_cfg.alpha_dir_name)
     return syn_dataset, real_dataset
 
-def evaluation_ss(val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratio, global_step):
+def evaluation_ss(rank, val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratio, global_step):
     logging.info("Start validation...")
     _ = [v.reset() for v in val_syn_error_dict.values()]
     _ = [v.reset() for v in val_real_error_dict.values()]
-    logging.info("Evaluating the synthetic dataset...")
-    _ = val(val_model, val_syn_loader, device, cfg.test.log_iter, val_syn_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+    if rank == 0:
+        logging.info("Evaluating the synthetic dataset...")
+        _ = val(val_model, val_syn_loader, device, cfg.test.log_iter, val_syn_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
 
-    logging.info("Evaluating the real dataset...")
-    _ = val(val_model, val_real_loader, device, cfg.test.log_iter, val_real_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+    if rank == 1:
+        logging.info("Evaluating the real dataset...")
+        _ = val(val_model, val_real_loader, device, cfg.test.log_iter, val_real_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
 
-    log_str = "Validation syn data:"
-    for k, v in val_syn_error_dict.items():
-        log_str += "{}: {:.4f}, ".format(k, v.average())
-    logging.info(log_str)
-
-    log_str = "Validation real data:"
     for k, v in val_real_error_dict.items():
-        log_str += "{}: {:.4f}, ".format(k, v.average())
-    logging.info(log_str)
+        v.gather_metric(0)
+    
+    if rank == 0:
+        log_str = "Validation syn data:"
+        for k, v in val_syn_error_dict.items():
+            log_str += "{}: {:.4f}, ".format(k, v.average())
+        logging.info(log_str)
+        log_str = "Validation real data:"
+        for k, v in val_real_error_dict.items():
+            log_str += "{}: {:.4f}, ".format(k, v.average())
+        logging.info(log_str)
 
     # Log wandb
-    if cfg.wandb.use:
+    if cfg.wandb.use and rank == 0:
         for k, v in val_syn_error_dict.items():
             wandb.log({"val/syn_" + k: v.average()}, commit=False)
         for k, v in val_real_error_dict.items():
@@ -248,10 +253,10 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
     train_real_iterator = iter(train_real_loader)
     train_syn_iterator = iter(train_syn_loader)
     
-    if global_rank == 0:
+    if start_cycle == 0 and start_epoch == 0:
         model.eval()
         val_model = model.module if is_dist else model
-        evaluation_ss(val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, 0, 0, 0, 0)
+        evaluation_ss(global_rank, val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, 0, 0, 0, 0)
 
     for i_cycle in range(start_cycle, n_cycles):
         logging.info("Starting cycle: {}".format(i_cycle))
@@ -306,6 +311,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
 
                     batch = {k: v.to(device) for k, v in batch.items()}
                     batch['iter'] = global_step
+                    # torch.save(model.module.state_dict(), f"debug_model_{global_rank}.pth")
 
                     optimizer.zero_grad()
                     try:
@@ -322,7 +328,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                     if global_rank == 0 and is_real and cfg.wandb.use:
                         # Visualize to wandb
                         try:
-                            wandb_log_image(batch, output, global_step)
+                            wandb_log_image(batch, output, global_step - 1)
                         except:
                             pass
 
@@ -401,10 +407,10 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                     raise e
             
             # Evaluate here, both syn and real
-            if global_rank == 0:
-                model.eval()
-                val_model = model.module if is_dist else model
-                evaluation_ss(val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratios[epoch], global_step)
+            # if global_rank == 0 or global_rank == 1:
+            model.eval()
+            val_model = model.module if is_dist else model
+            evaluation_ss(global_rank, val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratios[epoch], global_step)
                 # logging.info("Start validation...")
                 # model.eval()
                 # val_model = model.module if is_dist else model
@@ -437,7 +443,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 #                "val/real_ratio": real_ratios[epoch],
                 #                "val/global_step": global_step
                 #                }, commit=True)
-
+            if global_rank == 0:
                 # Save the model
                 logging.info("Saving the model...")
                 save_dict = {
