@@ -135,3 +135,4 @@ output/*
 wandb/*
 pretrain/*
 core.*
+*.pkl

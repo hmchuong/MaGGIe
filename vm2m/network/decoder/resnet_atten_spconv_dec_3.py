@@ -113,15 +113,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         relu_layer = nn.ReLU(inplace=True)
 
         # TODO: Add some dense conv layers to extract features of images
-        self.detail_conv = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1, stride=1, bias=True),
-            self._norm_layer(32),
-            relu_layer
-        )
+        # self.detail_conv = nn.Sequential(
+        #     nn.Conv2d(3, 32, kernel_size=3, padding=1, stride=1, bias=True),
+        #     self._norm_layer(32),
+        #     relu_layer
+        # )
 
         # Image low-level feature extractor
         self.low_os1_module = spconv.SparseSequential(
-            spconv.SubMConv2d(32 + 1, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
+            spconv.SubMConv2d(3 + 1, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
             relu_layer,
             nn.BatchNorm1d(32),
             spconv.SubMConv2d(32, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.1"),
@@ -162,7 +162,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         )
 
         # self.mask_dropout_p = detail_mask_dropout
-        self.fea_dropout = nn.Dropout2d(detail_mask_dropout)
+        # self.fea_dropout = nn.Dropout2d(detail_mask_dropout)
 
     def convert_syn_bn(self):
         self.layer1 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer1)
@@ -198,7 +198,18 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def aggregate_detail_mem(self, x, mem_details, n_i):
         return x, mem_details
 
-    def predict_details(self, x, image, roi_masks, masks, mem_details=None):
+    def combine_dense_sparse_feat(self, sparse_feat, dense_feat, b, n_i, h, w):
+        coords = sparse_feat.indices.clone()
+        coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
+        coords = coords.long()
+        # import pdb; pdb.set_trace()
+        x = dense_feat.permute(0, 2, 3, 1).contiguous()
+        x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
+        x = spconv.SparseConvTensor(x, sparse_feat.indices, (h, w), b * n_i, indice_dict=sparse_feat.indice_dict)
+        x = Fsp.sparse_add(x, sparse_feat)
+        return x
+    
+    def predict_details(self, x, ori_fea2, ori_fea1, image, roi_masks, masks, mem_details=None):
         '''
         x: [b, 64, h/4, w/4], os4 semantic features
         image: [b, 3, H, W], original image
@@ -210,8 +221,6 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         masks = masks.reshape(b * n_i, 1, H, W)
         roi_masks = roi_masks.reshape(b * n_i, 1, H, W)
 
-        image = self.detail_conv(image)
-
         # 2. Use torch.nonzero()
         coords = torch.nonzero(roi_masks.squeeze(1) > 0, as_tuple=True)
 
@@ -221,40 +230,6 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         image_vals = image[image_batch_indices, :, coords[1], coords[2]]
         inp = torch.cat([image_vals, masks_vals[:, None]], dim=1)
         coords = torch.stack(coords, dim=1)
-
-        # 1. Using .expand() instead of .repeat() and .unsqueeze()
-        # image = image[:, None, :, :, :].expand(-1, n_i, -1, -1, -1).reshape(b * n_i, 32, H, W)
-
-        # Merging image and masks
-        # inp = torch.cat([image, masks], dim=1)
-        
-
-        # Modifying inp and coords
-        # inp = inp.permute(0, 2, 3, 1).contiguous()
-        # inp = inp[coords]
-        # coords = torch.stack(coords, dim=1)
-
-        # image = image.unsqueeze(1).repeat(1, n_i, 1, 1, 1).reshape(b * n_i, 32, H, W)
-        
-        # if self.training and self.mask_dropout_p > 0:
-        #     nonzeros_ids = torch.nonzero(masks)
-        #     if len(nonzeros_ids) > 0:
-        #         mask_ids = torch.randperm(len(nonzeros_ids))[:int(len(nonzeros_ids) * self.mask_dropout_p)]
-        #         selected_ids = nonzeros_ids[mask_ids]
-        #         masks[selected_ids[:, 0], selected_ids[:, 1], selected_ids[:, 2], selected_ids[:, 3]] = 0
-            
-
-        # inp = torch.cat([image, masks], dim=1)
-
-        # Prepare sparse tensor
-        # coords = torch.where(roi_masks.squeeze(1) > 0)
-        # if self.training and len(coords[0]) > 1600000:
-        #     ids = torch.randperm(len(coords[0]))[:1600000]
-        #     coords = [i[ids] for i in coords]
-        
-        # inp = inp.permute(0, 2, 3, 1).contiguous()
-        # inp = inp[coords]
-        # coords = torch.stack(coords, dim=1)
         inp = spconv.SparseConvTensor(inp, coords.int(), (H, W), b * n_i)
 
         # inp -> OS 1 --> OS 2 --> OS 4
@@ -262,24 +237,25 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         fea2 = self.low_os2_module(fea1)
         fea3 = self.low_os4_module(fea2)
 
-        # fea3, mem_details = self.aggregate_detail_mem(fea3, mem_details, n_i)
+        # import pdb; pdb.set_trace()
+        # Combine fea1 with ori_fea1
+        fea2 = self.combine_dense_sparse_feat(fea2, ori_fea2, b, n_i, H // 2, W // 2)
+
+        # Combine fea2 with ori_fea2
+        fea1 = self.combine_dense_sparse_feat(fea1, ori_fea1, b, n_i, H, W)
 
         # Combine x with fea3
         # Prepare sparse tensor of x
-        coords = fea3.indices.clone()
-        coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
-        coords = coords.long()
-        x = self.fea_dropout(x)
-        # import pdb; pdb.set_trace()
-        x = x.permute(0, 2, 3, 1).contiguous()
-        x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
-        x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
-        x = Fsp.sparse_add(x, fea3)
-
-        # import pdb; pdb.set_trace()
-        # if mem_details is not None and self.use_detail_temp:
-        x, mem_details = self.aggregate_detail_mem(x, mem_details, n_i)
-        # mem_details = x
+        x = self.combine_dense_sparse_feat(fea3, x, b, n_i, H // 4, W // 4)
+        # coords = fea3.indices.clone()
+        # coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
+        # coords = coords.long()
+        # x = self.fea_dropout(x)
+        # # import pdb; pdb.set_trace()
+        # x = x.permute(0, 2, 3, 1).contiguous()
+        # x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
+        # x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
+        # x = Fsp.sparse_add(x, fea3)
 
         # Predict OS 4
         x_os4 = self.refine_OS4(x)
@@ -306,6 +282,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x_os1_out[coords[:, 0], :, coords[:, 1], coords[:, 2]] += 99
 
         return x_os4_out, x_os1_out, mem_details
+        
 
     # def compute_unknown(self, masks, k_size=30):
     #     h, w = masks.shape[-2:]
@@ -376,7 +353,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         # OS32 -> OS 8
         ret = {}
-        fea4, fea5 = mid_fea['shortcut']
+        fea1, fea2, fea3, fea4, fea5 = mid_fea['shortcut']
         
         image = mid_fea['image']
         x = self.layer1(x) + fea5
@@ -415,13 +392,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             x_os8 = x_os8 * valid_masks
         else:
             x_os8 = x_os8[:, :n_i]
-
-        x = self.layer3(x)
+        # import pdb; pdb.set_trace()
+        x = self.layer3(x) + fea3
 
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
-        guided_mask_os8 = x_os8.clone()
+        guided_mask_os8 = x_os8 #.clone()
         if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 3 and random.random() < 0.5)):
             guided_mask_os8 = gt_alphas.clone()
+            guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=1.0/8.0, mode='bilinear', align_corners=False)
+            guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
             # if gt_alphas.max() == 0 and self.training:
             #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
             # print(guided_mask_os8.sum(), guided_mask_os8.max())
@@ -432,8 +411,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         small_unknown_os8 = compute_unknown(guided_mask_os8, k_size=7, is_train=self.training)
 
         # Convert masks to discrete values: 1 and 0.5 --> Weak guidance to the network
-        guided_mask_os8 = guided_mask_os8.detach()
-        guided_mask_os8[small_unknown_os8 > 0] = 0.5
+        # guided_mask_os8 = guided_mask_os8.detach()
+        # guided_mask_os8[small_unknown_os8 > 0] = 0.5
         # guided_mask_os8 = torch.ones_like(alpha_guidance) * 0.5
         # guided_mask_os8[alpha_guidance > 254.0/255.0] = 1.0
         # guided_mask_os8[alpha_guidance < 1.0/255.0] = 0.0
@@ -448,7 +427,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         if unknown_os8.sum() > 0 or self.training:
             # TODO: Combine with details memory
             # guided_mask_os8 = (guided_mask_os8 > 0).float()
-            x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details)
+            x_os4, x_os1, mem_details = self.predict_details(x, fea2, fea1, image, unknown_os8, guided_mask_os8, mem_details)
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
             x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])
 

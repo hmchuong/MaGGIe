@@ -50,7 +50,7 @@ model:
   aspp:
     in_channels: 512
     out_channels: 512
-  backbone: res_embed_shortcut_os8_encoder_29
+  backbone: res_embed_shortcut_encoder_29
   backbone_args:
     num_embed: 3
     num_mask: 10
@@ -63,7 +63,7 @@ model:
     in_features:
     - os4
     - os1
-  decoder: res_shortcut_attention_spconv_decoder_22
+  decoder: res_shortcut_attention_spconv_decoder_22_new
   decoder_args:
     atten_block: 2
     atten_dim: 128
@@ -136,9 +136,9 @@ test:
   temp_aggre: false
   use_trimap: true
 train:
-  batch_size: 12
+  batch_size: 32
   log_iter: 10
-  max_iter: 52000
+  max_iter: 20000
   num_workers: 4
   optimizer:
     betas:
@@ -159,7 +159,7 @@ train:
   seed: 1234
   val_best_metric: MAD
   val_dist: true
-  val_iter: 500
+  val_iter: 250
   val_metrics:
   - MAD
   - MSE
