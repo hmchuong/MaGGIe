@@ -63,7 +63,7 @@ model:
     in_features:
     - os4
     - os1
-  decoder: res_shortcut_attention_spconv_decoder_22_new
+  decoder: res_shortcut_attention_spconv_decoder_22_new1028
   decoder_args:
     atten_block: 2
     atten_dim: 128
@@ -91,11 +91,11 @@ model:
     out_pixeldecoder: 864
     pre_norm: false
   loss_alpha_grad_w: 0.0
-  loss_alpha_lap_w: 0.25
+  loss_alpha_lap_w: 1.0
   loss_alpha_type: l1
   loss_alpha_w: 1.0
   loss_atten_w: 1.0
-  loss_comp_w: 0.0
+  loss_comp_w: 1.0
   loss_dtSSD_w: 0.0
   loss_multi_inst_type: smooth_l1_0.5
   loss_multi_inst_w: 0.25

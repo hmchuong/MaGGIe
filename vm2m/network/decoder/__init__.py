@@ -17,3 +17,4 @@ from .resnet_atten_spconv_lap_dec import res_shortcut_attention_spconv_lap_decod
 from .shm import shm
 
 from .resnet_atten_spconv_dec_3 import res_shortcut_attention_spconv_decoder_22 as res_shortcut_attention_spconv_decoder_22_new
+from .resnet_atten_spconv_dec_4 import res_shortcut_attention_spconv_decoder_22 as res_shortcut_attention_spconv_decoder_22_new1028

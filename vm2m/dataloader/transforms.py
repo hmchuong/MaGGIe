@@ -641,7 +641,7 @@ class ToTensor(object):
             ori_alphas = torch.from_numpy(np.ascontiguousarray(ori_alphas)).contiguous()
             ori_alphas = ori_alphas.view(frames.shape[0], n_insts, *ori_alphas.shape[1:])
             input_dict["ori_alphas"] = ori_alphas
-
+        
         if "fg" in input_dict:
             input_dict["fg"] = torch.from_numpy(np.ascontiguousarray(input_dict["fg"])).permute(0, 3, 1, 2).contiguous().float()
         if "bg" in input_dict:
@@ -663,10 +663,29 @@ class Normalize(object):
     def __call__(self, input_dict: dict):
         frames = input_dict["frames"]    
         input_dict["frames"] = self.norm(frames)
+        
+        # TODO: Compute FG, BG based on alpha
+        alphas = input_dict["alphas"] / 255.0
+        alphas = alphas[:, :, None]
+        fg_shape = (*alphas.shape[:2], 3, *alphas.shape[-2:]) 
+
+        norm_frames = frames[:, None].expand(fg_shape) / 255.0
+        fg = norm_frames / alphas
+        fg = torch.nan_to_num(fg, nan=0.0, posinf=0.0)
+        fg = torch.clamp(fg, 0, 1) # T x N_i x 3 x H x W
+        bg = norm_frames - fg * alphas # # T x N_i x 3 x H x W
+        bg = bg / (1 - alphas)
+        bg = torch.nan_to_num(bg, nan=0.0)
+        bg = torch.clamp(bg, 0, 1)
+
         if "fg" in input_dict:
             input_dict["fg"] = self.norm(input_dict["fg"])
+        else:
+            input_dict["fg"] = fg
         if "bg" in input_dict:
             input_dict["bg"] = self.norm(input_dict["bg"])
+        else:
+            input_dict["bg"] = bg
         return input_dict
 
 class GammaContrast(object):

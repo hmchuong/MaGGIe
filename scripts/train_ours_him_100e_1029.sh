@@ -14,7 +14,7 @@ echo "Starting training..."
 cd $ROOT_DIR
 
 CONFIG=configs/HIM/ours_1025.yaml
-NAME=ours_1028_shortcut-guidance_comp-loss
+NAME=ours_1029_hr-detail
 # torchrun --standalone --nproc_per_node=$RUNAI_NUM_OF_GPUS  tools/main_ddp.py \
 #                     --config $CONFIG --precision 16 name $NAME
 

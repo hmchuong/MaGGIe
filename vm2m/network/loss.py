@@ -61,7 +61,7 @@ def loss_dtSSD(pred, gt, mask):
 def loss_comp(alpha_pred, alpha_gt, fg, bg, mask):
     comp_pred = alpha_pred * fg + (1 - alpha_pred) * bg
     comp_gt = alpha_gt * fg + (1 - alpha_gt) * bg
-    loss = torch.sum(F.l1_loss(comp_pred, comp_gt, reduction='none')) / (mask.sum() + 1e-6)
+    loss = torch.sum(F.l1_loss(comp_pred, comp_gt, reduction='none') * mask) / (mask.sum() + 1e-6)
     return loss
 
 class GradientLoss(nn.Module):

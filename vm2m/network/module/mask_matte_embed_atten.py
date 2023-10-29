@@ -508,5 +508,5 @@ class MaskMatteEmbAttenHead(nn.Module):
         # import pdb; pdb.set_trace()
         
         if self.return_feat:
-            return output_mask, out_feat, hidden_state, mem_tokens, max_loss, min_loss
+            return output_mask, out_feat, hidden_state, tokens, max_loss, min_loss
         return output_mask, mem_tokens, max_loss, min_loss

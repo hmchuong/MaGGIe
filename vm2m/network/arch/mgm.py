@@ -509,9 +509,9 @@ class MGM(nn.Module):
         total_loss = 0
         if self.loss_alpha_w > 0:
             logging.debug("Computing alpha loss")
-            ref_alpha_os1 = self.custom_regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
-            ref_alpha_os4 = self.custom_regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
-            ref_alpha_os8 = self.custom_regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
+            ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
+            ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
+            ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
             # import pdb; pdb.set_trace()
 
             ref_alpha_loss = (ref_alpha_os1 * 2 + ref_alpha_os4 * 1 + ref_alpha_os8 * 1) / 5.0
@@ -523,9 +523,10 @@ class MGM(nn.Module):
         
         # Comp loss
         if self.loss_comp_w > 0 and fg is not None and bg is not None:
-            comp_loss_os1 = loss_comp(alpha_pred_os1, alphas, fg, bg, weight_os1)
-            comp_loss_os4 = loss_comp(alpha_pred_os4, alphas, fg, bg, weight_os4)
-            comp_loss_os8 = loss_comp(alpha_pred_os8, alphas, fg, bg, weight_os8)
+            alphas_comp = alphas.flatten(0,1)[:, None]
+            comp_loss_os1 = loss_comp(alpha_pred_os1.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os1.flatten(0,1)[:, None])
+            comp_loss_os4 = loss_comp(alpha_pred_os4.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os4.flatten(0,1)[:, None])
+            comp_loss_os8 = loss_comp(alpha_pred_os8.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os8.flatten(0,1)[:, None])
             comp_loss = (comp_loss_os1 * 2 + comp_loss_os4 * 1 + comp_loss_os8 * 1) / 5.0
             loss_dict['loss_comp_os1'] = comp_loss_os1
             loss_dict['loss_comp_os4'] = comp_loss_os4
