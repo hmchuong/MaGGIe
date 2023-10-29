@@ -19,7 +19,7 @@ from vm2m.network.module.conv_gru import ConvGRU
 from vm2m.network.module.stm_window import WindowSTM
 from vm2m.network.module.detail_aggregation import DetailAggregation
 from vm2m.network.module.instance_query_atten import InstanceQueryAttention
-from vm2m.utils.utils import compute_unknown
+from vm2m.utils.utils import compute_unknown, resizeAnyShape
 from .resnet_dec import BasicBlock
 from vm2m.network.loss import loss_dtSSD
 
@@ -113,15 +113,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         relu_layer = nn.ReLU(inplace=True)
 
         # TODO: Add some dense conv layers to extract features of images
-        self.detail_conv = nn.Sequential(
-            nn.Conv2d(3, 32, kernel_size=3, padding=1, stride=1, bias=True),
-            self._norm_layer(32),
-            relu_layer
-        )
+        # self.detail_conv = nn.Sequential(
+        #     nn.Conv2d(3, 32, kernel_size=3, padding=1, stride=1, bias=True),
+        #     self._norm_layer(32),
+        #     relu_layer
+        # )
 
         # Image low-level feature extractor
         self.low_os1_module = spconv.SparseSequential(
-            spconv.SubMConv2d(32 + 1, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
+            spconv.SubMConv2d(3 + 1, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
             relu_layer,
             nn.BatchNorm1d(32),
             spconv.SubMConv2d(32, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.1"),
@@ -210,7 +210,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         masks = masks.reshape(b * n_i, 1, H, W)
         roi_masks = roi_masks.reshape(b * n_i, 1, H, W)
 
-        image = self.detail_conv(image)
+        # image = self.detail_conv(image)
 
         # 2. Use torch.nonzero()
         coords = torch.nonzero(roi_masks.squeeze(1) > 0, as_tuple=True)
@@ -272,7 +272,11 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x = self.fea_dropout(x)
         # import pdb; pdb.set_trace()
         x = x.permute(0, 2, 3, 1).contiguous()
-        x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
+        
+        ratio = H // x.shape[0]
+        y_coords = torch.div(coords[:, 1], ratio, rounding_mode='floor').long()
+        x_coords = torch.div(coords[:, 2], ratio, rounding_mode='floor').long()
+        x = x[coords[:, 0], y_coords, x_coords]
         x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
         x = Fsp.sparse_add(x, fea3)
 
@@ -374,6 +378,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             # In training, use gt_alphas to supervise the attention
             gt_masks = (gt_alphas > 0).reshape(b, n_f, n_i, gt_alphas.shape[2], gt_alphas.shape[3])
 
+            if gt_masks.shape[-1] != masks.shape[-1]:
+                gt_masks = resizeAnyShape(gt_masks, scale_factor=masks.shape[-1] * 1.0/ gt_masks.shape[-1], use_max_pool=True)
+
         # OS32 -> OS 8
         ret = {}
         fea4, fea5 = mid_fea['shortcut']
@@ -387,7 +394,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         x = self.layer2(x) + fea4
 
-        
+        h, w = image.shape[-2:]
 
         # Predict OS8
         # import pdb; pdb.set_trace()
@@ -409,7 +416,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         #     prev_pred = x_os8
 
         # import pdb; pdb.set_trace()
-        x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
+        x_os8 = F.interpolate(x_os8, size=(h, w), mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
         if self.training:
             x_os8 = x_os8 * valid_masks
@@ -417,7 +424,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             x_os8 = x_os8[:, :n_i]
 
         x = self.layer3(x)
-
+        
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
         guided_mask_os8 = x_os8.clone()
         if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 3 and random.random() < 0.5)):
@@ -425,15 +432,17 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             # if gt_alphas.max() == 0 and self.training:
             #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
             # print(guided_mask_os8.sum(), guided_mask_os8.max())
+            guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=0.0625, mode='bilinear', align_corners=False)
+            guided_mask_os8 = F.interpolate(guided_mask_os8, size=x_os8.shape[-2:], mode='bilinear', align_corners=False)
 
         # unknown_os8 = self.compute_unknown(guided_mask_os8)
         unknown_os8 = compute_unknown(guided_mask_os8, k_size=30, is_train=self.training)
 
-        small_unknown_os8 = compute_unknown(guided_mask_os8, k_size=7, is_train=self.training)
+        # small_unknown_os8 = compute_unknown(guided_mask_os8, k_size=7, is_train=self.training)
 
         # Convert masks to discrete values: 1 and 0.5 --> Weak guidance to the network
-        guided_mask_os8 = guided_mask_os8.detach()
-        guided_mask_os8[small_unknown_os8 > 0] = 0.5
+        # guided_mask_os8 = guided_mask_os8.detach()
+        # guided_mask_os8[small_unknown_os8 > 0] = 0.5
         # guided_mask_os8 = torch.ones_like(alpha_guidance) * 0.5
         # guided_mask_os8[alpha_guidance > 254.0/255.0] = 1.0
         # guided_mask_os8[alpha_guidance < 1.0/255.0] = 0.0
@@ -448,7 +457,14 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         if unknown_os8.sum() > 0 or self.training:
             # TODO: Combine with details memory
             # guided_mask_os8 = (guided_mask_os8 > 0).float()
+
+            # TODO: Upsample image, x, unknown_os8, guided_mask_os8 to 2x
+            # image = F.interpolate(image, scale_factor=2.0, mode='bilinear', align_corners=False)
+            # x = F.interpolate(x, scale_factor=2.0, mode='bilinear', align_corners=False)
+            # unknown_os8 = F.interpolate(unknown_os8, scale_factor=2.0, mode='nearest')
+            # guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=2.0, mode='bilinear', align_corners=False)
             x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details)
+
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
             x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])
 
@@ -471,6 +487,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         #     import pdb; pdb.set_trace()
         # Update mem_feat
         alpha_pred, _, _ = self.fushion(ret, unknown_os8)
+        # cv2.imwrite("test_fuse_new.png", alpha_pred[0, 1].cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
         # mem_feat = self.update_mem(mem_feat, alpha_pred)
         # mem_feat = (mem_feat, prev_pred)
 

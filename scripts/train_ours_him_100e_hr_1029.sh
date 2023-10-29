@@ -13,8 +13,8 @@ sh scripts/prepare_him_syn.sh
 echo "Starting training..."
 cd $ROOT_DIR
 
-CONFIG=configs/HIM/ours_1029.yaml
-NAME=ours_1029_bound-loss
+CONFIG=configs/HIM/ours_1029_hr.yaml
+NAME=ours_1029_hr_bound-loss
 # torchrun --standalone --nproc_per_node=$RUNAI_NUM_OF_GPUS  tools/main_ddp.py \
 #                     --config $CONFIG --precision 16 name $NAME
 

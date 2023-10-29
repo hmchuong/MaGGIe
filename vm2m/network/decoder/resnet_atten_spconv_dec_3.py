@@ -79,7 +79,13 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         self.layer1 = self._make_layer(block, 256, layers[0], stride=2)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
         self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
+        self.layer4_conv = self._make_layer(block, self.midplanes, layers[3], stride=2)
 
+        self.os1_conv = nn.Sequential(
+            SpectralNorm(nn.ConvTranspose2d(self.midplanes, 32, kernel_size=4, stride=2, padding=1, bias=False)),
+            norm_layer(32),
+            nn.LeakyReLU(0.2, inplace=True)
+        )
         # Sparse Conv from OS4 to OS2
         self.layer4 = spconv.SparseSequential(
             spconv.SparseInverseConv2d(64, 64, kernel_size=3, bias=False, indice_key="subm4.0"),
@@ -162,22 +168,43 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             spconv.SubMConv2d(32, 1, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2)
         )
 
-        self.mlp_os4 = nn.Linear(final_channel, 16)
-        self.mlp_os4_combine = nn.Sequential(
-                                    nn.Linear(64 + 16, 64),
-                                    nn.ReLU()
-                                )
+        self.fg_fc = nn.ModuleList([
+            nn.Linear(64, 64), # OS4
+            nn.Linear(32, 32), # OS2
+            nn.Linear(32, 32)  # OS1
+        ])
+        self.bg_fc = nn.ModuleList([
+            nn.Linear(64, 64), # OS4
+            nn.Linear(32, 32), # OS2
+            nn.Linear(32, 32)  # OS1
+        ])
+        self.guidance_fc =nn.ModuleList([
+            nn.Linear(128, 64), # OS4
+            nn.Linear(64, 32), # OS2
+            nn.Linear(64, 32)  # OS1
+        ])
 
-        self.mlp_os2 = nn.Linear(final_channel, 16)
-        self.mlp_os2_combine = nn.Sequential(
-                                    nn.Linear(32 + 16, 32),
-                                    nn.ReLU())
+        self.layer3_smooth = nn.Conv2d(64, 64, kernel_size=1, stride=1, padding=0, bias=True)
+
+        # self.os4_sparse_fc = nn.Linear(64, 64)
+        # self.os4_sparse_fc2 = nn.Linear(64, 64)
+
+        # self.mlp_os4 = nn.Linear(final_channel, 16)
+        # self.mlp_os4_combine = nn.Sequential(
+        #                             nn.Linear(64, 64),
+        #                             nn.ReLU()
+        #                         )
+
+        # self.mlp_os2 = nn.Linear(final_channel, 16)
+        # self.mlp_os2_combine = nn.Sequential(
+        #                             nn.Linear(32, 32),
+        #                             nn.ReLU())
                                 
 
-        self.mlp_os1 = nn.Linear(final_channel, 16)
-        self.mlp_os1_combine = nn.Sequential(
-                                    nn.Linear(32 + 16, 32),
-                                    nn.ReLU())
+        # self.mlp_os1 = nn.Linear(final_channel, 16)
+        # self.mlp_os1_combine = nn.Sequential(
+        #                             nn.Linear(32, 32),
+        #                             nn.ReLU())
 
         # self.mask_dropout_p = detail_mask_dropout
         # self.fea_dropout = nn.Dropout2d(detail_mask_dropout)
@@ -224,26 +251,30 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def aggregate_detail_mem(self, x, mem_details, n_i):
         return x, mem_details
 
-    def combine_dense_sparse_feat(self, sparse_feat, dense_feat, queries, b, n_i, h, w, mlp_combine=None):
+    def combine_dense_sparse_feat(self, sparse_feat, dense_feat, guidance, b, n_i, h, w, mlp_combine=None):
         coords = sparse_feat.indices.clone()
         coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
-        sparse_feat.indices[:, 0] % n_i
         coords = coords.long()
         # import pdb; pdb.set_trace()
         x = dense_feat.permute(0, 2, 3, 1).contiguous()
         x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
         
         # Adding queries to x sparse tensor
+        # instance_ids = sparse_feat.indices[:, 0] % n_i
+        # queries_values = queries[coords[:, 0], instance_ids.long()]
+        # x = torch.cat([x, queries_values], dim=1)
+        # x = mlp_combine(x)
+
         instance_ids = sparse_feat.indices[:, 0] % n_i
-        queries_values = queries[coords[:, 0], instance_ids.long()]
-        x = torch.cat([x, queries_values], dim=1)
-        x = mlp_combine(x)
+        guidance = guidance[coords[:, 0], instance_ids.long()]
+        # import pdb; pdb.set_trace()
+        x = x * guidance
 
         x = spconv.SparseConvTensor(x, sparse_feat.indices, (h, w), b * n_i, indice_dict=sparse_feat.indice_dict)
         # x = Fsp.sparse_add(x, sparse_feat)
         return x
     
-    def predict_details(self, x, ori_fea2, ori_fea1, image, roi_masks, masks, queries, mem_details=None):
+    def predict_details(self, x, ori_fea2, ori_fea1, image, roi_masks, masks, queries, guidances, mem_details=None):
         '''
         x: [b, 64, h/4, w/4], os4 semantic features
         image: [b, 3, H, W], original image
@@ -276,19 +307,30 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         # import pdb; pdb.set_trace()
         # Convert queries to OS 4, OS2, OS1 information
-        queries_os2 = self.mlp_os2(queries)
-        queries_os1 = self.mlp_os1(queries)
-        queries_os4 = self.mlp_os4(queries)
+        # queries_os2 = self.mlp_os2(queries)
+        # queries_os1 = self.mlp_os1(queries)
+        # queries_os4 = self.mlp_os4(queries)
 
         # Combine fea1 with ori_fea1
-        fea2 = self.combine_dense_sparse_feat(fea2, ori_fea2, queries_os2, b, n_i, H // 2, W // 2, mlp_combine=self.mlp_os2_combine)
+        # fea2 = self.combine_dense_sparse_feat(fea2, ori_fea2, queries_os2, b, n_i, H // 2, W // 2, mlp_combine=self.mlp_os2_combine)
+        # fea2 = self.combine_dense_sparse_feat(fea2, ori_fea2, queries_os2, b, n_i, H // 2, W // 2, mlp_combine=self.mlp_os2_combine)
+        fea2 = self.combine_dense_sparse_feat(fea2, ori_fea2, guidances[0], b, n_i, H // 2, W // 2, mlp_combine=None)
 
         # Combine fea2 with ori_fea2
-        fea1 = self.combine_dense_sparse_feat(fea1, ori_fea1, queries_os1, b, n_i, H, W, mlp_combine=self.mlp_os1_combine)
+        # fea1 = self.combine_dense_sparse_feat(fea1, ori_fea1, queries_os1, b, n_i, H, W, mlp_combine=self.mlp_os1_combine)
+        fea1 = self.combine_dense_sparse_feat(fea1, ori_fea1, guidances[1], b, n_i, H, W, mlp_combine=None)
 
         # Combine x with fea3
         # Prepare sparse tensor of x
-        x = self.combine_dense_sparse_feat(fea3, x, queries_os4, b, n_i, H // 4, W // 4, mlp_combine=self.mlp_os4_combine)
+        # x = self.combine_dense_sparse_feat(fea3, x, queries_os4, b, n_i, H // 4, W // 4, mlp_combine=self.mlp_os4_combine)
+        x = self.combine_dense_sparse_feat(fea3, x, guidances[2], b, n_i, H // 4, W // 4, mlp_combine=None)
+        # x = x.replace_feature(self.os4_sparse_fc(x.features))
+
+        # Multiply fea3 by the guidance
+        # batch_ids = torch.div(x.indices[:, 0], n_i, rounding_mode='floor')
+        # instance_ids = x.indices[:, 0] % n_i
+        # x = x.replace_feature(x.features * os4_guidance[batch_ids.long(), instance_ids.long()])
+        # x = x.replace_feature(self.os4_sparse_fc2(x.features))
 
         # import pdb; pdb.set_trace()
         # coords = fea3.indices.clone()
@@ -383,6 +425,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         return alpha_pred, weight_os4, weight_os1
 
+    def compute_instance_guidance(self, feat, guidance_map, level):
+        fg_guidance = F.adaptive_avg_pool2d(guidance_map[:, :, None] * feat[:, None], 1).squeeze(-1).squeeze(-1)
+        fg_guidance = self.fg_fc[level](fg_guidance)
+        bg_guidance = F.adaptive_avg_pool2d((1 - guidance_map[:, :, None]) * feat[:, None], 1).squeeze(-1).squeeze(-1)
+        bg_guidance = self.bg_fc[level](bg_guidance)
+        instance_guidance = self.guidance_fc[level](torch.cat([fg_guidance, bg_guidance], dim=2))
+        instance_guidance = torch.sigmoid(instance_guidance)
+        return instance_guidance
+
     def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
         '''
         masks: [b * n_f * n_i, 1, H, W]
@@ -407,7 +458,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # mem_feat = x
 
         x = self.layer2(x) + fea4
-
+        
         
 
         # Predict OS8
@@ -430,6 +481,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         # import pdb; pdb.set_trace()
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
+
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
         if self.training:
             x_os8 = x_os8 * valid_masks
@@ -437,6 +489,10 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             x_os8 = x_os8[:, :n_i]
         # import pdb; pdb.set_trace()
         x = self.layer3(x) + fea3
+        fea2 = self.layer4_conv(x) + fea2
+        fea1 = self.os1_conv(fea2)
+        # x = self.layer3_smooth(x)
+        
 
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
         guided_mask_os8 = x_os8 #.clone()
@@ -448,8 +504,17 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
             # print(guided_mask_os8.sum(), guided_mask_os8.max())
 
+        # Compute the instance OS4 guidance map
+        guidance_map_os4 = F.interpolate(guided_mask_os8, scale_factor=0.25, mode='bilinear', align_corners=False)
+        guidance_map_os2 = F.interpolate(guided_mask_os8, scale_factor=0.5, mode='bilinear', align_corners=False)
+        guidance_map_os1 = guided_mask_os8.clone()
+
+        inst_guidance_os4 = self.compute_instance_guidance(x, guidance_map_os4, 0)
+        inst_guidance_os2 = self.compute_instance_guidance(fea2, guidance_map_os2, 1)
+        inst_guidance_os1 = self.compute_instance_guidance(fea1, guidance_map_os1, 2)
+
         # unknown_os8 = self.compute_unknown(guided_mask_os8)
-        unknown_os8 = compute_unknown(guided_mask_os8, k_size=30, is_train=self.training)
+        unknown_os8 = compute_unknown(guided_mask_os8, k_size=59, is_train=self.training)
 
         # small_unknown_os8 = compute_unknown(guided_mask_os8, k_size=7, is_train=self.training)
 
@@ -470,7 +535,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         if unknown_os8.sum() > 0 or self.training:
             # TODO: Combine with details memory
             # guided_mask_os8 = (guided_mask_os8 > 0).float()
-            x_os4, x_os1, mem_details = self.predict_details(x, fea2, fea1, image, unknown_os8, guided_mask_os8, queries, mem_details)
+            x_os4, x_os1, mem_details = self.predict_details(x, fea2, fea1, image, unknown_os8, guided_mask_os8, queries, [inst_guidance_os1, inst_guidance_os2, inst_guidance_os4], mem_details)
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
             x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])
 
@@ -483,6 +548,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
+        
+        
 
         # diff_os4 = torch.abs(x_os4 - x_os8 * unknown_os8)
         # diff_os1 = torch.abs(x_os1 - x_os8 * unknown_os8)
@@ -492,7 +559,14 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # if not self.training:
         #     import pdb; pdb.set_trace()
         # Update mem_feat
-        alpha_pred, _, _ = self.fushion(ret, unknown_os8)
+        alpha_pred, w4, w1 = self.fushion(ret, unknown_os8)
+
+        cv2.imwrite("test_os8.png", x_os8[0, 1].cpu().numpy() * 255)
+        cv2.imwrite("test_os4.png", x_os4[0, 1].cpu().numpy() * 255)
+        cv2.imwrite("test_os1.png", x_os1[0, 1].cpu().numpy() * 255)
+        cv2.imwrite("test_fuse.png", alpha_pred[0, 1].cpu().numpy() * 255)
+        import pdb; pdb.set_trace()
+
         # mem_feat = self.update_mem(mem_feat, alpha_pred)
         # mem_feat = (mem_feat, prev_pred)
 

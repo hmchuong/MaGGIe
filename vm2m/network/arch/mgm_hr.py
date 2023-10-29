@@ -41,9 +41,9 @@ def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
 
     return weight
 
-class MGM(nn.Module):
+class MGM_HR(nn.Module):
     def __init__(self, backbone, decoder, cfg):
-        super(MGM, self).__init__()
+        super(MGM_HR, self).__init__()
         self.cfg = cfg
 
         self.encoder = backbone
@@ -148,7 +148,9 @@ class MGM(nn.Module):
         alphas: b, n_frames, n_instances, h, w, alpha matte
         trans_gt: b, n_frames, n_instances, h, w, incoherence mask ground truth
         '''
-        x = batch['image']
+        x_hr = batch['image']
+        x = F.interpolate(x_hr.flatten(0,1), scale_factor=0.5, mode="bilinear", align_corners=False)
+        x = x.view(x_hr.shape[0], x_hr.shape[1], *x.shape[-3:])
         masks = batch['mask']
         alphas = batch.get('alpha', None)
         weights = batch.get('weight', None)
@@ -193,6 +195,8 @@ class MGM(nn.Module):
             inp = torch.cat([x, inp_masks], dim=1)
         else:
             inp = x
+        
+        h, w = x_hr.shape[-2:]
 
         if alphas is not None:
             alphas = alphas.view(-1, n_i, h, w)
@@ -205,15 +209,15 @@ class MGM(nn.Module):
 
         if self.train_temporal:
             with torch.no_grad():
-                embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
+                embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, *masks.shape[-2:]))
                 embedding = self.aspp(embedding)
         else:
-            # import pdb; pdb.set_trace()
-            embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
+            # TODO: Downscale the inp and masks
+            embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, *masks.shape[-2:]))
             embedding = self.aspp(embedding)
         
         # TODO: Replace mid_fea images with orginal iamge size
-
+        mid_fea['image'] = x_hr.flatten(0,1)
         pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, 
                             masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, 
                             gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details, spar_gt=trans_gt)
@@ -415,24 +419,16 @@ class MGM(nn.Module):
         total_loss = loss_dict['total']
 
         if self.loss_alpha_w > 0:
-            ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
-            ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
-            ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
-            unknown_gt = (alphas > 1.0/255.0) & (alphas < 254.0/ 255.0)
-            unknown_pred = alpha_pred_os8[unknown_gt]
-            
-            # Upper bound
-            upper_weight = unknown_pred >= 254.0 / 255.0
-            lower_weight = unknown_pred <= 1.0 / 255.0
-            upper_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 0.9), reduction='none') * upper_weight).sum() / (torch.sum(upper_weight) + 1e-8)
-            lower_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 0.1), reduction='none') * lower_weight).sum() / (torch.sum(lower_weight) + 1e-8)
-            loss_dict['loss_os8_upper'] = upper_loss
-            loss_dict['loss_os8_lower'] = lower_loss
-
-            ref_alpha_loss = (ref_alpha_os1 * 2 + ref_alpha_os4 * 1 + ref_alpha_os8 * 1 + upper_loss * 0.5 + lower_loss * 0.5) / 6.0
+            ref_alpha_os1 = self.regression_loss(pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
+            ref_alpha_os4 = self.regression_loss(pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
+            ref_alpha_os8 = self.regression_loss(pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
+            ref_alpha_loss = (ref_alpha_os1 * 2 + ref_alpha_os4 * 1 + ref_alpha_os8 * 1) / 5.0
             loss_dict['loss_rec_os1'] += ref_alpha_os1
             loss_dict['loss_rec_os4'] += ref_alpha_os4
             loss_dict['loss_rec_os8'] += ref_alpha_os8
+
+            # For bounding loss for unknown area
+            unknown_gt = alphas >= (1.0/255.0) 
             loss_dict['loss_rec'] += ref_alpha_loss
             total_loss += ref_alpha_loss * self.loss_alpha_w
 
@@ -633,7 +629,7 @@ class MGM(nn.Module):
 
         return bce_loss + diff_dtSSD
 
-class MGM_SingInst(MGM):
+class MGM_SingInst(MGM_HR):
     def forward(self, batch, **kwargs):
         if self.training:
             return super().forward(batch, **kwargs)

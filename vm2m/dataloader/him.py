@@ -87,7 +87,7 @@ class HIMDataset(Dataset):
         self.transforms = [
             T.Load(),
             T.ResizeShort(short_size, transform_alphas=is_train),
-            T.PaddingMultiplyBy(32, transform_alphas=is_train),
+            T.PaddingMultiplyBy(64, transform_alphas=is_train),
             T.Stack()
         ]
         if self.is_train:
