@@ -53,3 +53,32 @@ def compute_unknown(masks, k_size=30, is_train=False):
     uncertain = torch.from_numpy(uncertain).to(masks.device)
 
     return uncertain
+
+
+
+
+# Create a Gaussian kernel
+def gaussian_kernel(size, sigma):
+    grid = torch.arange(size).float() - size // 2
+    gaussian = torch.exp(-grid**2 / (2 * sigma**2))
+    gaussian /= gaussian.sum()
+    return gaussian.view(1, 1, -1) * gaussian.view(1, 1, -1)
+
+def gaussian_smoothing(input_tensor, sigma):
+
+    kernel_size = sigma * 2 + 1
+
+    # Apply padding
+    padding = kernel_size // 2
+    padded_tensor = F.pad(input_tensor, (padding, padding, padding, padding), mode='constant', value=0)
+
+    # Convolve with the Gaussian kernel
+    gauss_kernel = gaussian_kernel(kernel_size, sigma)
+    gauss_kernel = gauss_kernel.expand(input_tensor.shape[1], 1, kernel_size, kernel_size).type_as(input_tensor)
+    smoothed_tensor = F.conv2d(padded_tensor, gauss_kernel, stride=1, padding=0, groups=input_tensor.shape[1])
+
+    # Remove padding if necessary
+    final_tensor = smoothed_tensor[:, :, padding:-padding, padding:-padding]
+    final_tensor = F.interpolate(final_tensor, size=input_tensor.shape[-2:], mode='bilinear', align_corners=False)
+
+    return final_tensor

@@ -63,6 +63,8 @@ def wandb_log_image(batch, output, iter):
     #     log_images.append(log_alpha(batch['alpha_gt_os8'], 'alpha_os8_gt', index, inst_index))
     
     log_images.append(log_alpha(batch['transition'], 'trans_gt', index, inst_index))
+    if 'detail_mask' in output:
+        log_images.append(log_alpha(output['detail_mask'], 'trans_pred', index, inst_index))
     if 'diff_pred' in output:
         log_images.append(log_alpha(output['diff_pred'], 'diff_pred', index, inst_index))
     
@@ -166,7 +168,7 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
         if cfg.model.sync_bn:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         # model.convert_syn_bn()
-        having_unused_params = False
+        having_unused_params = cfg.model.having_unused_params
         if cfg.model.arch in ['VM2M', 'VM2M0711', 'MGM_SS']:
             having_unused_params = True
         model = torch.nn.parallel.DistributedDataParallel(

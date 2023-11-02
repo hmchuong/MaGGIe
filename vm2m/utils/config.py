@@ -71,6 +71,8 @@ CONFIG.model = CN({})
 CONFIG.model.weights = ''
 CONFIG.model.arch = 'VM2M'
 CONFIG.model.sync_bn = True
+CONFIG.model.having_unused_params = False
+CONFIG.model.freeze_coarse = False
 
 # Backbone aka encoder
 CONFIG.model.backbone = 'res_encoder_29' # resnet34

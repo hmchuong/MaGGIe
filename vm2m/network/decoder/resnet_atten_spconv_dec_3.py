@@ -19,7 +19,7 @@ from vm2m.network.module.conv_gru import ConvGRU
 from vm2m.network.module.stm_window import WindowSTM
 from vm2m.network.module.detail_aggregation import DetailAggregation
 from vm2m.network.module.instance_query_atten import InstanceQueryAttention
-from vm2m.utils.utils import compute_unknown
+from vm2m.utils.utils import compute_unknown, resizeAnyShape, gaussian_smoothing
 from .resnet_dec import BasicBlock
 from vm2m.network.loss import loss_dtSSD
 
@@ -55,7 +55,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
                  atten_dim=128, atten_block=2, 
                  atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000,
                   use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, \
-                    use_temp=False, **kwargs):
+                    use_temp=False, freeze_detail_branch=False, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -78,29 +78,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         self.tanh = nn.Tanh()
         self.layer1 = self._make_layer(block, 256, layers[0], stride=2)
         self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 64, layers[2], stride=2)
-        self.layer4_conv = self._make_layer(block, self.midplanes, layers[3], stride=2)
 
-        self.os1_conv = nn.Sequential(
-            SpectralNorm(nn.ConvTranspose2d(self.midplanes, 32, kernel_size=4, stride=2, padding=1, bias=False)),
-            norm_layer(32),
-            nn.LeakyReLU(0.2, inplace=True)
-        )
-        # Sparse Conv from OS4 to OS2
-        self.layer4 = spconv.SparseSequential(
-            spconv.SparseInverseConv2d(64, 64, kernel_size=3, bias=False, indice_key="subm4.0"),
-            nn.BatchNorm1d(64),
-            self.leaky_relu,
-            spconv.SubMConv2d(64, 32, kernel_size=3, padding=1, bias=False, indice_key="subm2.2"),
-        )
-
-        # Sparse Conv from OS2 to OS1
-        self.layer5 = spconv.SparseSequential(
-            spconv.SparseInverseConv2d(32, 32, kernel_size=3, bias=False, indice_key="subm2.0"),
-            nn.BatchNorm1d(32),
-            self.leaky_relu,
-            spconv.SubMConv2d(32, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.2"),
-        )
         
         ## 1/8 scale
         self.refine_OS8 = MaskMatteEmbAttenHead(
@@ -116,43 +94,62 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             use_id_pe=use_id_pe,
             use_temp=use_temp
         )
-        relu_layer = nn.ReLU(inplace=True)
+        # relu_layer = nn.ReLU(inplace=True)
 
-        # TODO: Add some dense conv layers to extract features of images
-        # self.detail_conv = nn.Sequential(
-        #     nn.Conv2d(3, 32, kernel_size=3, padding=1, stride=1, bias=True),
-        #     self._norm_layer(32),
-        #     relu_layer
-        # )
-
-        # Image low-level feature extractor
-        self.low_os1_module = spconv.SparseSequential(
-            spconv.SubMConv2d(3, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
-            relu_layer,
-            nn.BatchNorm1d(32),
-            spconv.SubMConv2d(32, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.1"),
-            relu_layer,
-            nn.BatchNorm1d(32)
+        # Instance feature guidance at OS8
+        # self.fg_fc = nn.Sequential(nn.Linear(64, 64), nn.ReLU(inplace=True), nn.Linear(64, 64), nn.Sigmoid()) # OS8, FC -> ReLU
+        # self.bg_fc = nn.Sequential(nn.Linear(128, 128), nn.ReLU(inplace=True)) # OS8, FC -> ReLU
+        # self.guidance_fc = nn.Sequential(nn.Linear(256, 128), nn.Sigmoid()) # OS8
+        
+        # Modules to save the sampling path of sparse Conv
+        self.dummy_downscale = spconv.SparseSequential(
+            spconv.SubMConv2d(3, 32, kernel_size=3, padding=1, bias=False, indice_key="subminp"),
+            spconv.SparseConv2d(32, 32, kernel_size=3, stride=2, padding=1, bias=False, indice_key="subm1.2"),
+            spconv.SparseConv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False, indice_key="subm2.4"),
+            spconv.SparseConv2d(64, 64, kernel_size=3, stride=2, padding=1, bias=False, indice_key="subm4.8"),
         )
 
-        self.low_os2_module = spconv.SparseSequential(
-            spconv.SparseConv2d(32, 32, kernel_size=3, stride=2, padding=1, bias=False, indice_key="subm2.0"),
-            relu_layer,
-            nn.BatchNorm1d(32),
-            spconv.SubMConv2d(32, 32, kernel_size=3, padding=1, bias=False, indice_key="subm2.1"),
-            relu_layer,
-            nn.BatchNorm1d(32)
-        )
-
-        self.low_os4_module = spconv.SparseSequential(
-            spconv.SparseConv2d(32, 64, kernel_size=3, stride=2, padding=1, bias=False, indice_key="subm4.0"),
-            relu_layer,
+        # Sparse Conv from OS8 to OS4
+        self.layer3 = spconv.SparseSequential(
+            spconv.SparseInverseConv2d(64, 64, kernel_size=3, bias=False, indice_key="subm4.8"),
             nn.BatchNorm1d(64),
-            spconv.SubMConv2d(64, 64, kernel_size=3, padding=1, bias=False, indice_key="subm4.1"),
-            relu_layer,
-            nn.BatchNorm1d(64)
+            self.leaky_relu,
+            spconv.SubMConv2d(64, 64, kernel_size=3, padding=1, bias=False, indice_key="subm4.4"),
         )
 
+        self.layer3_smooth = spconv.SparseSequential(
+            spconv.SubMConv2d(128, 64, kernel_size=1, padding=0, bias=True, indice_key="subm4.smooth"),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm1d(64),
+        )
+
+        # Sparse Conv from OS4 to OS2
+        self.layer4 = spconv.SparseSequential(
+            spconv.SparseInverseConv2d(64, 32, kernel_size=3, bias=False, indice_key="subm2.4"),
+            nn.BatchNorm1d(32),
+            self.leaky_relu,
+            spconv.SubMConv2d(32, 32, kernel_size=1, padding=1, bias=False, indice_key="subm2.2"),
+        )
+
+        self.layer4_smooth = spconv.SparseSequential(
+            spconv.SubMConv2d(64, 32, kernel_size=1, padding=0, bias=True, indice_key="subm2.smooth"),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm1d(32),
+        )
+
+        # Sparse Conv from OS2 to OS1
+        self.layer5 = spconv.SparseSequential(
+            spconv.SparseInverseConv2d(32, 32, kernel_size=3, bias=False, indice_key="subm1.2"),
+            nn.BatchNorm1d(32),
+            self.leaky_relu,
+            spconv.SubMConv2d(32, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.1"),
+        )
+
+        self.layer5_smooth = spconv.SparseSequential(
+            spconv.SubMConv2d(64, 32, kernel_size=1, padding=0, bias=True, indice_key="subm1.smooth"),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm1d(32),
+        )
 
         self.refine_OS4 = spconv.SparseSequential(
             spconv.SubMConv2d(64, 32, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2, bias=False),
@@ -168,54 +165,28 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             spconv.SubMConv2d(32, 1, kernel_size=self.kernel_size, stride=1, padding=self.kernel_size//2)
         )
 
-        self.fg_fc = nn.ModuleList([
-            nn.Linear(64, 64), # OS4
-            nn.Linear(32, 32), # OS2
-            nn.Linear(32, 32)  # OS1
-        ])
-        self.bg_fc = nn.ModuleList([
-            nn.Linear(64, 64), # OS4
-            nn.Linear(32, 32), # OS2
-            nn.Linear(32, 32)  # OS1
-        ])
-        self.guidance_fc =nn.ModuleList([
-            nn.Linear(128, 64), # OS4
-            nn.Linear(64, 32), # OS2
-            nn.Linear(64, 32)  # OS1
-        ])
-
-        self.layer3_smooth = nn.Conv2d(64, 64, kernel_size=1, stride=1, padding=0, bias=True)
-
-        # self.os4_sparse_fc = nn.Linear(64, 64)
-        # self.os4_sparse_fc2 = nn.Linear(64, 64)
-
-        # self.mlp_os4 = nn.Linear(final_channel, 16)
-        # self.mlp_os4_combine = nn.Sequential(
-        #                             nn.Linear(64, 64),
-        #                             nn.ReLU()
-        #                         )
-
-        # self.mlp_os2 = nn.Linear(final_channel, 16)
-        # self.mlp_os2_combine = nn.Sequential(
-        #                             nn.Linear(32, 32),
-        #                             nn.ReLU())
-                                
-
-        # self.mlp_os1 = nn.Linear(final_channel, 16)
-        # self.mlp_os1_combine = nn.Sequential(
-        #                             nn.Linear(32, 32),
-        #                             nn.ReLU())
-
         # self.mask_dropout_p = detail_mask_dropout
-        # self.fea_dropout = nn.Dropout2d(detail_mask_dropout)
+        self.fea_dropout = nn.Dropout2d(detail_mask_dropout)
 
-    def train(self, mode: bool = True):
-        super().train(mode)
-        if mode:
-            for module in [self.low_os1_module, self.low_os2_module, self.low_os4_module]:
-                module.train(False)
-                for param in module.parameters():
-                    param.requires_grad = False
+        self.freeze_detail_branch = freeze_detail_branch
+        self.train()
+
+    def freeze_coarse_layers(self):
+        coarse_modules = [self.layer1, self.layer2, self.refine_OS8]
+        for module in coarse_modules:
+            for p in module.parameters():
+                p.requires_grad = False
+
+    def train(self, mode=True):
+        super(ResShortCut_AttenSpconv_Dec, self).train(mode)
+        if mode and self.freeze_detail_branch:
+            detail_modules = [self.layer3, self.layer4, self.layer5, self.low_os1_module, self.low_os2_module, self.low_os4_module, self.refine_OS4, self.refine_OS8]
+            for module in detail_modules:
+                for p in module.parameters():
+                    p.requires_grad = False
+
+        for p in self.dummy_downscale.parameters():
+            p.requires_grad = False
 
     def convert_syn_bn(self):
         self.layer1 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer1)
@@ -250,31 +221,20 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     
     def aggregate_detail_mem(self, x, mem_details, n_i):
         return x, mem_details
-
-    def combine_dense_sparse_feat(self, sparse_feat, dense_feat, guidance, b, n_i, h, w, mlp_combine=None):
+    
+    def combine_dense_sparse_feat(self, sparse_feat, dense_feat, b, n_i, h, w):
         coords = sparse_feat.indices.clone()
         coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
         coords = coords.long()
-        # import pdb; pdb.set_trace()
         x = dense_feat.permute(0, 2, 3, 1).contiguous()
         x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
-        
-        # Adding queries to x sparse tensor
-        # instance_ids = sparse_feat.indices[:, 0] % n_i
-        # queries_values = queries[coords[:, 0], instance_ids.long()]
-        # x = torch.cat([x, queries_values], dim=1)
-        # x = mlp_combine(x)
-
-        instance_ids = sparse_feat.indices[:, 0] % n_i
-        guidance = guidance[coords[:, 0], instance_ids.long()]
-        # import pdb; pdb.set_trace()
-        x = x * guidance
 
         x = spconv.SparseConvTensor(x, sparse_feat.indices, (h, w), b * n_i, indice_dict=sparse_feat.indice_dict)
+        x = x.replace_feature(torch.cat([x.features, sparse_feat.features], dim=1))
         # x = Fsp.sparse_add(x, sparse_feat)
         return x
     
-    def predict_details(self, x, ori_fea2, ori_fea1, image, roi_masks, masks, queries, guidances, mem_details=None):
+    def predict_details(self, os8_feat, image, roi_masks, masks, mem_details=None, inst_guidance_os8=None, dense_features=None):
         '''
         x: [b, 64, h/4, w/4], os4 semantic features
         image: [b, 3, H, W], original image
@@ -283,65 +243,87 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         '''
         # Stack masks and images
         b, n_i, H, W = masks.shape
-        masks = masks.reshape(b * n_i, 1, H, W)
         roi_masks = roi_masks.reshape(b * n_i, 1, H, W)
 
-        # 2. Use torch.nonzero()
         coords = torch.nonzero(roi_masks.squeeze(1) > 0, as_tuple=True)
 
-        # import pdb; pdb.set_trace()
-        # masks_vals = masks[coords[0], 0, coords[1], coords[2]]
         image_batch_indices = torch.div(coords[0], n_i, rounding_mode='floor')
         image_vals = image[image_batch_indices, :, coords[1], coords[2]]
-        # inp = torch.cat([image_vals, masks_vals[:, None]], dim=1)
+        
         inp = image_vals
+        
         coords = torch.stack(coords, dim=1)
         inp = spconv.SparseConvTensor(inp, coords.int(), (H, W), b * n_i)
 
-        # inp -> OS 1 --> OS 2 --> OS 4
-        # TODO: Just inference for getting indice keys
+        # Build sampling paths
         with torch.no_grad():
-            fea1 = self.low_os1_module(inp)
-            fea2 = self.low_os2_module(fea1)
-            fea3 = self.low_os4_module(fea2)
+            dummy_os8 = self.dummy_downscale(inp)
 
+        # Get sparse features of OS8 feat
+        coords = dummy_os8.indices.clone()
+        coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor') # batch ids
+        coords = coords.long()
+        x = os8_feat[coords[:, 0], :, coords[:, 1], coords[:, 2]]
+        x = spconv.SparseConvTensor(x, dummy_os8.indices, (H // 8, W // 8), b * n_i, indice_dict=dummy_os8.indice_dict)
+
+        # Change image features to instance-specific features by instance guidance
+        instance_ids = x.indices[:, 0] % n_i
         # import pdb; pdb.set_trace()
-        # Convert queries to OS 4, OS2, OS1 information
-        # queries_os2 = self.mlp_os2(queries)
-        # queries_os1 = self.mlp_os1(queries)
-        # queries_os4 = self.mlp_os4(queries)
+        guidance = inst_guidance_os8[coords[:, 0], instance_ids.long()]
+        x = x.replace_feature(x.features * guidance)
 
-        # Combine fea1 with ori_fea1
-        # fea2 = self.combine_dense_sparse_feat(fea2, ori_fea2, queries_os2, b, n_i, H // 2, W // 2, mlp_combine=self.mlp_os2_combine)
-        # fea2 = self.combine_dense_sparse_feat(fea2, ori_fea2, queries_os2, b, n_i, H // 2, W // 2, mlp_combine=self.mlp_os2_combine)
-        fea2 = self.combine_dense_sparse_feat(fea2, ori_fea2, guidances[0], b, n_i, H // 2, W // 2, mlp_combine=None)
+        dense_feat = x.dense()
+        valid_ids = torch.nonzero(roi_masks.sum((1,2,3))).flatten()
 
-        # Combine fea2 with ori_fea2
-        # fea1 = self.combine_dense_sparse_feat(fea1, ori_fea1, queries_os1, b, n_i, H, W, mlp_combine=self.mlp_os1_combine)
-        fea1 = self.combine_dense_sparse_feat(fea1, ori_fea1, guidances[1], b, n_i, H, W, mlp_combine=None)
-
-        # Combine x with fea3
-        # Prepare sparse tensor of x
-        # x = self.combine_dense_sparse_feat(fea3, x, queries_os4, b, n_i, H // 4, W // 4, mlp_combine=self.mlp_os4_combine)
-        x = self.combine_dense_sparse_feat(fea3, x, guidances[2], b, n_i, H // 4, W // 4, mlp_combine=None)
-        # x = x.replace_feature(self.os4_sparse_fc(x.features))
-
-        # Multiply fea3 by the guidance
-        # batch_ids = torch.div(x.indices[:, 0], n_i, rounding_mode='floor')
-        # instance_ids = x.indices[:, 0] % n_i
-        # x = x.replace_feature(x.features * os4_guidance[batch_ids.long(), instance_ids.long()])
-        # x = x.replace_feature(self.os4_sparse_fc2(x.features))
-
+        # Visualize feature before-after guidance
+        # for i in valid_ids:
+        #     if i == 0: continue
+        #     print(i)
+        #     b_i = i // n_i
+        #     i_i = i % n_i
+        #     feat_m_before = os8_feat[b_i]
+        #     cv2.imwrite("roi_mask.png", roi_masks[i, 0].cpu().numpy() * 255)
+        #     for j in range(128):
+        #         print(inst_guidance_os8[b_i, i_i, j])
+        #         feat_m = feat_m_before[j]
+        #         feat_m = (feat_m - feat_m.min()) / (feat_m.max() - feat_m.min() + 1e-8)
+        #         cv2.imwrite("feat_map.png", feat_m.detach().float().cpu().numpy() * 255)
+        #         import pdb; pdb.set_trace()
+        #     feat_m_after = os8_feat[b_i] * inst_guidance_os8[b_i, i_i][:, None, None]
+        #     feat_m_before = feat_m_before.mean(0)
+        #     feat_m_after = feat_m_after.mean(0)
+        #     feat_m_before = (feat_m_before - feat_m_before.min()) / (feat_m_before.max() - feat_m_before.min() + 1e-8)
+        #     feat_m_after = (feat_m_after - feat_m_after.min()) / (feat_m_after.max() - feat_m_after.min() + 1e-8)
+        #     cv2.imwrite("feat_map_before.png", feat_m_before.detach().float().cpu().numpy() * 255)
+        #     cv2.imwrite("feat_map_after.png", feat_m_after.detach().float().cpu().numpy() * 255)
+        #     cv2.imwrite("roi_mask.png", roi_masks[i, 0].cpu().numpy() * 255)
+        #     import pdb; pdb.set_trace()
+        # for i in valid_ids:
+        #     print(i)
+        #     feat_m = dense_feat[i].mean(0)
+        #     feat_m = (feat_m - feat_m.min()) / (feat_m.max() - feat_m.min() + 1e-8)
+        #     cv2.imwrite("feat_map.png", feat_m.detach().float().cpu().numpy() * 255)
+        #     cv2.imwrite("roi_mask.png", roi_masks[i, 0].cpu().numpy() * 255)
+        #     import pdb; pdb.set_trace()
+        
+        # Aggregate with detail features
+        fea1, fea2, fea3 = dense_features
+        # Aggregate with OS4 features
         # import pdb; pdb.set_trace()
-        # coords = fea3.indices.clone()
-        # coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
-        # coords = coords.long()
-        # x = self.fea_dropout(x)
-        # # import pdb; pdb.set_trace()
-        # x = x.permute(0, 2, 3, 1).contiguous()
-        # x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
-        # x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
-        # x = Fsp.sparse_add(x, fea3)
+        x = self.layer3(x)
+        # import pdb; pdb.set_trace()
+        x = self.combine_dense_sparse_feat(x, fea3, b, n_i, H // 4, W // 4)
+        x = self.layer3_smooth(x)
+
+        # TODO: Check instance specific features here
+        # dense_feat = x.dense()
+        # valid_ids = torch.nonzero(roi_masks.sum((1,2,3))).flatten()
+        # for i in valid_ids:
+        #     print(i)
+        #     feat_m = dense_feat[i].mean(0)
+        #     feat_m = (feat_m - feat_m.min()) / (feat_m.max() - feat_m.min() + 1e-8)
+        #     cv2.imwrite("feat_map.png", feat_m.detach().float().cpu().numpy() * 255)
+        #     import pdb; pdb.set_trace()
 
         # Predict OS 4
         x_os4 = self.refine_OS4(x)
@@ -350,15 +332,19 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         coords = x_os4.indices.long()
         x_os4_out[coords[:, 0], :, coords[:, 1], coords[:, 2]] += 99
 
-        # Combine with fea2
-        # - Upsample to OS 2
+        # Aggregate with OS2 features
         x = self.layer4(x)
-        x = Fsp.sparse_add(x, fea2)
+        x = self.combine_dense_sparse_feat(x, fea2, b, n_i, H // 2, W // 2)
+        x = self.layer4_smooth(x)
 
-        # Combine with fea1
-        # - Upsample to OS 1
+        # Aggregate with OS1 features
         x = self.layer5(x)
-        x = Fsp.sparse_add(x, fea1)
+
+        
+        # TODO: Check instance specific features here
+        x = self.combine_dense_sparse_feat(x, fea1, b, n_i, H, W)
+        x = self.layer5_smooth(x)
+        
 
         # Predict OS 1
         x_os1 = self.refine_OS1(x)
@@ -368,7 +354,6 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x_os1_out[coords[:, 0], :, coords[:, 1], coords[:, 2]] += 99
 
         return x_os4_out, x_os1_out, mem_details
-        
 
     # def compute_unknown(self, masks, k_size=30):
     #     h, w = masks.shape[-2:]
@@ -405,10 +390,10 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         alpha_pred = alpha_pred_os8.clone() #.detach()
         
         # weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
-        weight_os4 = compute_unknown(alpha_pred, k_size=30) * detail_mask
+        weight_os4 = compute_unknown(alpha_pred, k_size=27, is_train=self.training) * detail_mask
         weight_os4 = weight_os4.type(alpha_pred.dtype)
         alpha_pred_os4 = alpha_pred_os4.type(alpha_pred.dtype)
-        weight_os4 = weight_os4 * (alpha_pred_os4 > 1.0/255).float()
+        weight_os4 = weight_os4 #* (alpha_pred_os4 > 1.0/255).float()
         alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
         # cv2.imwrite("test_fuse.png", alpha_pred[0,0].detach().cpu().numpy() * 255)
         # cv2.imwrite("test_fuse_wos4.png", weight_os4[0,0].detach().cpu().numpy() * 255)
@@ -417,23 +402,33 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # import pdb; pdb.set_trace()
 
         # weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
-        weight_os1 = compute_unknown(alpha_pred, k_size=15) * detail_mask
+        weight_os1 = compute_unknown(alpha_pred, k_size=15, is_train=self.training) * detail_mask
         weight_os1 = weight_os1.type(alpha_pred.dtype)
         alpha_pred_os1 = alpha_pred_os1.type(alpha_pred.dtype)
-        weight_os1 = weight_os1 * (alpha_pred_os1 > 1.0/255).float()
+        weight_os1 = weight_os1 #* (alpha_pred_os1 > 1.0/255).float()
         alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
+
+        # Blending between 1.0 and < 1.0 region
+        # fg_mask = (alpha_pred >= 254.0/255.0).float()
+        # smooth_alpha_pred = gaussian_smoothing(alpha_pred, sigma=1)
+        # alpha_pred = fg_mask * smooth_alpha_pred + (1 - fg_mask) * alpha_pred
 
         return alpha_pred, weight_os4, weight_os1
 
-    def compute_instance_guidance(self, feat, guidance_map, level):
+    def compute_instance_guidance(self, feat, guidance_map):
+        # import pdb; pdb.set_trace()
+        # bg_guidance = (1.0 - guidance_map.sum(1)).clamp(0, 1)
+        # bg_guidance = bg_guidance[:, None].expand_as(guidance_map)
         fg_guidance = F.adaptive_avg_pool2d(guidance_map[:, :, None] * feat[:, None], 1).squeeze(-1).squeeze(-1)
-        fg_guidance = self.fg_fc[level](fg_guidance)
-        bg_guidance = F.adaptive_avg_pool2d((1 - guidance_map[:, :, None]) * feat[:, None], 1).squeeze(-1).squeeze(-1)
-        bg_guidance = self.bg_fc[level](bg_guidance)
-        instance_guidance = self.guidance_fc[level](torch.cat([fg_guidance, bg_guidance], dim=2))
-        instance_guidance = torch.sigmoid(instance_guidance)
-        return instance_guidance
-
+        # fg_guidance = (guidance_map[:, :, None] * feat[:, None]).sum((-1, -2)) / (guidance_map[:, :, None].sum((-1, -2)) + 1e-8)
+        # bg_guidance = F.adaptive_avg_pool2d((1 - guidance_map[:, :, None]) * feat[:, None], 1).squeeze(-1).squeeze(-1)
+        # bg_guidance = (bg_guidance[:, :, None] * feat[:, None]).sum((-1, -2)) / (bg_guidance[:, :, None].sum((-1, -2)) + 1e-8)
+        fg_guidance = self.fg_fc(fg_guidance)
+        return fg_guidance
+        # bg_guidance = self.bg_fc(bg_guidance)
+        # instance_guidance = self.guidance_fc(torch.cat([fg_guidance, bg_guidance], dim=2))
+        # return instance_guidance
+    
     def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
         '''
         masks: [b * n_f * n_i, 1, H, W]
@@ -445,6 +440,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         if self.training:
             # In training, use gt_alphas to supervise the attention
             gt_masks = (gt_alphas > 0).reshape(b, n_f, n_i, gt_alphas.shape[2], gt_alphas.shape[3])
+
+            if gt_masks.shape[-1] != masks.shape[-1]:
+                gt_masks = resizeAnyShape(gt_masks, scale_factor=masks.shape[-1] * 1.0/ gt_masks.shape[-1], use_max_pool=True)
 
         # OS32 -> OS 8
         ret = {}
@@ -458,8 +456,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # mem_feat = x
 
         x = self.layer2(x) + fea4
-        
-        
+
+        h, w = image.shape[-2:]
 
         # Predict OS8
         # import pdb; pdb.set_trace()
@@ -469,73 +467,47 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x_os8, x, _, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
                                                                             prev_tokens=mem_query if self.use_query_temp else None, 
                                                                             use_mask_atten=use_mask_atten, gt_mask=gt_masks)
-        # Compute differences between current and previous frame
-        # diff_pred = self.compute_diff(x, mem_feat[0] if mem_feat is not None else None)
-        # prev_pred = mem_feat[1] if mem_feat is not None else None
         mem_feat = x
-
-        # If not training, compute new os8 based on diff_pred
-        # if not self.training and prev_pred is not None and diff_pred is not None:
-        #     x_os8 = prev_pred * (1 - diff_pred) + diff_pred * x_os8
-        #     prev_pred = x_os8
-
-        # import pdb; pdb.set_trace()
-        x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
-
+        x_os8 = F.interpolate(x_os8, size=(h, w), mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
         if self.training:
             x_os8 = x_os8 * valid_masks
         else:
             x_os8 = x_os8[:, :n_i]
-        # import pdb; pdb.set_trace()
-        x = self.layer3(x) + fea3
-        fea2 = self.layer4_conv(x) + fea2
-        fea1 = self.os1_conv(fea2)
-        # x = self.layer3_smooth(x)
-        
 
+
+        # Stop when freeze detail branch
+        if self.freeze_detail_branch:
+            ret['alpha_os8'] = x_os8
+            ret['refined_masks'] = x_os8
+            ret['loss_max_atten'] = loss_max_atten
+            ret['loss_min_atten'] = loss_min_atten
+            return ret
+        
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
-        guided_mask_os8 = x_os8 #.clone()
+        guided_mask_os8 = x_os8.clone()
+        is_use_alphas_gt = False
         if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 3 and random.random() < 0.5)):
             guided_mask_os8 = gt_alphas.clone()
-            guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=1.0/8.0, mode='bilinear', align_corners=False)
-            guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
-            # if gt_alphas.max() == 0 and self.training:
-            #     guided_mask_os8[:, :, 200: 250, 200: 250] = 1.0
-            # print(guided_mask_os8.sum(), guided_mask_os8.max())
+            is_use_alphas_gt = True
+            # guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=0.0625, mode='bilinear', align_corners=False)
+            # guided_mask_os8 = F.interpolate(guided_mask_os8, size=x_os8.shape[-2:], mode='bilinear', align_corners=False)
 
-        # Compute the instance OS4 guidance map
-        guidance_map_os4 = F.interpolate(guided_mask_os8, scale_factor=0.25, mode='bilinear', align_corners=False)
-        guidance_map_os2 = F.interpolate(guided_mask_os8, scale_factor=0.5, mode='bilinear', align_corners=False)
-        guidance_map_os1 = guided_mask_os8.clone()
-
-        inst_guidance_os4 = self.compute_instance_guidance(x, guidance_map_os4, 0)
-        inst_guidance_os2 = self.compute_instance_guidance(fea2, guidance_map_os2, 1)
-        inst_guidance_os1 = self.compute_instance_guidance(fea1, guidance_map_os1, 2)
-
-        # unknown_os8 = self.compute_unknown(guided_mask_os8)
-        unknown_os8 = compute_unknown(guided_mask_os8, k_size=59, is_train=self.training)
-
-        # small_unknown_os8 = compute_unknown(guided_mask_os8, k_size=7, is_train=self.training)
-
-        # Convert masks to discrete values: 1 and 0.5 --> Weak guidance to the network
-        # guided_mask_os8 = guided_mask_os8.detach()
-        # guided_mask_os8[small_unknown_os8 > 0] = 0.5
-        # guided_mask_os8 = torch.ones_like(alpha_guidance) * 0.5
-        # guided_mask_os8[alpha_guidance > 254.0/255.0] = 1.0
-        # guided_mask_os8[alpha_guidance < 1.0/255.0] = 0.0
-        # unknown_os8[0].sum((1,2))
-        # cv2.imwrite("guided_map.png", small_unknown_os8[0,0].float().cpu().numpy() * 255)
-        # cv2.imwrite("guided_map.png", guided_mask_os8[0,0].float().cpu().numpy() * 255)
+        # Compute instance guidance
+        # guidance_map_os8 = F.interpolate(guided_mask_os8, scale_factor=0.125, mode='bilinear', align_corners=False)
+        # inst_guidance_os8 = self.compute_instance_guidance(x, guidance_map_os8)
         # import pdb; pdb.set_trace()
+        # Apply gaussian filter on guided_mask_os8
+        # guided_mask_os8 = gaussian_smoothing(guided_mask_os8, sigma=3)
+        unknown_os8 = compute_unknown(guided_mask_os8, k_size=30)
 
         if unknown_os8.max() == 0 and self.training:
             unknown_os8[:, :, 200: 250, 200: 250] = 1.0
 
         if unknown_os8.sum() > 0 or self.training:
-            # TODO: Combine with details memory
-            # guided_mask_os8 = (guided_mask_os8 > 0).float()
-            x_os4, x_os1, mem_details = self.predict_details(x, fea2, fea1, image, unknown_os8, guided_mask_os8, queries, [inst_guidance_os1, inst_guidance_os2, inst_guidance_os4], mem_details)
+
+            x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details, queries, [fea1, fea2, fea3])
+
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
             x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])
 
@@ -548,8 +520,6 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
-        
-        
 
         # diff_os4 = torch.abs(x_os4 - x_os8 * unknown_os8)
         # diff_os1 = torch.abs(x_os1 - x_os8 * unknown_os8)
@@ -559,14 +529,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # if not self.training:
         #     import pdb; pdb.set_trace()
         # Update mem_feat
-        alpha_pred, w4, w1 = self.fushion(ret, unknown_os8)
-
-        cv2.imwrite("test_os8.png", x_os8[0, 1].cpu().numpy() * 255)
-        cv2.imwrite("test_os4.png", x_os4[0, 1].cpu().numpy() * 255)
-        cv2.imwrite("test_os1.png", x_os1[0, 1].cpu().numpy() * 255)
-        cv2.imwrite("test_fuse.png", alpha_pred[0, 1].cpu().numpy() * 255)
-        import pdb; pdb.set_trace()
-
+        alpha_pred, weight_os4, weight_os1 = self.fushion(ret, unknown_os8)
+        # cv2.imwrite("test_fuse_new.png", alpha_pred[0, 1].cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
         # mem_feat = self.update_mem(mem_feat, alpha_pred)
         # mem_feat = (mem_feat, prev_pred)
 
@@ -575,8 +540,14 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         ret['refined_masks'] = alpha_pred
         # ret['refined_masks'] = x_os8
-        # ret['weight_os4'] = weight_os4
-        # ret['weight_os1'] = weight_os1
+        
+        # If we use GT alphas, select amount randomly in the unknown mask region
+        if is_use_alphas_gt:
+            weight_os4 = compute_unknown(gt_alphas, k_size=30, is_train=self.training) * unknown_os8
+            weight_os1 = compute_unknown(gt_alphas, k_size=15, is_train=self.training) * unknown_os8
+        
+        ret['weight_os4'] = weight_os4
+        ret['weight_os1'] = weight_os1 
         ret['detail_mask'] = unknown_os8
         # ret['diff_pred'] = diff_pred
         if self.training and iter >= self.warmup_mask_atten_iter:

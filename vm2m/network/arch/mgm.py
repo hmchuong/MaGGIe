@@ -48,6 +48,7 @@ class MGM(nn.Module):
 
         self.encoder = backbone
         self.num_masks = cfg.backbone_args.num_mask
+        self.freeze_coarse = cfg.freeze_coarse
 
         self.aspp = ASPP(in_channel=512, out_channel=512)
         self.decoder = decoder
@@ -84,7 +85,6 @@ class MGM(nn.Module):
             beta = float(cfg.loss_multi_inst_type.split('_')[-1])
             self.loss_multi_inst_func = partial(F.smooth_l1_loss, beta=beta)
 
-
         need_init_weights = [self.aspp, self.decoder]
 
         # Init weights
@@ -95,6 +95,25 @@ class MGM(nn.Module):
         
         if self.train_temporal:
             self.freeze_to_train_temporal()
+
+        if self.freeze_coarse:
+            self.freeze_coarse_layers()
+    
+    def freeze_coarse_layers(self):
+        for param in self.encoder.parameters():
+            param.requires_grad = False
+        for param in self.aspp.parameters():
+            param.requires_grad = False
+        try:
+            self.decoder.freeze_coarse_layers()
+        except:
+            print("cannot freeze coarse layers in decoder")
+            pass
+    
+    def train(self, mode=True):
+        super().train(mode=mode)
+        if mode and self.freeze_coarse:
+            self.freeze_coarse_layers()
     
     def convert_syn_bn(self):
         self.encoder = nn.SyncBatchNorm.convert_sync_batchnorm(self.encoder)
@@ -222,24 +241,33 @@ class MGM(nn.Module):
             pred, pred_notemp = pred
 
         # Fushion
+        weight_os1, weight_os4 = None, None
         if 'refined_masks' in pred:
             alpha_pred = pred.pop("refined_masks")
-            weight_os4 = pred.pop("detail_mask").type(alpha_pred.dtype)
-            weight_os1 = weight_os4
-            # weight_os4 = pred.pop("weight_os4")
-            # weight_os1 = pred.pop("weight_os1")
+            if 'detail_mask' in pred:
+                weight_os4 = pred["detail_mask"].type(alpha_pred.dtype)
+                weight_os1 = weight_os4
         else:
             alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
         
+        # 75% use the weight os4 and os1 masks, 25% use the detail mask
+        if 'weight_os4' in pred and self.training and np.random.rand() < 0.75:
+            weight_os4 = pred.pop("weight_os4")
+            weight_os1 = pred.pop("weight_os1")
         
         output = {}
         if self.num_masks > 0 and self.training:
-            output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, self.num_masks, h, w)
-            output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
+            if 'alpha_os4' in pred:
+                output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, self.num_masks, h, w)
+                output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
+                output['detail_mask'] = pred['detail_mask'].view(b, n_f, self.num_masks, h, w)
             output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, self.num_masks, h, w)
         else:
-            output['alpha_os1'] = pred['alpha_os1'][:, :n_i].view(b, n_f, n_i, h, w)
-            output['alpha_os4'] = pred['alpha_os4'][:, :n_i].view(b, n_f, n_i, h, w)
+            if 'alpha_os1' in pred:
+                output['alpha_os1'] = pred['alpha_os1'][:, :n_i].view(b, n_f, n_i, h, w)
+                output['alpha_os4'] = pred['alpha_os4'][:, :n_i].view(b, n_f, n_i, h, w)
+            if 'detail_mask' in pred:
+                output['detail_mask'] = pred['detail_mask'].view(b, n_f, n_i, h, w)
             output['alpha_os8'] = pred['alpha_os8'][:, :n_i].view(b, n_f, n_i, h, w)
         if 'ctx' in pred:
             output['ctx'] = pred['ctx']
@@ -292,10 +320,10 @@ class MGM(nn.Module):
                     continue
                 pred[k] = v * valid_masks
 
-            if pred_notemp is not None:
-                loss_dict = self.compute_loss_temp(pred, pred_notemp, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
-            else:
-                loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+            # if pred_notemp is not None:
+            #     loss_dict = self.compute_loss_temp(pred, pred_notemp, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+            # else:
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
 
             if diff_pred is not None:
                 loss_dict['loss_diff'] = self.compute_loss_diff_pred(diff_pred, trans_gt)
@@ -370,121 +398,26 @@ class MGM(nn.Module):
         loss = torch.where(diff <= alpha, y1, y2)
         return loss.sum() / (torch.sum(weight) + 1e-8)
 
-    def compute_loss_temp(self, pred, pred_notemp, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape):
-        loss_dict = self.compute_loss(pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape)
 
-        pred_os8, pred_notemp_os8 = pred['alpha_os8'], pred_notemp['alpha_os8']
-        pred_os4, pred_notemp_os4 = pred['alpha_os4'], pred_notemp['alpha_os4']
-        pred_os1, pred_notemp_os1 = pred['alpha_os1'], pred_notemp['alpha_os1']
-        
-        # Compute diff between pred and pred_notemp
-        valid_mask = alphas.sum((2, 3), keepdim=True) > 0
-        pred_notemp_os8 = pred_notemp_os8 * valid_mask
-        pred_notemp_os4 = pred_notemp_os4 * valid_mask
-        pred_notemp_os1 = pred_notemp_os1 * valid_mask
-
-        # OS8
-        diff_os8 = torch.abs(alphas - pred_notemp_os8)
-        weight_os8 = diff_os8 > (1.0/255.0)
-
-        # OS4
-        diff_os4 = torch.abs(alphas - pred_notemp_os4) * weight_os4
-        weight_os4 = diff_os4 > (1.0/255.0)
-
-        # OS1
-        diff_os1 = torch.abs(alphas - pred_notemp_os1) * weight_os1
-        weight_os1 = diff_os1 > (1.0/255.0)
-
-        # TODO: Check the differences between temp and no temp
-        # for b_i in range(weight_os8.shape[0]):
-        #     for ii in range(weight_os8.shape[1]):
-        #         if valid_mask[b_i, ii, 0, 0]:
-        #             print(b_i, ii)
-        #             cv2.imwrite("weight_os8.png", weight_os8[b_i, ii].cpu().numpy() * 255)
-        #             cv2.imwrite("weight_os4.png", weight_os4[b_i, ii].cpu().numpy() * 255)
-        #             cv2.imwrite("weight_os1.png", weight_os1[b_i, ii].cpu().numpy() * 255)
-        #             cv2.imwrite("pred_notemp_os8.png", pred_notemp_os8[b_i, ii].detach().cpu().numpy() * 255)
-        #             cv2.imwrite("pred_notemp_os4.png", pred_notemp_os4[b_i, ii].detach().cpu().numpy() * 255)
-        #             cv2.imwrite("pred_notemp_os1.png", pred_notemp_os1[b_i, ii].detach().cpu().numpy() * 255)
-        #             cv2.imwrite("pred_temp_os8.png", pred_os8[b_i, ii].detach().cpu().numpy() * 255)
-        #             cv2.imwrite("pred_temp_os4.png", pred_os4[b_i, ii].detach().cpu().numpy() * 255)
-        #             cv2.imwrite("pred_temp_os1.png", pred_os1[b_i, ii].detach().cpu().numpy() * 255)
-        #             import pdb; pdb.set_trace()
-
-        # Reg loss
-        total_loss = loss_dict['total']
-
-        if self.loss_alpha_w > 0:
-            ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
-            ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
-            ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
-            unknown_gt = (alphas > 1.0/255.0) & (alphas < 254.0/ 255.0)
-            unknown_pred = alpha_pred_os8[unknown_gt]
-            
-            # Upper bound
-            upper_weight = unknown_pred >= 254.0 / 255.0
-            lower_weight = unknown_pred <= 1.0 / 255.0
-            upper_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 0.9), reduction='none') * upper_weight).sum() / (torch.sum(upper_weight) + 1e-8)
-            lower_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 0.1), reduction='none') * lower_weight).sum() / (torch.sum(lower_weight) + 1e-8)
-            loss_dict['loss_os8_upper'] = upper_loss
-            loss_dict['loss_os8_lower'] = lower_loss
-
-            ref_alpha_loss = (ref_alpha_os1 * 2 + ref_alpha_os4 * 1 + ref_alpha_os8 * 1 + upper_loss * 0.5 + lower_loss * 0.5) / 6.0
-            loss_dict['loss_rec_os1'] += ref_alpha_os1
-            loss_dict['loss_rec_os4'] += ref_alpha_os4
-            loss_dict['loss_rec_os8'] += ref_alpha_os8
-            loss_dict['loss_rec'] += ref_alpha_loss
-            total_loss += ref_alpha_loss * self.loss_alpha_w
-
-        # Lap loss
-        if self.loss_alpha_lap_w > 0:
-            logging.debug("Computing lap loss")
-            h, w = pred_os1.shape[-2:]
-            lap_loss_os1 = self.lap_loss(pred_os1.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os1.view(-1, 1, h, w))
-            lap_loss_os4 = self.lap_loss(pred_os4.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os4.view(-1, 1, h, w))
-            lap_loss_os8 = self.lap_loss(pred_os8.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os8.view(-1, 1, h, w))
-            lap_loss = (lap_loss_os1 * 2 + lap_loss_os4 * 1 + lap_loss_os8 * 1) / 5.0
-            loss_dict['loss_lap_os1'] += lap_loss_os1
-            loss_dict['loss_lap_os4'] += lap_loss_os4
-            loss_dict['loss_lap_os8'] += lap_loss_os8
-            loss_dict['loss_lap'] += lap_loss
-            total_loss += lap_loss * self.loss_alpha_lap_w
-        
-        if self.loss_alpha_grad_w > 0:
-            grad_loss_os1 = self.grad_loss(pred_os1, alphas, weight_os1)
-            grad_loss_os4 = self.grad_loss(pred_os4, alphas, weight_os4)
-            grad_loss_os8 = self.grad_loss(pred_os8, alphas, weight_os8)
-            grad_loss = (grad_loss_os1 * 2 + grad_loss_os4 * 1 + grad_loss_os8 * 1) / 5.0
-            loss_dict['loss_grad_os1'] += grad_loss_os1
-            loss_dict['loss_grad_os4'] += grad_loss_os4
-            loss_dict['loss_grad_os8'] += grad_loss_os8
-            loss_dict['loss_grad'] += grad_loss
-            total_loss += grad_loss * self.loss_alpha_grad_w
-
-        if self.loss_dtSSD_w > 0:
-            alpha_pred_os8 = pred_os8.reshape(*alpha_shape)
-            alpha_pred_os4 = pred_os4.reshape(*alpha_shape)
-            alpha_pred_os1 = pred_os1.reshape(*alpha_shape)
-            alphas = alphas.reshape(*alpha_shape)
-            dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, weight_os1.reshape(*alpha_shape))
-            dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, weight_os4.reshape(*alpha_shape))
-            dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, weight_os8.reshape(*alpha_shape))
-            dtSSD_loss = (dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1) / 5.0
-            loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
-            loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
-            loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8
-            loss_dict['loss_dtSSD'] = dtSSD_loss
-            total_loss += dtSSD_loss * self.loss_dtSSD_w
-
-        loss_dict['total'] = total_loss
-        return loss_dict
-
+    def loss_multi_instances(self, pred):
+        """
+        :param pred: [N, C, H, W]
+        :param gt: [N, C, H, W]
+        :param weight: [N, 1, H, W]
+        :return:
+        """
+        pred = pred.sum(1)
+        mask = (pred > 1.0).float()
+        loss = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
+        loss = loss.sum() / (mask.sum() + 1e-6)
+        return loss
+    
     def compute_loss(self, pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape):
         '''
         pred: dict of output from forward
         batch: dict of input batch
         '''
-        alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
+        alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred.get('alpha_os1', None), pred.get('alpha_os4', None), pred['alpha_os8']
 
         # if iter < self.cfg.mgm.warmup_iter or (iter < self.cfg.mgm.warmup_iter * 3 and random.randint(0,1) == 0):
         #     weight_os1 = trans_gt
@@ -496,18 +429,14 @@ class MGM(nn.Module):
             # logging.debug('Using prediction mask')
 
         loss_dict = {}
-        weight_os8 = torch.ones_like(weight_os1)
+        weight_os8 = torch.ones_like(alpha_pred_os8)
         valid_mask = alphas.sum((2, 3), keepdim=True) > 0
         weight_os8 = weight_os8 * valid_mask
 
-        if correct_weights is not None:
-            weight_os1 = weight_os1 * correct_weights
-            weight_os4 = weight_os4 * correct_weights
-            weight_os8 = weight_os8 * correct_weights
-
-        # unknown_gt = (alphas < 254.0/255.0) & (alphas > 1.0/255.0)
-        # unknown_pred_os8 = (alpha_pred_os8 < 254.0/255.0) & (alpha_pred_os8 > 1.0/255.0)
-        # weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype)
+        # TODO: For training stage 2 only
+        unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
+        unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
+        weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype)
         # import pdb; pdb.set_trace()
 
         # Add padding to alphas and trans_gt
@@ -521,25 +450,31 @@ class MGM(nn.Module):
         # Reg loss
         total_loss = 0
         if self.loss_alpha_w > 0:
-            logging.debug("Computing alpha loss")
-            ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
-            ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
-            ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
-            unknown_gt = (alphas > 1.0/255.0) & (alphas < 254.0/ 255.0)
-            unknown_pred = alpha_pred_os8[unknown_gt]
+            ref_alpha_loss = 0
+            if alpha_pred_os1 is not None:
+                ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
+                ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
+                ref_alpha_loss += ref_alpha_os1 * 2 + ref_alpha_os4 * 1
+                loss_dict['loss_rec_os1'] = ref_alpha_os1
+                loss_dict['loss_rec_os4'] = ref_alpha_os4
+
+            if not self.freeze_coarse:
+                ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
+                loss_dict['loss_rec_os8'] = ref_alpha_os8
+                ref_alpha_loss += ref_alpha_os8 * 1
             
             # Upper bound
-            upper_weight = unknown_pred >= 254.0 / 255.0
-            lower_weight = unknown_pred <= 1.0 / 255.0
-            upper_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 0.9), reduction='none') * upper_weight).sum() / (torch.sum(upper_weight) + 1e-8)
-            lower_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 0.1), reduction='none') * lower_weight).sum() / (torch.sum(lower_weight) + 1e-8)
-            loss_dict['loss_os8_upper'] = upper_loss
-            loss_dict['loss_os8_lower'] = lower_loss
-
-            ref_alpha_loss = (ref_alpha_os1 * 2 + ref_alpha_os4 * 1 + ref_alpha_os8 * 1 + upper_loss * 0.5 + lower_loss * 0.5) / 6.0
-            loss_dict['loss_rec_os1'] = ref_alpha_os1
-            loss_dict['loss_rec_os4'] = ref_alpha_os4
-            loss_dict['loss_rec_os8'] = ref_alpha_os8
+            # unknown_gt = (alphas > 1.0/255.0) & (alphas < 254.0/ 255.0)
+            # unknown_pred = alpha_pred_os8[unknown_gt]
+            # upper_weight = unknown_pred >= 254.0 / 255.0
+            # lower_weight = unknown_pred <= 1.0 / 255.0
+            # upper_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 253.0/255.0), reduction='none') * upper_weight).sum() / (torch.sum(upper_weight) + 1e-8)
+            # lower_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 2.0/255.0), reduction='none') * lower_weight).sum() / (torch.sum(lower_weight) + 1e-8)
+            # loss_dict['loss_os8_upper'] = upper_loss
+            # loss_dict['loss_os8_lower'] = lower_loss
+            
+            # ref_alpha_loss += upper_loss * 0.5 + lower_loss * 0.5
+            
             loss_dict['loss_rec'] = ref_alpha_loss
             total_loss += ref_alpha_loss * self.loss_alpha_w
         
@@ -549,7 +484,7 @@ class MGM(nn.Module):
             comp_loss_os1 = loss_comp(alpha_pred_os1.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os1.flatten(0,1)[:, None])
             comp_loss_os4 = loss_comp(alpha_pred_os4.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os4.flatten(0,1)[:, None])
             comp_loss_os8 = loss_comp(alpha_pred_os8.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os8.flatten(0,1)[:, None])
-            comp_loss = (comp_loss_os1 * 2 + comp_loss_os4 * 1 + comp_loss_os8 * 1) / 5.0
+            comp_loss = comp_loss_os1 * 2 + comp_loss_os4 * 1 + comp_loss_os8 * 1
             loss_dict['loss_comp_os1'] = comp_loss_os1
             loss_dict['loss_comp_os4'] = comp_loss_os4
             loss_dict['loss_comp_os8'] = comp_loss_os8
@@ -559,48 +494,58 @@ class MGM(nn.Module):
         # Lap loss
         if self.loss_alpha_lap_w > 0:
             logging.debug("Computing lap loss")
-            h, w = alpha_pred_os1.shape[-2:]
-            lap_loss_os1 = self.lap_loss(alpha_pred_os1.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os1.view(-1, 1, h, w))
-            lap_loss_os4 = self.lap_loss(alpha_pred_os4.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os4.view(-1, 1, h, w))
-            lap_loss_os8 = self.lap_loss(alpha_pred_os8.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os8.view(-1, 1, h, w))
-            lap_loss = (lap_loss_os1 * 2 + lap_loss_os4 * 1 + lap_loss_os8 * 1) / 5.0
-            loss_dict['loss_lap_os1'] = lap_loss_os1
-            loss_dict['loss_lap_os4'] = lap_loss_os4
-            loss_dict['loss_lap_os8'] = lap_loss_os8
+            h, w = alpha_pred_os8.shape[-2:]
+            lap_loss = 0
+            if alpha_pred_os1 is not None:
+                lap_loss_os1 = self.lap_loss(alpha_pred_os1.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os1.view(-1, 1, h, w))
+                lap_loss_os4 = self.lap_loss(alpha_pred_os4.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os4.view(-1, 1, h, w))
+                loss_dict['loss_lap_os1'] = lap_loss_os1
+                loss_dict['loss_lap_os4'] = lap_loss_os4
+                lap_loss += lap_loss_os1 * 2 + lap_loss_os4 * 1
+
+            if not self.freeze_coarse:
+                lap_loss_os8 = self.lap_loss(alpha_pred_os8.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os8.view(-1, 1, h, w))
+                lap_loss += lap_loss_os8 * 1
+                loss_dict['loss_lap_os8'] = lap_loss_os8
+
             loss_dict['loss_lap'] = lap_loss
             total_loss += lap_loss * self.loss_alpha_lap_w
         
         if self.loss_alpha_grad_w > 0:
-            grad_loss_os1 = self.grad_loss(alpha_pred_os1, alphas, weight_os1)
-            grad_loss_os4 = self.grad_loss(alpha_pred_os4, alphas, weight_os4)
-            grad_loss_os8 = self.grad_loss(alpha_pred_os8, alphas, weight_os8)
-            grad_loss = (grad_loss_os1 * 2 + grad_loss_os4 * 1 + grad_loss_os8 * 1) / 5.0
-            loss_dict['loss_grad_os1'] = grad_loss_os1
-            loss_dict['loss_grad_os4'] = grad_loss_os4
-            loss_dict['loss_grad_os8'] = grad_loss_os8
+            grad_loss = 0
+            if alpha_pred_os1 is not None:
+                grad_loss_os1 = self.grad_loss(alpha_pred_os1, alphas, weight_os1)
+                grad_loss_os4 = self.grad_loss(alpha_pred_os4, alphas, weight_os4)
+                grad_loss += grad_loss_os1 * 2 + grad_loss_os4 * 1
+                loss_dict['loss_grad_os1'] = grad_loss_os1
+                loss_dict['loss_grad_os4'] = grad_loss_os4
+
+            if not self.freeze_coarse:
+                grad_loss_os8 = self.grad_loss(alpha_pred_os8, alphas, weight_os8)
+                grad_loss += grad_loss_os8
+                loss_dict['loss_grad_os8'] = grad_loss_os8
+            
             loss_dict['loss_grad'] = grad_loss
             total_loss += grad_loss * self.loss_alpha_grad_w
 
         
 
         if self.loss_multi_inst_w > 0 and iter >= self.loss_multi_inst_warmup:
-            logging.debug("Computing multi inst loss")
-            # multi_inst_os1 = self.regression_loss(alpha_pred_os1.sum(1), alphas.sum(1), loss_type=self.cfg.loss_alpha_type)
-            # multi_inst_os4 = self.regression_loss(alpha_pred_os4.sum(1), alphas.sum(1), loss_type=self.cfg.loss_alpha_type)
-            alpha_multi_os8 = alpha_pred_os8 * valid_mask
-            pred = alpha_multi_os8.sum(1)
-            mask = (pred > 1.0).float()
-            # multi_inst_os8 = F.l1_loss((pred * mask), mask, reduction='sum')
-            # multi_inst_os8 = F.smooth_l1_loss((pred * mask), mask, reduction='none', beta=0.5)
-            multi_inst_os8 = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
-            multi_inst_os8 = multi_inst_os8.sum() / (mask.sum() + 1e-6)
-            # print(multi_inst_os8)
-            # multi_inst_loss = (multi_inst_os1 * 2 + multi_inst_os4 * 1 + multi_inst_os8 * 1) / 5.0
-            # loss_dict['loss_multi_inst_os1'] = multi_inst_os1
-            # loss_dict['loss_multi_inst_os4'] = multi_inst_os4
-            # loss_dict['loss_multi_inst_os8'] = multi_inst_os8
-            loss_dict['loss_multi_inst'] = multi_inst_os8
-            total_loss += multi_inst_os8 * self.loss_multi_inst_w
+            multi_loss = 0
+            if alpha_pred_os1 is not None:
+                multi_loss_os1 = self.loss_multi_instances(alpha_pred_os1 * valid_mask)
+                multi_loss_os4 = self.loss_multi_instances(alpha_pred_os4 * valid_mask)
+                multi_loss += multi_loss_os1 * 2 + multi_loss_os4 * 1
+                loss_dict['loss_multi_inst_os1'] = multi_loss_os1
+                loss_dict['loss_multi_inst_os4'] = multi_loss_os4
+            
+            if not self.freeze_coarse:
+                multi_loss_os8 = self.loss_multi_instances(alpha_pred_os8 * valid_mask)
+                multi_loss += multi_loss_os8 * 1
+                loss_dict['loss_multi_inst_os8'] = multi_loss_os8
+
+            loss_dict['loss_multi_inst'] = multi_loss
+            total_loss += multi_loss * self.loss_multi_inst_w
 
         if self.loss_dtSSD_w > 0:
             # import pdb; pdb.set_trace()
@@ -612,7 +557,7 @@ class MGM(nn.Module):
             dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, weight_os1.reshape(*alpha_shape))
             dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, weight_os4.reshape(*alpha_shape))
             dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, weight_os8.reshape(*alpha_shape))
-            dtSSD_loss = (dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1) / 5.0
+            dtSSD_loss = dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1
             loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
             loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
             loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8

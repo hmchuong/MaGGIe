@@ -1,0 +1,105 @@
+dataset:
+  test:
+    name: HIM
+    root_dir: /mnt/localssd/HIM2K
+    short_size: 1152
+    split: natural
+    downscale_mask: True
+    mask_dir_name: ''
+  train:
+    bin_alpha_max_k: 30
+    crop:
+    - 1024
+    - 1024
+    flip_prob: 0.5
+    name: HIM
+    padding_inst: 1
+    random_state: 2023
+    root_dir: /mnt/localssd/HHM
+    short_size: 1152
+    split: synthesized
+    mask_dir_name: 'masks_matched'
+    downscale_mask: False
+    modify_mask_p: 0.1
+    downscale_mask_p: 0.5
+    use_maskrcnn_p: 0.2
+model:
+  arch: SparseMat_SingInst
+  backbone: lpn
+  backbone_args:
+    num_mask: 1
+    mid_chn: 32
+  decoder: shm
+  decoder_args:
+    inc: 4
+  loss_alpha_grad_w: 0.0
+  loss_alpha_lap_w: 1.0
+  loss_alpha_type: l1
+  loss_alpha_w: 1.0
+  loss_comp_w: 0.0
+  refinement:
+    n_test_points: 16000
+    n_train_points: 2048
+  shm:
+    dilation_kernel: 15
+    lr_scale: 0.5
+    max_n_pixel: 4000000
+    mgm_weights: ''
+  shortcut_dims:
+  - 32
+  - 32
+  - 64
+  - 128
+  - 256
+  weights: ''
+name: sparsemat_cvpr23_him_1152_bs16_1030
+output_dir: output/HIM
+test:
+  batch_size: 1
+  log_iter: 100
+  metrics:
+  - MAD
+  - MSE
+  - SAD
+  - Grad
+  - Conn
+  num_workers: 4
+  postprocessing: false
+  save_dir: logs
+  save_results: true
+  use_trimap: true
+  temp_aggre: false
+train:
+  batch_size: 32
+  log_iter: 10
+  max_iter: 40000
+  num_workers: 8
+  resume_last: True
+  optimizer:
+    betas:
+    - 0.9
+    - 0.999
+    lr: 0.00015
+    momentum: 0.9
+    name: adamw
+    weight_decay: 0.01
+  resume: ''
+  scheduler:
+    gamma: 0.1
+    name: cosine
+    power: 0.9
+    warmup_iters: 1000
+  seed: 1234
+  val_best_metric: MAD
+  val_iter: 500
+  val_dist: True
+  val_metrics:
+  - MAD
+  - MSE
+  - SAD
+  vis_iter: 50
+wandb:
+  entity: research-dmo
+  id: ''
+  project: video-maskg-matting
+  use: true

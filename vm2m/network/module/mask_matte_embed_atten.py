@@ -95,9 +95,9 @@ class MaskMatteEmbAttenHead(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
         # self.up_conv = nn.Conv2d(attention_dim * 2, attention_dim, kernel_size=1, stride=1, padding=0, bias=False)
-        if return_feat:
-            self.conv_out = nn.Conv2d(attention_dim, input_dim, kernel_size=1, stride=1, padding=0, bias=False)
-            nn.init.xavier_uniform_(self.conv_out.weight)
+        # if return_feat:
+        #     self.conv_out = nn.Conv2d(attention_dim, input_dim, kernel_size=1, stride=1, padding=0, bias=False)
+        #     nn.init.xavier_uniform_(self.conv_out.weight)
 
         if self.atten_stride > 1.0:
             self.ori_feat_proj = nn.Conv2d(input_dim, attention_dim, kernel_size=1, stride=1, padding=0, bias=False)
@@ -480,8 +480,8 @@ class MaskMatteEmbAttenHead(nn.Module):
             # feat = self.up_conv(feat)
         
 
-        if self.return_feat:
-            out_feat = self.conv_out(feat) # (b * n_f, c, h, w)
+        # if self.return_feat:
+        #     out_feat = self.conv_out(feat) # (b * n_f, c, h, w)
 
         feat = self.conv(feat) # (b * n_f, c_out, h, w)
 
@@ -498,6 +498,23 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         output_mask = torch.einsum('bqc,btchw->btqhw', tokens, feat.reshape(b, n_f, -1, h, w)) # (b, n_f, n_i, h, w)
         output_mask = output_mask.flatten(0, 1)
+
+        out_feat = feat
+
+        
+        # import cv2
+        # token_score = tokens.sigmoid()
+        # valid_ids = torch.nonzero(mask.sum((1, 3, 4)) > 0)
+        # for i, j in valid_ids:
+        #     if i == 0:
+        #         continue
+        #     for k in range(64):
+        #         print(token_score[i, j, k])
+        #         feat_m = feat[i, k]
+        #         feat_m = (feat_m - feat_m.min()) / (feat_m.max() - feat_m.min() + 1e-8)
+        #         cv2.imwrite(f"feat_map.png", feat_m.float().detach().cpu().numpy() * 255)
+        #         cv2.imwrite(f"roi_mask.png", mask[i, 0, j].float().detach().cpu().numpy() * 255)
+        #         import pdb; pdb.set_trace()
         
         
         # out_debug = torch.einsum('c,chw->hw', tokens[0,0], feat[1])

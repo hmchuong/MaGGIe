@@ -1,0 +1,159 @@
+dataset:
+  test:
+    alpha_dir_name: pha
+    clip_length: 3
+    clip_overlap: 2
+    downscale_mask: false
+    mask_dir_name: ''
+    name: MultiInstVideo
+    root_dir: /mnt/localssd/syn/benchmark
+    short_size: 1152
+    split: comp_medium
+    use_thresh_mask: false
+  train:
+    bg_dir: ''
+    bin_alpha_max_k: 30
+    blur_kernel_size:
+    - 5
+    - 15
+    - 25
+    blur_prob: 0.5
+    blur_sigma:
+    - 1.0
+    - 1.5
+    - 3.0
+    - 5.0
+    clip_length: 8
+    crop:
+    - 1024
+    - 1024
+    downscale_mask: false
+    downscale_mask_p: 0.5
+    flip_prob: 0.5
+    mask_dir_name: masks_matched
+    max_inst: 2
+    max_step_size: 5
+    modify_mask_p: 0.1
+    name: MultiInstVideo
+    padding_inst: 1
+    random_state: 2023
+    root_dir: /mnt/localssd/syn
+    short_size: 1152
+    split: train
+    use_maskrcnn_p: 0.2
+    use_single_instance_only: true
+model:
+  arch: SparseMat_SingInst
+  aspp:
+    in_channels: 512
+    out_channels: 512
+  backbone: lpn
+  backbone_args:
+    mid_chn: 32
+    num_mask: 1
+    pretrained: true
+  breakdown:
+    in_channels:
+    - 32
+    - 32
+    - 32
+    in_features:
+    - os4
+    - os1
+  decoder: shm
+  decoder_args:
+    inc: 4
+  dynamic_kernel:
+    dec_layers: 5
+    dim_feedforward: 256
+    enforce_input_project: true
+    hidden_dim: 256
+    in_channels: 256
+    in_features:
+    - os32
+    - os16
+    - os8
+    nheads: 4
+    out_incoherence: 157
+    out_pixeldecoder: 864
+    pre_norm: false
+  loss_alpha_grad_w: 0.0
+  loss_alpha_lap_w: 1.0
+  loss_alpha_type: l1
+  loss_alpha_w: 1.0
+  loss_atten_w: 0.0
+  loss_comp_w: 0.0
+  loss_dtSSD_w: 0.0
+  loss_multi_inst_type: l1
+  loss_multi_inst_w: 0.0
+  loss_multi_inst_warmup: 0
+  mgm:
+    warmup_iter: 0
+  refinement:
+    n_test_points: 16000
+    n_train_points: 2048
+  shm:
+    dilation_kernel: 15
+    lr_scale: 0.5
+    max_n_pixel: 4000000
+    mgm_weights: ''
+  shortcut_dims:
+  - 32
+  - 32
+  - 64
+  - 128
+  - 256
+  weights: 'output/HIM/sparsemat_cvpr23_him_bs64_0920/best_model.pth'
+name: sparsemat_1101
+output_dir: output/VHM
+test:
+  batch_size: 1
+  log_iter: 100
+  metrics:
+  - MAD
+  - MSE
+  - SAD
+  - Grad
+  - Conn
+  num_workers: 4
+  postprocessing: false
+  save_dir: logs
+  save_results: true
+  temp_aggre: false
+  use_trimap: true
+train:
+  batch_size: 6
+  log_iter: 10
+  max_iter: 13000
+  num_workers: 8
+  optimizer:
+    betas:
+    - 0.9
+    - 0.999
+    lr: 0.00005
+    momentum: 0.9
+    name: adamw
+    weight_decay: 0.01
+  resume: ''
+  resume_last: true
+  scheduler:
+    gamma: 0.1
+    name: cosine
+    power: 0.9
+    step_size: 10000
+    warmup_iters: 500
+  seed: 1234
+  val_best_metric: MAD
+  val_dist: false
+  val_iter: 500
+  val_metrics:
+  - MAD
+  - MSE
+  - SAD
+  - dtSSD
+  vis_iter: 50
+wandb:
+  entity: research-dmo
+  id: ''
+  project: video-maskg-matting
+  use: true

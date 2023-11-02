@@ -65,6 +65,7 @@ class SparseMat(nn.Module):
         x = torch.cat((img, lr_pred), dim=1)
         indices = torch.where(mask.squeeze(1)>0)
 
+        # print("num pixels: {}".format(len(indices[0])))
         if self.training and len(indices[0]) > 1600000:
             ids = torch.randperm(len(indices[0]))[:1600000]
             indices = [i[ids] for i in indices]
@@ -95,6 +96,7 @@ class SparseMat(nn.Module):
         mask = torch.cat((pre_mask, mask), dim=0)
         
         preds = []
+        
         for i in range(len(lr_pred)):
             sparse_inputs, coords = self.generate_sparse_inputs(x_hr[i:i+1], lr_pred[i: i+1], mask[i: i + 1])
             if coords.shape[0] > 0:
@@ -107,6 +109,7 @@ class SparseMat(nn.Module):
         
         last_pred = None
         all_hr_preds = []
+
         for i in range(len(lr_pred)):
             if last_pred is not None:
                 last_pred = preds[i:i+1] * mask[i:i+1] + lr_pred[i:i+1] * (1-mask[i:i+1]) * (1-shared[i-1: i]) + last_pred * (1-mask[i:i+1]) * shared[i-1:i]
@@ -114,7 +117,14 @@ class SparseMat(nn.Module):
                 last_pred = preds[i:i+1] * mask[i:i+1] + lr_pred[i:i+1] * (1-mask[i:i+1])
             all_hr_preds.append(last_pred)
         all_hr_preds = torch.cat(all_hr_preds, dim=0)
-
+        
+        # for i in range(len(lr_pred)):
+        #     cv2.imwrite('lr_pred_{}.png'.format(i), lr_pred[i].cpu().numpy().transpose(1,2,0) * 255)
+        #     cv2.imwrite('pred_{}.png'.format(i), preds[i].cpu().numpy().transpose(1,2,0) * 255)
+        #     cv2.imwrite('mask_{}.png'.format(i), mask[i].cpu().numpy().transpose(1,2,0) * 255)
+        #     cv2.imwrite('hr_pred_{}.png'.format(i), all_hr_preds[i].cpu().numpy().transpose(1,2,0) * 255)
+        #     import pdb; pdb.set_trace()
+        
         all_hr_preds = all_hr_preds.view(bs, n_f, -1, *all_hr_preds.shape[-2:])
         return {'refined_masks': all_hr_preds}
 
@@ -128,6 +138,7 @@ class SparseMat(nn.Module):
         lr_inp = self.gen_lr_batch(input_dict, scale=0.5)
         # with torch.no_grad():
         #     lr_out = self.mgm(lr_inp, return_ctx=True)
+        # import pdb; pdb.set_trace()
         xlr = torch.cat([lr_inp['image'], lr_inp['mask']], dim=2).flatten(0, 1)
         lr_pred, ctx = self.lpn(xlr)
 
@@ -147,11 +158,12 @@ class SparseMat(nn.Module):
         if not self.training:
             return self.forward_inference(lr_pred, xhr, ctx, b, n_f)
         
-        if 'transition' in input_dict:
-            mask = input_dict['transition']
-            mask = mask.view(b * n_f, -1, h, w)
-        else:
-            mask = self.dilate(lr_pred)
+        # import pdb; pdb.set_trace()
+        # if 'transition' in input_dict:
+        #     mask = input_dict['transition']
+        #     mask = mask.view(b * n_f, -1, h, w)
+        # else:
+        mask = self.dilate(lr_pred)
 
         n_pixel = mask.sum().item()
         
@@ -161,7 +173,7 @@ class SparseMat(nn.Module):
         #     return {'refined_masks': final_mask}, loss_dict
         
         sparse_inputs, coords = self.generate_sparse_inputs(xhr, lr_pred, mask=mask)
-        logging.debug("num pixels: {}".format(coords.shape))
+        # logging.debug("num pixels: {}".format(coords.shape))
         pred_list = self.shm(sparse_inputs, lr_pred, coords, xhr.size(0), mask.size()[2:], ctx=ctx)
         final_mask = pred_list[-1]
         final_mask = final_mask.reshape(b, n_f, -1, h, w)

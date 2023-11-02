@@ -55,7 +55,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
                  atten_dim=128, atten_block=2, 
                  atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000,
                   use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, \
-                    use_temp=False, **kwargs):
+                    use_temp=False, freeze_detail_branch=False, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -121,7 +121,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         # Image low-level feature extractor
         self.low_os1_module = spconv.SparseSequential(
-            spconv.SubMConv2d(3 + 1, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
+            spconv.SubMConv2d(3, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.0"),
             relu_layer,
             nn.BatchNorm1d(32),
             spconv.SubMConv2d(32, 32, kernel_size=3, padding=1, bias=False, indice_key="subm1.1"),
@@ -164,6 +164,22 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # self.mask_dropout_p = detail_mask_dropout
         self.fea_dropout = nn.Dropout2d(detail_mask_dropout)
 
+        # TODO: For instance feature guidance
+        self.fg_fc = nn.Sequential(nn.Linear(64, 64), nn.ReLU(inplace=True)) # OS4, FC -> ReLU
+        self.bg_fc = nn.Sequential(nn.Linear(64, 64), nn.ReLU(inplace=True)) # OS4, FC -> ReLU
+        self.guidance_fc = nn.Sequential(nn.Linear(128, 64), nn.Sigmoid()) # OS4
+
+        self.freeze_detail_branch = freeze_detail_branch
+        self.train()
+
+    def train(self, mode=True):
+        super(ResShortCut_AttenSpconv_Dec, self).train(mode)
+        if mode and self.freeze_detail_branch:
+            detail_modules = [self.layer3, self.layer4, self.layer5, self.low_os1_module, self.low_os2_module, self.low_os4_module, self.refine_OS4, self.refine_OS8]
+            for module in detail_modules:
+                for p in module.parameters():
+                    p.requires_grad = False
+
     def convert_syn_bn(self):
         self.layer1 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer1)
         self.layer2 = nn.SyncBatchNorm.convert_sync_batchnorm(self.layer2)
@@ -198,7 +214,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
     def aggregate_detail_mem(self, x, mem_details, n_i):
         return x, mem_details
 
-    def predict_details(self, x, image, roi_masks, masks, mem_details=None):
+    def predict_details(self, x, image, roi_masks, masks, mem_details=None, inst_guidance=None):
         '''
         x: [b, 64, h/4, w/4], os4 semantic features
         image: [b, 3, H, W], original image
@@ -216,10 +232,14 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         coords = torch.nonzero(roi_masks.squeeze(1) > 0, as_tuple=True)
 
         # import pdb; pdb.set_trace()
-        masks_vals = masks[coords[0], 0, coords[1], coords[2]]
+        # masks_vals = masks[coords[0], 0, coords[1], coords[2]]
         image_batch_indices = torch.div(coords[0], n_i, rounding_mode='floor')
         image_vals = image[image_batch_indices, :, coords[1], coords[2]]
-        inp = torch.cat([image_vals, masks_vals[:, None]], dim=1)
+        
+        # TODO: For instance guidance only
+        inp = image_vals
+        # inp = torch.cat([image_vals, masks_vals[:, None]], dim=1)
+        
         coords = torch.stack(coords, dim=1)
 
         # 1. Using .expand() instead of .repeat() and .unsqueeze()
@@ -277,8 +297,17 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         y_coords = torch.div(coords[:, 1], ratio, rounding_mode='floor').long()
         x_coords = torch.div(coords[:, 2], ratio, rounding_mode='floor').long()
         x = x[coords[:, 0], y_coords, x_coords]
-        x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
-        x = Fsp.sparse_add(x, fea3)
+
+        # TODO: Change features by instance guidance
+        instance_ids = fea3.indices[:, 0] % n_i
+        guidance = inst_guidance[coords[:, 0], instance_ids.long()]
+        # x = x * guidance
+        fea3 = fea3.replace_feature(fea3.features * guidance)
+        x = fea3
+        # ---------------
+
+        # x = spconv.SparseConvTensor(x, fea3.indices, (H // 4, W // 4), b * n_i, indice_dict=fea3.indice_dict)
+        # x = Fsp.sparse_add(x, fea3)
 
         # import pdb; pdb.set_trace()
         # if mem_details is not None and self.use_detail_temp:
@@ -366,6 +395,19 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         return alpha_pred, weight_os4, weight_os1
 
+    def compute_instance_guidance(self, feat, guidance_map):
+        # import pdb; pdb.set_trace()
+        bg_guidance = (1.0 - guidance_map.sum(1)).clamp(0, 1)
+        bg_guidance = bg_guidance[:, None].expand_as(guidance_map)
+        # fg_guidance = F.adaptive_avg_pool2d(guidance_map[:, :, None] * feat[:, None], 1).squeeze(-1).squeeze(-1)
+        fg_guidance = (guidance_map[:, :, None] * feat[:, None]).sum((-1, -2)) / (guidance_map[:, :, None].sum((-1, -2)) + 1e-8)
+        # bg_guidance = F.adaptive_avg_pool2d((1 - guidance_map[:, :, None]) * feat[:, None], 1).squeeze(-1).squeeze(-1)
+        bg_guidance = (bg_guidance[:, :, None] * feat[:, None]).sum((-1, -2)) / (bg_guidance[:, :, None].sum((-1, -2)) + 1e-8)
+        fg_guidance = self.fg_fc(fg_guidance)
+        bg_guidance = self.bg_fc(bg_guidance)
+        instance_guidance = self.guidance_fc(torch.cat([fg_guidance, bg_guidance], dim=2))
+        return instance_guidance
+    
     def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
         '''
         masks: [b * n_f * n_i, 1, H, W]
@@ -423,6 +465,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         else:
             x_os8 = x_os8[:, :n_i]
 
+
+        # Stop when freeze detail branch
+        if self.freeze_detail_branch:
+            ret['alpha_os8'] = x_os8
+            ret['refined_masks'] = x_os8
+            ret['loss_max_atten'] = loss_max_atten
+            ret['loss_min_atten'] = loss_min_atten
+            return ret
+
         x = self.layer3(x)
         
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
@@ -434,6 +485,10 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             # print(guided_mask_os8.sum(), guided_mask_os8.max())
             guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=0.0625, mode='bilinear', align_corners=False)
             guided_mask_os8 = F.interpolate(guided_mask_os8, size=x_os8.shape[-2:], mode='bilinear', align_corners=False)
+
+
+        guidance_map_os4 = F.interpolate(guided_mask_os8, scale_factor=0.25, mode='bilinear', align_corners=False)
+        inst_guidance_os4 = self.compute_instance_guidance(x, guidance_map_os4)
 
         # unknown_os8 = self.compute_unknown(guided_mask_os8)
         unknown_os8 = compute_unknown(guided_mask_os8, k_size=30, is_train=self.training)
@@ -463,7 +518,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             # x = F.interpolate(x, scale_factor=2.0, mode='bilinear', align_corners=False)
             # unknown_os8 = F.interpolate(unknown_os8, scale_factor=2.0, mode='nearest')
             # guided_mask_os8 = F.interpolate(guided_mask_os8, scale_factor=2.0, mode='bilinear', align_corners=False)
-            x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details)
+            x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details, inst_guidance_os4)
 
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
             x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])
