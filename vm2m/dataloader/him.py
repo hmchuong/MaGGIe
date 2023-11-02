@@ -103,14 +103,14 @@ class HIMDataset(Dataset):
                 ])
                 
             ]
-            self.transforms += [
-                T.RandomCropByAlpha(crop, self.random),
-                T.RandomHorizontalFlip(self.random, flip_p),
-                T.Compose([
-                    T.RandomBinarizedMask(self.random, bin_alpha_max_k),
-                    T.DownUpMask(self.random, 0.125, downscale_mask_p)
-                ])
-            ]
+            # self.transforms += [
+            #     T.RandomCropByAlpha(crop, self.random),
+            #     T.RandomHorizontalFlip(self.random, flip_p),
+            #     T.Compose([
+            #         T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+            #         T.DownUpMask(self.random, 0.125, downscale_mask_p)
+            #     ])
+            # ]
         else:
             if self.mask_dir_name == '':
                 self.transforms += [T.GenMaskFromAlpha(), T.DownUpMask(self.random, 0.125, 1.0)]

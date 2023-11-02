@@ -55,6 +55,9 @@ class Metric(object):
 
         # pred, gt = self.reshape(pred, gt)
         score, count = self.compute_metric(pred, gt, mask, **kargs)
+        # import pdb; pdb.set_trace()
+        # self.count += count
+        # self.score += score
         self.count += count
         self.score += score
         return score * 1.0 / count
@@ -69,8 +72,10 @@ class SAD(Metric):
         pred, gt: numpy array
         (N, *, H, W)
         '''
-        return np.sum(np.abs(pred - gt) * mask) * 0.001, mask.shape[0]
-
+        # return np.sum(np.abs(pred - gt) * mask) * 0.001, mask.shape[0]
+        diff = np.abs(pred - gt) * mask
+        sad = np.sum(diff, axis=(1, 2))
+        return sad.sum() * 1e-3, mask.shape[0]
 
 class MSE(Metric):
     
@@ -79,12 +84,18 @@ class MSE(Metric):
         pred, gt: numpy array
         (N, *, H, W)
         '''
-        return np.sum(((pred - gt) ** 2) * mask) * 1000, mask.sum()
+        # return np.sum(((pred - gt) ** 2) * mask) * 1000, mask.sum()
+        diff = ((pred - gt) ** 2) * mask
+        mse = np.mean(diff, axis=(1, 2)) / (mask.sum(axis=(1, 2)) + 1e-6)
+        return mse.sum() * 1e10, mask.shape[0]
 
 class MAD(Metric):
 
     def compute_metric(self, pred, gt, mask, **kargs):
-        return np.sum(np.abs(pred - gt) * mask) * 1000, mask.sum()
+        # return np.sum(np.abs(pred - gt) * mask) * 1000, mask.sum()
+        diff = np.abs(pred - gt) * mask
+        mad = np.mean(diff, axis=(1, 2)) / (mask.sum(axis=(1, 2)) + 1e-6)
+        return mad.sum() * 1e10, mask.shape[0]
 
 # class MAD_fg(Metric):
 #     def compute_metric(self, pred, gt, mask, **kargs):
@@ -215,7 +226,7 @@ class Conn(Metric):
     def compute_metric(self, pred, gt, mask, **kargs):
         conn_err = self.compute_conn(pred, gt, mask) * 0.001
         B = pred.shape[0]
-        return conn_err, B
+        return conn_err * 10, B
 
     @staticmethod
     def compute_largest_connected_component(intersection):
@@ -401,7 +412,7 @@ class Grad(Metric):
 
         grad_err = self.compute_grad(pred, gt, mask) * 0.001
         B = pred.shape[0]
-        return grad_err, B
+        return grad_err * 10, B
 
 class dtSSD(Metric):
 
@@ -412,14 +423,18 @@ class dtSSD(Metric):
         else:
             mask = np.ones_like(gt).astype('float32')
 
+        # import pdb; pdb.set_trace()
+
         dadt = pred[:, 1:] - pred[:, :-1]
         dgdt = gt[:, 1:] - gt[:, :-1]
         mask_0 = mask[:, :-1]
         err_m = (dadt - dgdt) ** 2
         err_m = err_m * mask_0
-        err = np.sqrt(np.sum(err_m, axis=(2, 3, 4)))
-        err = np.sum(err) * 10000
-        num = mask_0.sum()
+        err = np.sqrt(np.sum(err_m, axis=(0, 1, 3, 4)))
+        err = np.sum(err) * 0.1
+        num = mask_0.shape[2] #mask_0.sum()
+
+        # dtSSD for each instance in each video
 
         self.score += err
         self.count += num
@@ -470,12 +485,13 @@ class MESSDdt(Metric):
         mask_1 = torch.take(mask_1, indices)
 
         error_map = (pred_0-target_0).pow(2) * mask_0 - (pred_1-target_1).pow(2) * mask_1
-        error = error_map.abs().view(mask_0.shape[0], -1).sum(dim=1)
-        num = mask_0.view(mask_0.shape[0], -1).sum(dim=1) + 1.
+
+        error = error_map.abs().view(mask_0.shape[0], -1).sum(dim=1) # (N_f - 1) x HW
+        num = mask_0.view(mask_0.shape[0], -1).sum(dim=1) + 1. # (N_f - 1) x HW
         
-        error = error.cpu().numpy().sum()
-        num = num.cpu().numpy().sum()
-        return error, num
+        error = error.cpu().numpy().sum() / num.cpu().numpy().sum()
+        # num = num.cpu().numpy().sum()
+        return error
     
     def update(self, pred, gt, trimap=None, **kargs):
         if pred.ndim == 5:
@@ -489,19 +505,22 @@ class MESSDdt(Metric):
 
         error = 0
         count = 0
-        
-        for i in range(len(pred)):
+
+        # N_F x N_I x H x W
+
+
+        for i in range(pred.shape[1]):
             try:
-                e, c = self.compute_single_video(pred[i], gt[i], mask[i])
-            except Exception as e:
-                print(e)
+                e = self.compute_single_video(pred[:, i], gt[:, i], mask[:, i])
+            except Exception as exception:
+                print(exception)
                 continue
-            error += e * 1000
-            count += c
+            error += e * 10000
+            count += 1
         # all_omegas = Parallel(n_jobs=len(pred))(delayed(self.compute_single_video)(pred[i], gt[i], mask[i]) for intersection in all_intersections)
             
-        self.score += error
-        self.count += count
+        self.score += error # Sum of error for each instance
+        self.count += count # Add number of instances
         return error / (count + 1e-8)
         
 

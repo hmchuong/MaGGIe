@@ -7,7 +7,7 @@ dataset:
     mask_dir_name: ''
     name: HIM
     root_dir: /mnt/localssd/HIM2K
-    short_size: 576
+    short_size: 1152
     split: natural
     use_thresh_mask: false
   train:
