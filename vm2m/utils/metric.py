@@ -261,7 +261,7 @@ class Conn(Metric):
         
         # with Pool(4) as p:
         #     all_omegas = p.map(self.compute_largest_connected_component, all_intersections)
-        all_omegas = Parallel(n_jobs=len(all_intersections))(delayed(self.compute_largest_connected_component)(intersection) for intersection in all_intersections)
+        all_omegas = Parallel(n_jobs=min(10, len(all_intersections)))(delayed(self.compute_largest_connected_component)(intersection) for intersection in all_intersections)
 
         j = 0
         for b in range(B):
