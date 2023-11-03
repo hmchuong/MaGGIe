@@ -1,3 +1,4 @@
+import copy
 from collections import defaultdict
 import torch
 import numpy as np
@@ -159,7 +160,7 @@ class TCVOM(MGM):
             iter = batch['iter']
 
             # Compute image loss
-            loss_dict = self.compute_loss(preds, weight_os4, weight_os1, None, reshaped_alphas, reshaped_trans_gt, fg, bg, iter, alphas.shape)
+            loss_dict = self.compute_loss(preds, weight_os4, weight_os1, None, reshaped_alphas, reshaped_trans_gt, fg, bg, iter, alphas.shape, reweight_os8=False)
 
             # Compute attention loss
             if self.loss_atten_w > 0:
@@ -211,3 +212,19 @@ class TCVOM(MGM):
         l_att = sum(l_att) / float(len(l_att))
         return l_att
 
+class TCVOM_SingInst(TCVOM):
+    def forward(self, batch, **kwargs):
+        if self.training:
+            return super().forward(batch, **kwargs)
+        masks = batch['mask']
+        n_i = masks.shape[2]
+        # if self.num_masks == 1:
+        outputs = []
+        # interate one mask at a time
+        batch = copy.deepcopy(batch)
+        for i in range(n_i):
+            batch['mask'] = masks[:, :, i:i+1]
+            outputs.append(super().forward(batch, **kwargs))
+        for k in outputs[0].keys():
+            outputs[0][k] = torch.cat([o[k] for o in outputs], 2)
+        return outputs[0]

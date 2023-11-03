@@ -412,7 +412,7 @@ class MGM(nn.Module):
         loss = loss.sum() / (mask.sum() + 1e-6)
         return loss
     
-    def compute_loss(self, pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape):
+    def compute_loss(self, pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape, reweight_os8=True):
         '''
         pred: dict of output from forward
         batch: dict of input batch
@@ -434,9 +434,10 @@ class MGM(nn.Module):
         weight_os8 = weight_os8 * valid_mask
 
         # TODO: For training stage 2 only
-        unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
-        unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
-        weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype)
+        if reweight_os8:
+            unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
+            unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
+            weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype)
         # import pdb; pdb.set_trace()
 
         # Add padding to alphas and trans_gt

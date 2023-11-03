@@ -423,8 +423,6 @@ class dtSSD(Metric):
         else:
             mask = np.ones_like(gt).astype('float32')
 
-        # import pdb; pdb.set_trace()
-
         dadt = pred[:, 1:] - pred[:, :-1]
         dgdt = gt[:, 1:] - gt[:, :-1]
         mask_0 = mask[:, :-1]
