@@ -9,7 +9,7 @@ dataset:
     random_seed: 2023
     root_dir: /mnt/localssd/HIM2K
     short_size: 576
-    split: natural
+    split: comp
     use_thresh_mask: false
   train:
     bg_dir: ''
@@ -48,7 +48,6 @@ dataset:
 model:
   arch: MGM
   having_unused_params: false
-  reweight_os8: true
   aspp:
     in_channels: 512
     out_channels: 512
@@ -104,6 +103,7 @@ model:
   loss_multi_inst_type: smooth_l1_0.5
   loss_multi_inst_w: 5.0
   loss_multi_inst_warmup: 4000
+  reweight_os8: true
   mgm:
     warmup_iter: 3000
   refinement:
@@ -142,7 +142,7 @@ test:
 train:
   batch_size: 12
   log_iter: 10
-  max_iter: 52000
+  max_iter: 10500
   num_workers: 8
   optimizer:
     betas:

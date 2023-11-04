@@ -69,6 +69,7 @@ class MGM(nn.Module):
         self.loss_dtSSD_w = cfg.loss_dtSSD_w
         self.loss_alpha_grad_w = cfg.loss_alpha_grad_w
         self.loss_atten_w = cfg.loss_atten_w
+        self.reweight_os8 = cfg.reweight_os8
         self.lap_loss = LapLoss()
         self.grad_loss = GradientLoss()
 
@@ -323,7 +324,7 @@ class MGM(nn.Module):
             # if pred_notemp is not None:
             #     loss_dict = self.compute_loss_temp(pred, pred_notemp, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
             # else:
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w), reweight_os8=self.reweight_os8)
 
             if diff_pred is not None:
                 loss_dict['loss_diff'] = self.compute_loss_diff_pred(diff_pred, trans_gt)
@@ -437,7 +438,7 @@ class MGM(nn.Module):
         if reweight_os8:
             unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
             unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
-            weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype)
+            weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype) + weight_os8
         # import pdb; pdb.set_trace()
 
         # Add padding to alphas and trans_gt

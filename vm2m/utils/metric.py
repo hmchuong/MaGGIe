@@ -226,7 +226,7 @@ class Conn(Metric):
     def compute_metric(self, pred, gt, mask, **kargs):
         conn_err = self.compute_conn(pred, gt, mask) * 0.001
         B = pred.shape[0]
-        return conn_err * 10, B
+        return conn_err, B
 
     @staticmethod
     def compute_largest_connected_component(intersection):
@@ -412,7 +412,7 @@ class Grad(Metric):
 
         grad_err = self.compute_grad(pred, gt, mask) * 0.001
         B = pred.shape[0]
-        return grad_err * 10, B
+        return grad_err, B
 
 class dtSSD(Metric):
 

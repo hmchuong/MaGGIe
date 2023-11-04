@@ -48,7 +48,7 @@ dataset:
 model:
   arch: MGM
   having_unused_params: false
-  reweight_os8: true
+  freeze_coarse: false
   aspp:
     in_channels: 512
     out_channels: 512
@@ -77,7 +77,7 @@ model:
     head_channel: 120
     max_inst: 10
     use_id_pe: true
-    warmup_detail_iter: 3000
+    warmup_detail_iter: 0
     warmup_mask_atten_iter: 0
     freeze_detail_branch: false
   dynamic_kernel:
@@ -103,9 +103,9 @@ model:
   loss_dtSSD_w: 0.0
   loss_multi_inst_type: smooth_l1_0.5
   loss_multi_inst_w: 5.0
-  loss_multi_inst_warmup: 4000
+  loss_multi_inst_warmup: 0
   mgm:
-    warmup_iter: 3000
+    warmup_iter: 0
   refinement:
     n_test_points: 16000
     n_train_points: 2048
@@ -121,7 +121,7 @@ model:
   - 128
   - 256
   sync_bn: true
-  weights: ''
+  weights: 'output/HIM/ours_1102_single-stage_strong-aug/best_model.pth'
 name: ours_1023
 output_dir: output/HIM
 test:
@@ -131,8 +131,8 @@ test:
   - MAD
   - MSE
   - SAD
-  - Grad
-  - Conn
+  # - Grad
+  # - Conn
   num_workers: 4
   postprocessing: false
   save_dir: logs
@@ -140,15 +140,16 @@ test:
   temp_aggre: false
   use_trimap: true
 train:
-  batch_size: 12
+  batch_size: 24
   log_iter: 10
-  max_iter: 52000
+  # max_iter: 26000
+  max_iter: 8000
   num_workers: 8
   optimizer:
     betas:
     - 0.9
     - 0.999
-    lr: 0.0001
+    lr: 0.00005
     momentum: 0.9
     name: adamw
     weight_decay: 0.01
@@ -159,7 +160,7 @@ train:
     name: cosine
     power: 0.9
     step_size: 10000
-    warmup_iters: 1000
+    warmup_iters: 500
   seed: 1234
   val_best_metric: MAD
   val_dist: true
