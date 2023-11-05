@@ -14,7 +14,7 @@ echo "Starting training..."
 cd $ROOT_DIR
 
 CONFIG=configs/HIM/ours_1102_image_loss_abl.yaml
-NAME=ours_1102_abl_$POSTFIX
+NAME=ours_1103_abl_$POSTFIX
 # ATTEN_W=5.0
 # INST_W=5.0
 # CUSTOM_WEIGHT=true
@@ -26,4 +26,4 @@ else
 fi
 
 torchrun $PYCMD tools/main_ddp.py \
-                    --config $CONFIG --precision 16 name $NAME model.loss_atten_w $ATTEN_W model.loss_multi_inst_w $INST_W model.reweight_os8 $CUSTOM_WEIGHT
+                    --config $CONFIG --precision 16 name $NAME model.loss_atten_w $ATTEN_W model.loss_multi_inst_w $INST_W model.reweight_os8 $CUSTOM_WEIGHT output_dir output/HIM/ablation_loss wandb.id f60hl3uj train.resume_last True
