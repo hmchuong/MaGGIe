@@ -154,19 +154,18 @@ class MultiInstVidDataset(Dataset):
         mask_paths = None
         if self.mask_dir_name != '' and not self.is_train:
             mask_paths = [x.replace(f'/{self.pha_dir}/', '/' + self.mask_dir_name + '/') for x in alpha_paths]
-        weight_paths = [''] * len(alpha_paths)
-        if self.weight_mask_dir != '' and self.is_train:
-            weight_paths = [x.replace(f'/{self.pha_dir}/', '/' + self.weight_mask_dir + '/') for x in alpha_paths]
+        # weight_paths = [''] * len(alpha_paths)
+        # if self.weight_mask_dir != '' and self.is_train:
+        #     weight_paths = [x.replace(f'/{self.pha_dir}/', '/' + self.weight_mask_dir + '/') for x in alpha_paths]
 
         input_dict = {
             "frames": frame_paths,
             "alphas": alpha_paths,
-            "masks": mask_paths,
-            "weights": weight_paths
+            "masks": mask_paths
         }
         # import pdb; pdb.set_trace()
         output_dict = self.transforms(input_dict)
-        frames, alphas, masks, transform_info, weights = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"], output_dict["weights"]
+        frames, alphas, masks, transform_info = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"]
 
         if not self.is_train:
             alphas = output_dict["ori_alphas"]
@@ -180,14 +179,14 @@ class MultiInstVidDataset(Dataset):
         if add_padding > 0 and self.is_train:
             new_alpha = torch.zeros(alphas.shape[0], self.padding_inst, *alphas.shape[2:], dtype=alphas.dtype)
             new_mask = torch.zeros(alphas.shape[0], self.padding_inst, *masks.shape[2:], dtype=masks.dtype)
-            new_weight = torch.zeros(alphas.shape[0], self.padding_inst, *weights.shape[2:], dtype=weights.dtype)
+            # new_weight = torch.zeros(alphas.shape[0], self.padding_inst, *weights.shape[2:], dtype=weights.dtype)
             chosen_ids = self.random.choice(range(self.padding_inst), alphas.shape[1], replace=False)
             new_alpha[:, chosen_ids] = alphas
             new_mask[:, chosen_ids] = masks
-            new_weight[:, chosen_ids] = weights
+            # new_weight[:, chosen_ids] = weights
             masks = new_mask
             alphas = new_alpha
-            weights = new_weight
+            # weights = new_weight
         
         # Transition GT
         transition_gt = None
@@ -214,7 +213,7 @@ class MultiInstVidDataset(Dataset):
 
         alphas = alphas * 1.0 / 255
         masks = masks * 1.0 / 255
-        weights = weights * 1.0 / 255
+        # weights = weights * 1.0 / 255
         
         # Small masks may caused error in attention
         
@@ -229,8 +228,7 @@ class MultiInstVidDataset(Dataset):
         
         out =  {'image': frames,
                 'mask': masks.float(),
-                'alpha': alphas.float(), 
-                'weight': weights.float()}
+                'alpha': alphas.float()}
 
         if not self.is_train:
             trans = gen_transition_gt(alphas.flatten(0, 1)[:, None])

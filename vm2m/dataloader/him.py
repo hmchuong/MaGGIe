@@ -91,9 +91,15 @@ class HIMDataset(Dataset):
             T.Stack()
         ]
         if self.is_train:
+            # self.transforms = self.transforms[:1] + [T.RandomCenterCrop(self.random)] + self.transforms[1:]
             self.transforms += [
                 T.RandomCropByAlpha(crop, self.random),
                 T.RandomHorizontalFlip(self.random, flip_p),
+                T.GammaContrast(self.random),
+                T.MotionBlur(self.random),
+                T.AdditiveGaussionNoise(self.random),
+                T.JpegCompression(self.random),
+                T.RandomAffine(self.random),
                 T.ChooseOne(self.random, [
                     T.ModifyMaskBoundary(self.random, modify_mask_p),
                     T.Compose([
@@ -170,10 +176,7 @@ class HIMDataset(Dataset):
         if len(alphas) > self.padding_inst:
             alphas = self.random.choice(alphas, self.padding_inst, replace=False)
 
-        # remove one random alpha
-        if len(alphas) > 1 and self.is_train and self.random.rand() < 0.2:
-            num_alphas = len(alphas) - 1
-            alphas = self.random.choice(alphas, num_alphas, replace=False)
+        
 
         # Load mask path and random replace the mask by alpha
         masks = None
@@ -192,22 +195,56 @@ class HIMDataset(Dataset):
             "weights": None
         }
         output_dict = self.transforms(input_dict)
-        image, alpha, mask, transform_info = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"]
         
+        image, alpha, mask, transform_info = output_dict["frames"], output_dict["alphas"], output_dict["masks"], output_dict["transform_info"]
         fg, bg = output_dict["fg"], output_dict["bg"]
 
+        # Remove invalid alpha (< 5% area)
+        if self.is_train:
+            valid_ids = (alpha > 0.5).sum((-1, -2)) > (0.05 * alpha.shape[-1] * alpha.shape[-2])
+            valid_ids = torch.nonzero(valid_ids)
+            alpha = alpha[valid_ids[:, 0], valid_ids[:, 1]]
+            mask = mask[valid_ids[:, 0], valid_ids[:, 1]]
+            fg = fg[valid_ids[:, 0], valid_ids[:, 1]]
+            bg = bg[valid_ids[:, 0], valid_ids[:, 1]]
+            if len(alpha.shape) == 3:
+                alpha = alpha.unsqueeze(0)
+                mask = mask.unsqueeze(0)
+                fg = fg.unsqueeze(0)
+                bg = bg.unsqueeze(0)
+
+            if mask.numel() == 0:
+                logging.warning("Mask is empty")
+                return self.__getitem__(self.random.randint(0, len(self.data)))
+        # import pdb; pdb.set_trace()
+
+        # remove one random alpha
+        if alpha.shape[1] > 1 and self.is_train and self.random.rand() < 0.2:
+            num_alphas = alpha.shape[1] - 1
+            chosen_ids = self.random.choice(range(alpha.shape[1]), num_alphas, replace=False)
+            alpha = alpha[:, chosen_ids]
+            mask = mask[:, chosen_ids]
+            fg = fg[:, chosen_ids]
+            bg = bg[:, chosen_ids]
+            if len(alpha.shape) == 3:
+                alpha = alpha.unsqueeze(0)
+                mask = mask.unsqueeze(0)
+                fg = fg.unsqueeze(0)
+                bg = bg.unsqueeze(0)
+        
         if not self.is_train:
             alpha = output_dict["ori_alphas"]
-        if mask.sum() == 0:
+        if mask.sum() == 0 and self.is_train:
             logging.warning("Mask is empty")
             return self.__getitem__(self.random.randint(0, len(self.data)))
+
         alpha = alpha * 1.0 / 255
         mask = mask * 1.0 / 255
-        add_padding = self.padding_inst - len(alphas)
+        add_padding = self.padding_inst - alpha.shape[1]
         if add_padding > 0 and self.is_train:
             new_alpha = torch.zeros(1, self.padding_inst, *alpha.shape[2:])
             new_mask = torch.zeros(1, self.padding_inst, *mask.shape[2:])
-            chosen_ids = self.random.choice(range(self.padding_inst), len(alphas), replace=False)
+            chosen_ids = self.random.choice(range(self.padding_inst), alpha.shape[1], replace=False)
             new_alpha[:, chosen_ids] = alpha
             new_mask[:, chosen_ids] = mask
             mask = new_mask

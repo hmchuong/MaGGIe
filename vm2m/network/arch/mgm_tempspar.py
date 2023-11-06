@@ -90,23 +90,30 @@ class MGM_TempSpar(MGM):
             pred, pred_notemp = pred
 
         # Fushion
+        detail_mask = pred.pop("detail_mask")
         if 'refined_masks' in pred:
             alpha_pred = pred.pop("refined_masks")
-            weight_os4 = pred.pop("detail_mask").type(alpha_pred.dtype)
+            weight_os4 = detail_mask.type(alpha_pred.dtype)
             weight_os1 = weight_os4
         else:
             alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
         
+        # 75% use the weight os4 and os1 masks, 25% use the detail mask
+        if 'weight_os4' in pred and self.training and np.random.rand() < 0.75:
+            weight_os4 = pred.pop("weight_os4")
+            weight_os1 = pred.pop("weight_os1")
         
         output = {}
         if self.num_masks > 0 and self.training:
             output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, self.num_masks, h, w)
             output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
             output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, self.num_masks, h, w)
+            output['detail_mask'] = detail_mask.view(b, n_f, self.num_masks, h, w)
         else:
             output['alpha_os1'] = pred['alpha_os1'][:, :n_i].view(b, n_f, n_i, h, w)
             output['alpha_os4'] = pred['alpha_os4'][:, :n_i].view(b, n_f, n_i, h, w)
             output['alpha_os8'] = pred['alpha_os8'][:, :n_i].view(b, n_f, n_i, h, w)
+            output['detail_mask'] = detail_mask.view(b, n_f, n_i, h, w)
         if 'ctx' in pred:
             output['ctx'] = pred['ctx']
 
@@ -148,8 +155,16 @@ class MGM_TempSpar(MGM):
                 # import pdb; pdb.set_trace()
                 pred[k] = v * valid_masks
 
+            
+
             loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
-    
+
+            # Compute gradient loss for fusion to prevent sharp transformation from OS8 -> OS4 and OS1
+            # import pdb; pdb.set_trace()
+            fusion_grad_loss = self.grad_loss(alpha_pred.view_as(alphas), alphas, detail_mask.view_as(alphas).float())
+            loss_dict['loss_grad_fusion'] = fusion_grad_loss
+            loss_dict['total'] += fusion_grad_loss
+
             if 'loss_temp' in pred:
                 loss_dict['loss_temp_bce'] = pred['loss_temp_bce']
                 loss_dict['loss_temp'] = pred['loss_temp']

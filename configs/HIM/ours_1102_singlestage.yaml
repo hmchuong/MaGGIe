@@ -4,12 +4,12 @@ dataset:
     clip_length: 8
     clip_overlap: 2
     downscale_mask: false
-    mask_dir_name: 'masks_matched_r50_fpn_3x'
+    mask_dir_name: 'masks'
     name: HIM
     random_seed: 2023
     root_dir: /mnt/localssd/HIM2K
     short_size: 576
-    split: natural
+    split: combine
     use_thresh_mask: false
   train:
     bg_dir: ''

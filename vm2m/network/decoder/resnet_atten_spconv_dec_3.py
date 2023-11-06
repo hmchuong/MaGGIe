@@ -384,14 +384,15 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
         ### Progressive Refinement Module in MGMatting Paper
-        alpha_pred = alpha_pred_os8.clone() #.detach()
+        alpha_pred = alpha_pred_os8 #.clone() #.detach()
         
         # weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
         weight_os4 = compute_unknown(alpha_pred, k_size=27, is_train=self.training) * detail_mask
-        weight_os4 = weight_os4.type(alpha_pred.dtype)
+        weight_os4 = (weight_os4 > 0).type(alpha_pred.dtype)
         alpha_pred_os4 = alpha_pred_os4.type(alpha_pred.dtype)
-        weight_os4 = weight_os4 #* (alpha_pred_os4 > 1.0/255).float()
-        alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
+        # weight_os4 = weight_os4 * (alpha_pred_os4 > 1.0/255).float()
+        # alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
+        alpha_pred = alpha_pred_os4 * weight_os4 + alpha_pred * (1 - weight_os4)
         # cv2.imwrite("test_fuse.png", alpha_pred[0,0].detach().cpu().numpy() * 255)
         # cv2.imwrite("test_fuse_wos4.png", weight_os4[0,0].detach().cpu().numpy() * 255)
         # cv2.imwrite("test_fuse_os8.png", alpha_pred_os8[0,0].detach().cpu().numpy() * 255)
@@ -400,10 +401,11 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         # weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
         weight_os1 = compute_unknown(alpha_pred, k_size=15, is_train=self.training) * detail_mask
-        weight_os1 = weight_os1.type(alpha_pred.dtype)
+        weight_os1 = (weight_os1 > 0).type(alpha_pred.dtype)
         alpha_pred_os1 = alpha_pred_os1.type(alpha_pred.dtype)
-        weight_os1 = weight_os1 #* (alpha_pred_os1 > 1.0/255).float()
-        alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
+        # weight_os1 = weight_os1 * (alpha_pred_os1 > 1.0/255).float()
+        # alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
+        alpha_pred = alpha_pred_os1 * weight_os1 + alpha_pred * (1 - weight_os1)
 
         # Blending between 1.0 and < 1.0 region
         # fg_mask = (alpha_pred >= 254.0/255.0).float()
