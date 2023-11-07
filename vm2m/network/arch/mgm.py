@@ -335,6 +335,13 @@ class MGM(nn.Module):
                 loss_dict['loss_max_atten'] = pred['loss_max_atten']
                 # loss_dict['loss_min_atten'] = pred['loss_min_atten']
                 loss_dict['total'] += loss_dict['loss_max_atten'] * self.loss_atten_w # + loss_dict['loss_min_atten']) * 0.1
+            
+            # Loss to prevent the sharp transition
+            if 'detail_mask' in pred:
+                detail_mask = pred['detail_mask']
+                fusion_grad_loss = self.grad_loss(alpha_pred.view_as(alphas), alphas, detail_mask.view_as(alphas).float())
+                loss_dict['loss_grad_fusion'] = fusion_grad_loss
+                loss_dict['total'] += fusion_grad_loss
 
             if not chosen_ids is None:
                 for k, v in output.items():

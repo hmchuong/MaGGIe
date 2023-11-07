@@ -96,7 +96,7 @@ class HIMDataset(Dataset):
                 T.RandomCropByAlpha(crop, self.random),
                 T.RandomHorizontalFlip(self.random, flip_p),
                 T.GammaContrast(self.random),
-                T.MotionBlur(self.random),
+                # T.MotionBlur(self.random),
                 T.AdditiveGaussionNoise(self.random),
                 T.JpegCompression(self.random),
                 T.RandomAffine(self.random),

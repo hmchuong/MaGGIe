@@ -10,7 +10,7 @@ import spconv.pytorch as spconv
 from spconv.pytorch import functional as Fsp
 from vm2m.network.ops import SpectralNorm
 from vm2m.network.module.base import conv1x1, conv3x3
-from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead
+from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead, FFNLayer
 from vm2m.network.module.instance_matte_head import InstanceMatteHead
 from vm2m.network.module.temporal_nn import TemporalNN
 from vm2m.network.module.ligru_conv import LiGRUConv
@@ -73,6 +73,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         self.warmup_detail_iter = warmup_detail_iter
 
         self.leaky_relu = nn.LeakyReLU(0.2, inplace=True)
+
+        self.inst_spec_layer = FFNLayer(64, 64, 0.1)
 
         self.upsample = nn.UpsamplingNearest2d(scale_factor=2)
         self.tanh = nn.Tanh()
@@ -270,7 +272,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         instance_ids = x.indices[:, 0] % n_i
         # import pdb; pdb.set_trace()
         guidance = inst_guidance_os8[coords[:, 0], instance_ids.long()]
-        x = x.replace_feature(x.features * guidance)
+        x = x.replace_feature(self.inst_spec_layer(x.features * guidance))
 
         # Visualize feature before-after guidance
         # for i in valid_ids:
@@ -652,7 +654,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         mem_feat = hidden_state
 
         # Predict temporal sparsity here, forward and backward
-        feat_os8 = x.view(b, n_f, *x.shape[1:])
+        feat_os8 = x.view(b, n_f, *x.shape[1:]).detach()
             
         # Upsample - normalize OS8 pred
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)

@@ -262,6 +262,9 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             alpha[alpha >= 254.0/255.0] = 1.0
             # alpha = postprocess(alpha)
 
+            # cv2.imwrite("test_alpha.png", alpha[0,2,0] * 255)
+            # import pdb; pdb.set_trace()
+
             # Fuse results
             # If no previous results, use the two first results
             if len(all_preds) == 0:
@@ -277,6 +280,7 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
                 all_gts = np.concatenate([all_gts, alpha_gt[0, 2:]], axis=0)
                 all_trimap = np.concatenate([all_trimap, trimap[0, 2:]], axis=0)
                 all_image_names += image_names[2:]
+                
                 
                 # Fuse
                 if 'diff_pred_forward' in output:

@@ -25,9 +25,9 @@ def log_alpha(tensor, tag, index=0, inst_idx=0):
 def wandb_log_image(batch, output, iter):
     # Log transition_preds
     log_images = []
-    index = random.randint(0, batch['image'].shape[1] - 1)
-    if batch['image'].shape[1] == 3:
-        index = 1
+    index = batch['image'].shape[1] - 1 # random.randint(0, batch['image'].shape[1] - 1)
+    # if batch['image'].shape[1] == 3:
+    #     index = 1
     valid_inst_index = batch['alpha'][0,index].sum((1, 2)) > 0
     inst_index = 0
     if valid_inst_index.sum() > 0:

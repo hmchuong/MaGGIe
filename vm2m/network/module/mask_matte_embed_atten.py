@@ -109,8 +109,8 @@ class MaskMatteEmbAttenHead(nn.Module):
         #                             dim_feedforward=attention_dim,
         #                             dropout=0.0,
         #                             normalize_before=False)
-        if use_temp:
-            self.temp_layernorm = nn.LayerNorm(attention_dim)
+        # if use_temp:
+        #     self.temp_layernorm = nn.LayerNorm(attention_dim)
 
         # if temporal_query and 'lstm' in temporal_query:
         #     self.query_lstm = nn.LSTM(attention_dim, attention_dim, batch_first=True)
@@ -363,59 +363,7 @@ class MaskMatteEmbAttenHead(nn.Module):
                                             tgt_key_padding_mask=token_padding_mask, 
                                             query_pos=token_pos)
             
-            # Features propagation here?
-            if aggregate_mem_fn is not None:
-                feat = feat.reshape(h, w, n_f, b, -1).permute(3, 2, 4, 0, 1)
-
-                # import cv2
-                # for a in range(3):
-                #     all_maps = []
-                #     for i_c in range(16):
-                #         vis_map = feat[0, a, i_c * 8]
-                #         vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min())
-                #         all_maps.append(vis_map)
-                #     all_maps = torch.cat([torch.cat(all_maps[k*4:k*4 + 4], dim=1) for k in range(4)], dim=0)
-                #     cv2.imwrite(f"feat_atten_before_{a}.png", all_maps.cpu().numpy() * 255)
-
-                # Forward
-                if temp_method == 'none':
-                    all_x = []
-                    for j in range(n_f):
-                        o, hidden_state = aggregate_mem_fn(x=feat[:, j], h=None)
-                        all_x.append(o)
-                    feat = torch.stack(all_x, dim=1)
-                else:
-                    feat_forward, hidden_state = aggregate_mem_fn(x=feat, h=prev_h_state)
-
-                    if temp_method == 'bi':
-                        # Backward
-                        feat_backward, _ = aggregate_mem_fn(x=torch.flip(feat[:, :-1], dims=(1,)), h=hidden_state[:, -1])
-                        feat_backward = torch.flip(feat_backward, dims=(1,))
-                        feat = feat_forward
-                        feat[:, :-1] = (feat_forward[:, :-1] + feat_backward) / 2
-                    else:
-                        feat = feat_forward
             
-                # for a in range(3):
-                #     all_maps = []
-                #     for i_c in range(16):
-                #         vis_map = feat[0, a, i_c * 8]
-                #         vis_map = (vis_map - vis_map.min()) / (vis_map.max() - vis_map.min())
-                #         all_maps.append(vis_map)
-                #     all_maps = torch.cat([torch.cat(all_maps[k*4:k*4 + 4], dim=1) for k in range(4)], dim=0)
-                #     cv2.imwrite(f"feat_atten_after_{a}.png", all_maps.cpu().numpy() * 255)
-
-                # import pdb; pdb.set_trace()
-
-                # all_x = []
-                # for j in range(n_f):
-                #     o, hidden_state = aggregate_mem_fn(x=feat[:, j])
-                #     all_x.append(o)
-                # feat = torch.stack(all_x, dim=1)
-
-                # b, n_f, c, h, w --> h, w, n_f, b, c
-                feat = feat.permute(3, 4, 1, 0, 2).reshape(h * w * n_f, b, -1)
-                feat = self.temp_layernorm(feat)
             # TODO: Add previous tokens here
             # if self.temporal_query and prev_tokens and i == 0:
             #     tokens = tokens + prev_tokens
@@ -483,7 +431,38 @@ class MaskMatteEmbAttenHead(nn.Module):
         # if self.return_feat:
         #     out_feat = self.conv_out(feat) # (b * n_f, c, h, w)
 
-        feat = self.conv(feat) # (b * n_f, c_out, h, w)
+        # Features propagation here?
+        if aggregate_mem_fn is not None:
+            no_temp_feat = feat
+            feat = feat.reshape(b, n_f, -1, h, w) # (b, n_f, c, h, w)
+
+            # Forward
+            if temp_method == 'none':
+                all_x = []
+                for j in range(n_f):
+                    o, hidden_state = aggregate_mem_fn(x=feat[:, j], h=None)
+                    all_x.append(o)
+                feat = torch.stack(all_x, dim=1)
+            else:
+                feat_forward, hidden_state = aggregate_mem_fn(x=feat, h=prev_h_state)
+
+                if temp_method == 'bi':
+                    # Backward
+                    feat_backward, _ = aggregate_mem_fn(x=torch.flip(feat[:, :-1], dims=(1,)), h=hidden_state[:, -1])
+                    feat_backward = torch.flip(feat_backward, dims=(1,))
+                    feat = feat_forward
+                    feat[:, :-1] = (feat_forward[:, :-1] + feat_backward) / 2
+                else:
+                    feat = feat_forward
+
+            # b, n_f, c, h, w --> h, w, n_f, b, c
+            feat = feat.flatten(0, 1)
+
+            out_feat = self.conv(no_temp_feat) # (b * n_f, c_out, h, w)
+            feat = self.conv(feat) # (b * n_f, c_out, h, w
+        else:
+            feat = self.conv(feat)
+            out_feat = feat
 
         
         # MLP to build kernel
@@ -494,35 +473,8 @@ class MaskMatteEmbAttenHead(nn.Module):
         tokens = self.decoder_norm(tokens)
 
         # Dot product feat with kernel to have matte
-        # import pdb; pdb.set_trace()
-
         output_mask = torch.einsum('bqc,btchw->btqhw', tokens, feat.reshape(b, n_f, -1, h, w)) # (b, n_f, n_i, h, w)
         output_mask = output_mask.flatten(0, 1)
-
-        out_feat = feat
-
-        
-        # import cv2
-        # token_score = tokens.sigmoid()
-        # valid_ids = torch.nonzero(mask.sum((1, 3, 4)) > 0)
-        # for i, j in valid_ids:
-        #     if i == 0:
-        #         continue
-        #     for k in range(64):
-        #         print(token_score[i, j, k])
-        #         feat_m = feat[i, k]
-        #         feat_m = (feat_m - feat_m.min()) / (feat_m.max() - feat_m.min() + 1e-8)
-        #         cv2.imwrite(f"feat_map.png", feat_m.float().detach().cpu().numpy() * 255)
-        #         cv2.imwrite(f"roi_mask.png", mask[i, 0, j].float().detach().cpu().numpy() * 255)
-        #         import pdb; pdb.set_trace()
-        
-        
-        # out_debug = torch.einsum('c,chw->hw', tokens[0,0], feat[1])
-        # out_debug = (torch.tanh(out_debug) + 1.0) / 2.0
-        # import cv2
-        # output_mask = (torch.tanh(output_mask) + 1.0) / 2.0
-        # cv2.imwrite("test_mask.png", output_mask[0, 0].detach().cpu().numpy() * 255)
-        # import pdb; pdb.set_trace()
         
         if self.return_feat:
             return output_mask, out_feat, hidden_state, tokens, max_loss, min_loss

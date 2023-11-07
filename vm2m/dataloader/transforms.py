@@ -435,7 +435,6 @@ class RandomBinarizedMask(RandomBinarizeAlpha):
         alphas: (T, H, W)
         masks: (T, H, W) from alphas
         '''
-        frames = input_dict["frames"]
         masks = input_dict["masks"]
         
         # n_inst = len(masks) // len(frames) 

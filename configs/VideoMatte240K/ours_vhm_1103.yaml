@@ -100,7 +100,7 @@ model:
   - 64
   - 128
   - 256
-  weights: output/HIM/ours_1103_single-stage_strong-aug/best_model.pth
+  weights: output/VHM/ours_vhm_bi-temp_1106_fusion-grad-loss/last_model.pth
 dataset:
   train:
     name: 'MultiInstVideo'
