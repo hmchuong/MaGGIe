@@ -314,9 +314,11 @@ class ResMaskEmbedShortCut_D(ResShortCut_D):
         if self.num_embed > 0:
             masks = x[:, 3:, ...]
             mask_ids = torch.arange(1, masks.shape[1]+1, device=masks.device)[None, :, None, None]
+             
             # masks = (masks * mask_ids).max(1)[0]
             # masks = masks.sum(1) / (masks > 0).sum(1)
             masks = (masks * mask_ids).long()
+
             mask_embed = self.mask_embed_layer(masks.long())
             mask_embed = mask_embed * (masks > 0).float().unsqueeze(-1)
             mask_embed = mask_embed.sum(1) / ((masks > 0).float().unsqueeze(-1).sum(1) + 1e-6)

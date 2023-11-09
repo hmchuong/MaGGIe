@@ -148,6 +148,26 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         return cur_max_loss, cur_min_loss
 
+    def processing_masks(self, masks):
+        '''
+        randomly select one mask at the intersection
+        '''
+        intersection = masks.sum(2) > 1
+        if intersection.sum() == 0:
+            return masks
+        coords = intersection.nonzero()
+        ori_values = masks[coords[:, 0], coords[:, 1], :, coords[:, 2], coords[:, 3]]
+
+        # Generate random masks and get the highest values on the mask
+        g_cpu = torch.Generator(masks.device)
+        g_cpu.manual_seed(1234)
+        rand_masks = torch.rand(ori_values.shape, device=masks.device, generator=g_cpu)
+        rand_masks = rand_masks * ori_values
+        selected_indices = rand_masks.argmax(1)
+        masks[coords[:, 0], coords[:, 1], :, coords[:, 2], coords[:, 3]] = 0
+        masks[coords[:, 0], coords[:, 1], selected_indices, coords[:, 2], coords[:, 3]] = 1
+        return masks
+    
     def forward(self, ori_feat, mask, prev_tokens=None, use_mask_atten=True, gt_mask=None, aggregate_mem_fn=None, prev_h_state=None, temp_method='bi'):
         '''
         Params:
@@ -169,6 +189,8 @@ class MaskMatteEmbAttenHead(nn.Module):
         # Build tokens from mask and feat with MAP + Conv
         scale_factor = feat.shape[-1] * 1.0 / mask.shape[-1] * 1.0
         mask = resizeAnyShape(mask, scale_factor=scale_factor, use_avg_pool_binary=True) 
+        # mask = self.processing_masks(mask)
+        
         b, n_f= mask.shape[:2]
         h, w = feat.shape[-2:]
 
@@ -476,6 +498,11 @@ class MaskMatteEmbAttenHead(nn.Module):
         output_mask = torch.einsum('bqc,btchw->btqhw', tokens, feat.reshape(b, n_f, -1, h, w)) # (b, n_f, n_i, h, w)
         output_mask = output_mask.flatten(0, 1)
         
+        # x = (torch.tanh(output_mask) + 1.0) / 2.0
+        # import cv2
+        # cv2.imwrite("mask.png", x[0,0].cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
+
         if self.return_feat:
             return output_mask, out_feat, hidden_state, tokens, max_loss, min_loss
         return output_mask, mem_tokens, max_loss, min_loss

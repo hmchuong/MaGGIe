@@ -278,7 +278,12 @@ class Conn(Metric):
         # only calculate difference larger than or equal to 0.15
         gt_phi = 1 - gt_diff * (gt_diff >= 0.15)
         pred_phi = 1 - pred_diff * (pred_diff >= 0.15)
+        # import pdb; pdb.set_trace()
         conn_diff = np.sum(np.abs(gt_phi - pred_phi) * roi_mask)
+        # if conn_diff > 30000:
+        #     cv2.imwrite("mask.png", gt_phi[0] * 255)
+        #     cv2.imwrite("pred.png", pred_phi[0] * 255)
+        #     import pdb; pdb.set_trace()
         del all_omegas, all_intersections, round_down_map, gt_diff, pred_diff, gt_phi, pred_phi
         gc.collect()
         return conn_diff

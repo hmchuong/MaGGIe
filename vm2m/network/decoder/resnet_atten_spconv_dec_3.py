@@ -119,8 +119,16 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             spconv.SubMConv2d(64, 64, kernel_size=3, padding=1, bias=False, indice_key="subm4.4"),
         )
 
+        self.guidance_layer = spconv.SparseSequential(
+            spconv.SubMConv2d(128, 64, kernel_size=1, padding=0, bias=False, indice_key="subm_inst.0"),
+            nn.BatchNorm1d(64),
+            self.leaky_relu,
+            spconv.SubMConv2d(64, 64, kernel_size=3, padding=1, bias=True, indice_key="subm_inst.1"),
+            nn.Sigmoid()
+        )
+
         self.layer3_smooth = spconv.SparseSequential(
-            spconv.SubMConv2d(128, 64, kernel_size=1, padding=0, bias=True, indice_key="subm4.smooth"),
+            spconv.SubMConv2d(64, 64, kernel_size=1, padding=0, bias=True, indice_key="subm4.smooth"),
             nn.ReLU(inplace=True),
             nn.BatchNorm1d(64),
         )
@@ -235,6 +243,30 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         x = x.replace_feature(torch.cat([x.features, sparse_feat.features], dim=1))
         # x = Fsp.sparse_add(x, sparse_feat)
         return x
+
+    def instance_spec_guidance(self, sparse_feat, dense_feat, b, n_i, h, w):
+        '''
+        sparse_feat: SparseConvTensor, instance-specific features
+        dense_feat: dense detail features
+        '''
+        coords = sparse_feat.indices.clone()
+        coords[:, 0] = torch.div(coords[:, 0], n_i, rounding_mode='floor')
+        coords = coords.long()
+        x = dense_feat.permute(0, 2, 3, 1).contiguous()
+        x = x[coords[:, 0], coords[:, 1], coords[:, 2]]
+
+        # Detail sparse features
+        x = spconv.SparseConvTensor(x, sparse_feat.indices, (h, w), b * n_i, indice_dict=sparse_feat.indice_dict)
+        
+        # Predict coarse guidance
+        detail_features = x.features
+        x = x.replace_feature(torch.cat([x.features, sparse_feat.features], dim=1))
+        guidance = self.guidance_layer(x)
+
+        # Guide detail features with guidance
+        x = x.replace_feature(detail_features * guidance.features)
+
+        return x
     
     def predict_details(self, os8_feat, image, roi_masks, masks, mem_details=None, inst_guidance_os8=None, dense_features=None):
         '''
@@ -272,38 +304,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         instance_ids = x.indices[:, 0] % n_i
         # import pdb; pdb.set_trace()
         guidance = inst_guidance_os8[coords[:, 0], instance_ids.long()]
+        
+        # Get instance-spec features at OS8
         x = x.replace_feature(self.inst_spec_layer(x.features * guidance))
-
-        # Visualize feature before-after guidance
-        # for i in valid_ids:
-        #     if i == 0: continue
-        #     print(i)
-        #     b_i = i // n_i
-        #     i_i = i % n_i
-        #     feat_m_before = os8_feat[b_i]
-        #     cv2.imwrite("roi_mask.png", roi_masks[i, 0].cpu().numpy() * 255)
-        #     for j in range(128):
-        #         print(inst_guidance_os8[b_i, i_i, j])
-        #         feat_m = feat_m_before[j]
-        #         feat_m = (feat_m - feat_m.min()) / (feat_m.max() - feat_m.min() + 1e-8)
-        #         cv2.imwrite("feat_map.png", feat_m.detach().float().cpu().numpy() * 255)
-        #         import pdb; pdb.set_trace()
-        #     feat_m_after = os8_feat[b_i] * inst_guidance_os8[b_i, i_i][:, None, None]
-        #     feat_m_before = feat_m_before.mean(0)
-        #     feat_m_after = feat_m_after.mean(0)
-        #     feat_m_before = (feat_m_before - feat_m_before.min()) / (feat_m_before.max() - feat_m_before.min() + 1e-8)
-        #     feat_m_after = (feat_m_after - feat_m_after.min()) / (feat_m_after.max() - feat_m_after.min() + 1e-8)
-        #     cv2.imwrite("feat_map_before.png", feat_m_before.detach().float().cpu().numpy() * 255)
-        #     cv2.imwrite("feat_map_after.png", feat_m_after.detach().float().cpu().numpy() * 255)
-        #     cv2.imwrite("roi_mask.png", roi_masks[i, 0].cpu().numpy() * 255)
-        #     import pdb; pdb.set_trace()
-        # for i in valid_ids:
-        #     print(i)
-        #     feat_m = dense_feat[i].mean(0)
-        #     feat_m = (feat_m - feat_m.min()) / (feat_m.max() - feat_m.min() + 1e-8)
-        #     cv2.imwrite("feat_map.png", feat_m.detach().float().cpu().numpy() * 255)
-        #     cv2.imwrite("roi_mask.png", roi_masks[i, 0].cpu().numpy() * 255)
-        #     import pdb; pdb.set_trace()
         
         # Aggregate with detail features
         fea1, fea2, fea3 = dense_features
@@ -311,7 +314,14 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # import pdb; pdb.set_trace()
         x = self.layer3(x)
         # import pdb; pdb.set_trace()
-        x = self.combine_dense_sparse_feat(x, fea3, b, n_i, H // 4, W // 4)
+        
+        # Sol 1: concate instance-spec feat with sparse detail feat
+        # x = self.combine_dense_sparse_feat(x, fea3, b, n_i, H // 4, W // 4)
+
+        # Sol 2: Instance-spec guidance detail feat
+        # x: os8 instance spec feat, fea3: detail feat
+        x = self.instance_spec_guidance(x, fea3, b, n_i, H // 4, W // 4)
+        
         x = self.layer3_smooth(x)
 
         # TODO: Check instance specific features here
@@ -470,7 +480,12 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
                                                                             use_mask_atten=use_mask_atten, gt_mask=gt_masks)
         mem_feat = x
         x_os8 = F.interpolate(x_os8, size=(h, w), mode='bilinear', align_corners=False)
+        # x_ori = x_os8
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
+        # x_os8_softmax = x_os8.argmax(1)
+        # cv2.imwrite("mask.png", x_os8[0,0].detach().cpu().numpy() * 255)
+        # cv2.imwrite("mask.png", x_os8_softmax[0,0].detach().cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
         if self.training:
             x_os8 = x_os8 * valid_masks
         else:
@@ -500,7 +515,28 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # import pdb; pdb.set_trace()
         # Apply gaussian filter on guided_mask_os8
         # guided_mask_os8 = gaussian_smoothing(guided_mask_os8, sigma=3)
+        
         unknown_os8 = compute_unknown(guided_mask_os8, k_size=30)
+        # TODO: Check the connectivity of unknown_os8 and remove noise
+        # remove noise by using x_os8 alpha matte > 0.5 + padding 30px each side
+        # if not self.training:
+        #     for i in range(b):
+        #         for j in range(n_i):
+        #             coarse_inst = x_os8[i, j] > 0.1
+        #             ys, xs = torch.nonzero(coarse_inst, as_tuple=True)
+        #             if len(ys) == 0:
+        #                 continue
+        #             y_min, y_max = ys.min(), ys.max()
+        #             x_min, x_max = xs.min(), xs.max()
+        #             y_min = max(0, y_min - 30)
+        #             y_max = min(y_max + 30, h)
+        #             x_min = max(0, x_min - 30)
+        #             x_max = min(x_max + 30, w)
+        #             target_mask = torch.zeros_like(coarse_inst)
+        #             target_mask[y_min: y_max, x_min: x_max] = 1
+        #             unknown_os8[i, j] = unknown_os8[i, j] * target_mask
+        # cv2.imwrite("mask.png", unknown_os8[0,0].cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
 
         if unknown_os8.max() == 0 and self.training:
             unknown_os8[:, :, 200: 250, 200: 250] = 1.0

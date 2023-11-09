@@ -1,4 +1,5 @@
 import os
+import random
 import math
 from typing import Any
 import numpy as np
@@ -195,6 +196,26 @@ class RandomCropByAlpha(object):
         self.crop_size = crop_size
         self.random = random
     
+    def crop(self, frames, alphas, masks, min_x, min_y, max_x, max_y, w, h):
+        max_x = max(max_x - self.crop_size[1], min_x + 1)
+        max_y = max(max_y - self.crop_size[0], min_y + 1)
+
+        for _ in range(3):
+            x, y = self.random.randint(min_x, max_x), self.random.randint(min_y, max_y)
+
+            x = min(x, w - self.crop_size[1])
+            y = min(y, h - self.crop_size[0])
+
+            crop_frames = frames[:, y:y+self.crop_size[0], x:x+self.crop_size[1], :]
+            crop_alphas = alphas[:, y:y+self.crop_size[0], x:x+self.crop_size[1]]
+            if (crop_alphas > 127).sum() > 0:
+                break
+
+        crop_masks = masks
+        if masks is not None:
+            crop_masks = masks[:,y:y+self.crop_size[0], x:x+self.crop_size[1]]
+        return crop_frames, crop_alphas, crop_masks
+    
     def __call__(self, input_dict: dict):
         '''
         frames: (T, H, W, C)
@@ -220,24 +241,26 @@ class RandomCropByAlpha(object):
             min_x, max_x = 0, w
             min_y, max_y = 0, h
 
-
-        max_x = max(max_x - self.crop_size[1], min_x + 1)
-        max_y = max(max_y - self.crop_size[0], min_y + 1)
-
-        for _ in range(3):
-            x, y = self.random.randint(min_x, max_x), self.random.randint(min_y, max_y)
-
-            x = min(x, w - self.crop_size[1])
-            y = min(y, h - self.crop_size[0])
-
-            crop_frames = frames[:, y:y+self.crop_size[0], x:x+self.crop_size[1], :]
-            crop_alphas = alphas[:, y:y+self.crop_size[0], x:x+self.crop_size[1]]
-            if (crop_alphas > 127).sum() > 0:
-                break
-
-        crop_masks = masks
-        if masks is not None:
-            crop_masks = masks[:,y:y+self.crop_size[0], x:x+self.crop_size[1]]
+        if self.random.rand() < 0.5:
+            # Cropping
+            crop_frames, crop_alphas, crop_masks = self.crop(frames, alphas, masks, min_x, min_y, max_x, max_y, w, h)
+        else:
+            # Padding and resize to crop size
+            if h > w:
+                pad_w = (h - w) // 2
+                pad_h = 0
+            else:
+                pad_w = 0
+                pad_h = (w - h) // 2
+            crop_frames = [cv2.copyMakeBorder(frame, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_CONSTANT, value=0) for frame in frames]
+            crop_alphas = [cv2.copyMakeBorder(alpha, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_CONSTANT, value=0) for alpha in alphas]
+            crop_frames = [cv2.resize(frame, self.crop_size, interpolation=cv2.INTER_LINEAR) for frame in crop_frames]
+            crop_alphas = [cv2.resize(alpha, self.crop_size, interpolation=cv2.INTER_LINEAR) for alpha in crop_alphas]
+            crop_frames = np.stack(crop_frames, axis=0)
+            crop_alphas = np.stack(crop_alphas, axis=0)
+            if masks is not None:
+                crop_masks = [cv2.copyMakeBorder(mask, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_CONSTANT, value=0) for mask in masks]
+                crop_masks = np.stack([cv2.resize(mask, self.crop_size, interpolation=cv2.INTER_NEAREST) for mask in crop_masks], axis=0)
         
         # crop_weights = weights
         # if weights is not None:
@@ -478,6 +501,43 @@ class DownUpMask(object):
         input_dict["masks"] = np.stack([self.downup(m) for m in masks], axis=0)
 
         return input_dict
+
+class CutMask(object):
+    def __init__(self, random):
+        self.internal_perturb_prob = 0.5
+        self.external_perturb_prob = 0.5
+        self.random = random
+
+    def internal(self, mask):
+        if self.random.rand() < self.internal_perturb_prob:
+            h, w = mask.shape
+            perturb_size_h, perturb_size_w = self.random.randint(h // 8, h // 4), self.random.randint(w // 8, w // 4)
+            x = self.random.randint(0, h - perturb_size_h)
+            y = self.random.randint(0, w - perturb_size_w)
+            x1 = self.random.randint(0, h - perturb_size_h)
+            y1 = self.random.randint(0, w - perturb_size_w)
+            mask[x:x+perturb_size_h, y:y+perturb_size_w] = mask[x1:x1+perturb_size_h, y1:y1+perturb_size_w].copy()
+        return mask
+
+    def external(self, mask):
+        if self.random.rand() < self.external_perturb_prob and mask.shape[0] > 1:
+            i, j = random.sample(list(range(0, mask.shape[0])), k=2)
+            h, w = mask.shape[-2:]
+            perturb_size_h, perturb_size_w = self.random.randint(h // 8, h // 4), self.random.randint(w // 8, w // 4)
+            x = self.random.randint(0, h - perturb_size_h)
+            y = self.random.randint(0, w - perturb_size_w)
+            mask_i_perturb = mask[i, x:x+perturb_size_h, y:y+perturb_size_w].copy()
+            mask_j_perturb = mask[j, x:x+perturb_size_h, y:y+perturb_size_w].copy()
+            mask[i, x:x+perturb_size_h, y:y+perturb_size_w] = mask_j_perturb
+            mask[j, x:x+perturb_size_h, y:y+perturb_size_w] = mask_i_perturb
+        return mask
+
+    def __call__(self, sample: dict):
+        if self.random.random() < 0.5:
+            sample['masks'] = np.stack([self.internal(sample['masks'][i]) for i in range(sample['masks'].shape[0])], axis=0)
+        else:
+            sample['masks'] = self.external(sample['masks'])
+        return sample
 
 def get_random_structure(size):
     # The provided model is trained with 

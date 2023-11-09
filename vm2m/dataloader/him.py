@@ -92,23 +92,37 @@ class HIMDataset(Dataset):
         ]
         if self.is_train:
             # self.transforms = self.transforms[:1] + [T.RandomCenterCrop(self.random)] + self.transforms[1:]
+            # self.transforms += [
+            #     T.RandomCropByAlpha(crop, self.random),
+            #     T.RandomHorizontalFlip(self.random, flip_p),
+            #     T.GammaContrast(self.random),
+            #     # T.MotionBlur(self.random),
+            #     T.AdditiveGaussionNoise(self.random),
+            #     T.JpegCompression(self.random),
+            #     T.RandomAffine(self.random),
+            #     T.ChooseOne(self.random, [
+            #         T.ModifyMaskBoundary(self.random, modify_mask_p),
+            #         T.Compose([
+            #             T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+            #             T.DownUpMask(self.random, 0.125, downscale_mask_p)
+            #         ])
+            #     ])
+                
+            # ]
             self.transforms += [
                 T.RandomCropByAlpha(crop, self.random),
                 T.RandomHorizontalFlip(self.random, flip_p),
                 T.GammaContrast(self.random),
-                # T.MotionBlur(self.random),
                 T.AdditiveGaussionNoise(self.random),
                 T.JpegCompression(self.random),
-                T.RandomAffine(self.random),
-                T.ChooseOne(self.random, [
-                    T.ModifyMaskBoundary(self.random, modify_mask_p),
-                    T.Compose([
-                        T.RandomBinarizedMask(self.random, bin_alpha_max_k),
-                        T.DownUpMask(self.random, 0.125, downscale_mask_p)
-                    ])
+                T.RandomAffine(self.random, p=0.1),
+                T.Compose([
+                    T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+                    T.DownUpMask(self.random, 0.125, downscale_mask_p),
+                    T.CutMask(self.random)
                 ])
-                
             ]
+
             # self.transforms += [
             #     T.RandomCropByAlpha(crop, self.random),
             #     T.RandomHorizontalFlip(self.random, flip_p),
@@ -136,15 +150,30 @@ class HIMDataset(Dataset):
         all_alphas = []
         target_dir_name = self.alpha_dir_name if self.mask_dir_name == '' else self.mask_dir_name
         valid_images = []
+        target_files = set([
+            # "google_middle_2e2db6b037aa4f61a70f32904e52e7d7"
+            # "google_easy_b36f65b827254a129da6347a7a0faf28",
+            # "google_easy_22b3ffecdf594a75a765e25b3e4ccda8"
+            "google_easy_7cb3473a7b20434781a344a10f0b7408",
+            "celebrity_middle_cc9ad659757144dabfc04a168bcb4ec8",
+            "google_easy_7cb3473a7b20434781a344a10f0b7408",
+            "google_easy_22b3ffecdf594a75a765e25b3e4ccda8",
+            "google_easy_42fbb3c0abaf4fe2807db58090a39f45",
+            "google_easy_b36f65b827254a129da6347a7a0faf28",
+            "Pexels_middle_pexels-photo-939702",
+            "Pexels_middle_pexels-photo-1140916",
+            "Pexels_middle_pexels-photo-7148443"
+        ])
         for image in images:
             image_name = os.path.basename(image).replace(".jpg", "")
+            # if not image_name in target_files:
+            #     continue
             alpha_dir = os.path.join(self.root_dir, target_dir_name, self.split, image_name)
             if not os.path.exists(alpha_dir):
                 continue
             valid_images.append(image)
             alphas = sorted(os.listdir(alpha_dir))
             all_alphas.append([os.path.join(self.root_dir, self.alpha_dir_name, self.split, image_name, p) for p in alphas])
-        
         self.data = list(zip(valid_images, all_alphas))
     
     def load_hhm_sythetic_image_alphas(self):
@@ -177,7 +206,7 @@ class HIMDataset(Dataset):
             alphas = self.random.choice(alphas, self.padding_inst, replace=False)
 
         
-
+        # alphas = ['/mnt/localssd/HHM/synthesized/alphas/10014/0.png', '/mnt/localssd/HHM/synthesized/alphas/10014/1.png']
         # Load mask path and random replace the mask by alpha
         masks = None
         if self.is_train:
@@ -201,8 +230,12 @@ class HIMDataset(Dataset):
 
         # Remove invalid alpha (< 5% area)
         if self.is_train:
-            valid_ids = (alpha > 0.5).sum((-1, -2)) > (0.05 * alpha.shape[-1] * alpha.shape[-2])
+            valid_ids = (alpha > 127).sum((-1, -2)) > (0.001 * alpha.shape[-1] * alpha.shape[-2])
+            # if (valid_ids == 0).any():
+            #     print("Some empty masks")
             valid_ids = torch.nonzero(valid_ids)
+            # print("Before", alpha.shape[1])
+            # print("After", len(valid_ids[:, 1]))
             alpha = alpha[valid_ids[:, 0], valid_ids[:, 1]]
             mask = mask[valid_ids[:, 0], valid_ids[:, 1]]
             fg = fg[valid_ids[:, 0], valid_ids[:, 1]]
@@ -214,12 +247,13 @@ class HIMDataset(Dataset):
                 bg = bg.unsqueeze(0)
 
             if mask.numel() == 0:
-                logging.warning("Mask is empty")
+                # import pdb; pdb.set_trace()
+                logging.warning("Mask is empty after removing tiny masks")
                 return self.__getitem__(self.random.randint(0, len(self.data)))
         # import pdb; pdb.set_trace()
 
         # remove one random alpha
-        if alpha.shape[1] > 1 and self.is_train and self.random.rand() < 0.2:
+        if alpha.shape[1] > 1 and self.is_train and self.random.rand() < 0.05:
             num_alphas = alpha.shape[1] - 1
             chosen_ids = self.random.choice(range(alpha.shape[1]), num_alphas, replace=False)
             alpha = alpha[:, chosen_ids]
@@ -303,6 +337,8 @@ if __name__ == "__main__":
     import shutil
     dataset = HIMDataset(root_dir="/mnt/localssd/HHM", split="synthesized", is_train=True, downscale_mask=False)
     # dataset = HIMDataset(root_dir="/mnt/localssd/HIM2K", split="natural", is_train=False, downscale_mask=False, mask_dir_name='masks_matched')
+    num_masks = 0
+    iters = 0
     for batch in dataset:
         # batch = dataset[117]
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
@@ -326,6 +362,7 @@ if __name__ == "__main__":
             mask = masks[0, idx]
             if mask.sum() == 0:
                 continue
+            num_masks += 1
             alpha = alphas[0, idx]
             transition = transition_gt[0, idx]
             fg = fgs[0, idx].permute(1, 2, 0)
@@ -339,5 +376,9 @@ if __name__ == "__main__":
             cv2.imwrite("debug/trimap_{}.png".format(idx), transition.numpy() * 80)
             cv2.imwrite("debug/fg_{}.png".format(idx), fg.numpy()[:, :, ::-1] * 255)
             cv2.imwrite("debug/bg_{}.png".format(idx), bg.numpy()[:, :, ::-1] * 255)
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
+        iters += 1
+        if iters >= 100:
+            break
 
+    print("Avg.masks", num_masks * 1.0 / iters)

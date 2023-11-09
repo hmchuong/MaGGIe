@@ -82,7 +82,7 @@ model:
   loss_comp_w: 0.0
   loss_dtSSD_w: 1.0
   loss_multi_inst_type: smooth_l1_0.5
-  loss_multi_inst_w: 0.0
+  loss_multi_inst_w: 1.0
   loss_multi_inst_warmup: 2000
   mgm:
     warmup_iter: 1000

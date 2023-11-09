@@ -61,17 +61,18 @@ class MultiInstVidDataset(Dataset):
             self.transforms.append(T.GenMaskFromAlpha(1.0))
         if self.is_train and not is_ss_dataset:
             # self.transforms.append(T.RandomBinarizedMask(self.random, bin_alpha_max_k))
-            self.transforms.append(T.ChooseOne(self.random, [
-                T.ModifyMaskBoundary(self.random, modify_mask_p),
-                T.Compose([
-                    T.RandomBinarizedMask(self.random, bin_alpha_max_k),
-                    T.DownUpMask(self.random, 0.125, downscale_mask_p)
-                ])
-            ]))
-            # self.transforms.append(T.Compose([
+            # self.transforms.append(T.ChooseOne(self.random, [
+            #     T.ModifyMaskBoundary(self.random, modify_mask_p),
+            #     T.Compose([
             #         T.RandomBinarizedMask(self.random, bin_alpha_max_k),
             #         T.DownUpMask(self.random, 0.125, downscale_mask_p)
-            #     ]))
+            #     ])
+            # ]))
+            self.transforms.append(T.Compose([
+                    T.RandomBinarizedMask(self.random, bin_alpha_max_k),
+                    T.DownUpMask(self.random, 0.125, downscale_mask_p),
+                    T.CutMask(self.random)
+                ]))
         else:
             if self.mask_dir_name == '':
                 self.transforms += [T.DownUpMask(self.random, 0.125, 1.0)]

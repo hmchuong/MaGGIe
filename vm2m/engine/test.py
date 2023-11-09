@@ -81,22 +81,18 @@ def val_image(model, val_loader, device, log_iter, val_error_dict, do_postproces
     torch.cuda.empty_cache()
 
     target_files = set([
-        "unsplash_middle_saeed-karimi-JrrWC7Qcmhs-unsplash",
-        "google_easy_c3668dda4d46436097b6c5d58153e7de",
-        "google_middle_95e6da3a2f164a80b68abdd8058aa696",
-        "google_middle_62604586fc08499ca4d346900c338bc8",
-        "google_middle_44440b07b2d5459ea2053cd3ee9f9406",
-        "google_middle_2db0e2572a654f55947d88d411c3cb61",
-        "celebrity_middle_d3874137945e41319d93448910b8bcdd",
-        "celebrity_easy_e129df9159a64841b62c588ddc5730c9",
-        "celebrity_middle_1650c9fd73ae4313bae6a598a7d7072e",
-        "celebrity_middle_8f47dc49975f4fc484224fdec092253f",
-        "celebrity_easy_c0c60daf04cf41e3bb5752d932944dd9",
-        "celebrity_middle_2b9db99c95e54d918f2a0795515ef271",
-        "celebrity_easy_b71d8703a11240a2aba6babc1193c2e4",
-        "Pexels_middle_pexels-photo-5896435",
-        "Pexels_easy_pexels-photo-5618157",
-        "celebrity_middle_1d3504849baa441fb6367d178c892423"
+        # "google_middle_2e2db6b037aa4f61a70f32904e52e7d7"
+        # "google_easy_b36f65b827254a129da6347a7a0faf28",
+        # "google_easy_22b3ffecdf594a75a765e25b3e4ccda8"
+        "google_easy_7cb3473a7b20434781a344a10f0b7408",
+        "celebrity_middle_cc9ad659757144dabfc04a168bcb4ec8",
+        "google_easy_7cb3473a7b20434781a344a10f0b7408",
+        "google_easy_22b3ffecdf594a75a765e25b3e4ccda8",
+        "google_easy_42fbb3c0abaf4fe2807db58090a39f45",
+        "google_easy_b36f65b827254a129da6347a7a0faf28",
+        "Pexels_middle_pexels-photo-939702",
+        "Pexels_middle_pexels-photo-1140916",
+        "Pexels_middle_pexels-photo-7148443"
     ])
     with torch.no_grad():
 
@@ -109,7 +105,7 @@ def val_image(model, val_loader, device, log_iter, val_error_dict, do_postproces
             if 'alpha_names' in batch:
                 alpha_names = batch.pop('alpha_names')
             
-            # if image_names[0][0].split('/')[-1].replace(".jpg", "") in target_files:
+            # if not image_names[0][0].split('/')[-1].replace(".jpg", "") in target_files:
             #     continue
             transform_info = batch.pop('transform_info')
             trimap = batch.pop('trimap').numpy()
@@ -128,10 +124,13 @@ def val_image(model, val_loader, device, log_iter, val_error_dict, do_postproces
             alpha = output['refined_masks']
 
             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
-        
+            
             # Threshold some high-low values
             alpha[alpha <= 1.0/255.0] = 0.0
             alpha[alpha >= 254.0/255.0] = 1.0
+            
+            # cv2.imwrite("mask.png", alpha[0,0,0] * 255)
+            # import pdb; pdb.set_trace()
 
             if do_postprocessing:
                 alpha = postprocess(alpha)
@@ -148,8 +147,8 @@ def val_image(model, val_loader, device, log_iter, val_error_dict, do_postproces
                     current_trimap = (trimap[:, skip:] == 1).astype('float32')
                 
                 current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap, device=device)
-                # if k == "MAD" and current_metrics[k] > 10.0:
-                #     print(image_names[0][0])
+                if k == "Conn" and current_metrics[k] > 15.0:
+                    print(image_names[0][0], current_metrics[k])
                 logging.debug(f"Done {k}!")
 
             # Logging

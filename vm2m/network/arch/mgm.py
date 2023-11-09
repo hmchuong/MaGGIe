@@ -160,6 +160,29 @@ class MGM(nn.Module):
         alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
 
         return alpha_pred, weight_os4, weight_os1
+    
+    def processing_masks(self, masks):
+        '''
+        randomly select one mask at the intersection
+        '''
+        intersection = masks.sum(2) > 1
+        if intersection.sum() == 0:
+            return masks
+
+        coords = intersection.nonzero()
+        ori_values = masks[coords[:, 0], coords[:, 1], :, coords[:, 2], coords[:, 3]]
+
+        # Generate random masks and get the highest values on the mask
+        g_cpu = torch.Generator(masks.device)
+        g_cpu.manual_seed(1234)
+        rand_masks = torch.rand(ori_values.shape, device=masks.device, generator=g_cpu)
+        rand_masks = rand_masks * ori_values
+        selected_indices = rand_masks.argmax(1)
+        masks[coords[:, 0], coords[:, 1], :, coords[:, 2], coords[:, 3]] = 0
+        masks[coords[:, 0], coords[:, 1], selected_indices, coords[:, 2], coords[:, 3]] = 1
+
+        return masks
+        # import pdb; pdb.set_trace()
 
     def forward(self, batch, return_ctx=False, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
         '''
@@ -175,6 +198,10 @@ class MGM(nn.Module):
         trans_gt = batch.get('transition', None)
         fg = batch.get('fg', None)
         bg = batch.get('bg', None)
+
+        # masks = self.processing_masks(masks)
+        # masks[:, :, 1] = masks[:, :, 1] * (1.0 - masks[:, :, 0])
+        # import pdb; pdb.set_trace()
 
         # Combine input image and masks
         b, n_f, _, h, w = x.shape
@@ -407,17 +434,22 @@ class MGM(nn.Module):
         return loss.sum() / (torch.sum(weight) + 1e-8)
 
 
-    def loss_multi_instances(self, pred):
+    def loss_multi_instances(self, pred, gt):
         """
         :param pred: [N, C, H, W]
         :param gt: [N, C, H, W]
         :param weight: [N, 1, H, W]
         :return:
         """
-        pred = pred.sum(1)
-        mask = (pred > 1.0).float()
-        loss = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
-        loss = loss.sum() / (mask.sum() + 1e-6)
+        # pred = pred.sum(1)
+        # mask = (pred > 1.0).float()
+        # loss = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
+        # loss = loss.sum() / (mask.sum() + 1e-6)
+        # return loss
+
+        sum_inst = pred.sum(1)
+        sum_gt = gt.sum(1)
+        loss = F.mse_loss(sum_inst, sum_gt, reduction='mean')
         return loss
     
     def compute_loss(self, pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape, reweight_os8=True):
@@ -442,10 +474,10 @@ class MGM(nn.Module):
         weight_os8 = weight_os8 * valid_mask
 
         # TODO: For training stage 2 only
-        if reweight_os8:
-            unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
-            unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
-            weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype) + weight_os8
+        # if reweight_os8:
+        #     unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
+        #     unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
+        #     weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype) + weight_os8
         # import pdb; pdb.set_trace()
 
         # Add padding to alphas and trans_gt
@@ -541,15 +573,15 @@ class MGM(nn.Module):
 
         if self.loss_multi_inst_w > 0 and iter >= self.loss_multi_inst_warmup:
             multi_loss = 0
-            if alpha_pred_os1 is not None:
-                multi_loss_os1 = self.loss_multi_instances(alpha_pred_os1 * valid_mask)
-                multi_loss_os4 = self.loss_multi_instances(alpha_pred_os4 * valid_mask)
-                multi_loss += multi_loss_os1 * 2 + multi_loss_os4 * 1
-                loss_dict['loss_multi_inst_os1'] = multi_loss_os1
-                loss_dict['loss_multi_inst_os4'] = multi_loss_os4
+            # if alpha_pred_os1 is not None:
+            #     multi_loss_os1 = self.loss_multi_instances(alpha_pred_os1 * valid_mask)
+            #     multi_loss_os4 = self.loss_multi_instances(alpha_pred_os4 * valid_mask)
+            #     multi_loss += multi_loss_os1 * 2 + multi_loss_os4 * 1
+            #     loss_dict['loss_multi_inst_os1'] = multi_loss_os1
+            #     loss_dict['loss_multi_inst_os4'] = multi_loss_os4
             
             if not self.freeze_coarse:
-                multi_loss_os8 = self.loss_multi_instances(alpha_pred_os8 * valid_mask)
+                multi_loss_os8 = self.loss_multi_instances(alpha_pred_os8 * valid_mask, alphas)
                 multi_loss += multi_loss_os8 * 1
                 loss_dict['loss_multi_inst_os8'] = multi_loss_os8
 
