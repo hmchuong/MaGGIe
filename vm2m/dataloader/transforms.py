@@ -261,6 +261,8 @@ class RandomCropByAlpha(object):
             if masks is not None:
                 crop_masks = [cv2.copyMakeBorder(mask, pad_h, pad_h, pad_w, pad_w, cv2.BORDER_CONSTANT, value=0) for mask in masks]
                 crop_masks = np.stack([cv2.resize(mask, self.crop_size, interpolation=cv2.INTER_NEAREST) for mask in crop_masks], axis=0)
+            else:
+                crop_masks = None
         
         # crop_weights = weights
         # if weights is not None:

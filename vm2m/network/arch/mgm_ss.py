@@ -58,7 +58,7 @@ class MGM_SS(MGM_TempSpar):
         batch["image"] = torch.cat([batch["image"], new_images], dim=0)
         batch["mask"] = torch.cat([batch["mask"], new_masks], dim=0)
         batch["alpha"] = torch.cat([batch["alpha"], torch.zeros_like(batch["alpha"])], dim=0)
-        batch["weight"] = torch.cat([batch["weight"], torch.zeros_like(batch["weight"])], dim=0)
+        # batch["weight"] = torch.cat([batch["weight"], torch.zeros_like(batch["weight"])], dim=0)
         batch["transition"] = torch.cat([batch["transition"], torch.zeros_like(batch["transition"])], dim=0)
 
         # batch = self.flatten_batch(batch)
@@ -302,9 +302,9 @@ class MGM_SS(MGM_TempSpar):
 
         # FG loss inside the mask region
         loss_dict = {}
-        loss_dict['loss_fg'] = self.custom_regression_loss(pred_warp, pred, weight=dilated_masks)
-        loss_dict['loss_bg_warp'] = self.custom_regression_loss(pred_warp, torch.zeros_like(pred_warp), weight=bg_masks)
-        loss_dict['loss_bg_pred'] = self.custom_regression_loss(pred, torch.zeros_like(pred), weight=bg_masks)
+        loss_dict['loss_fg'] = self.regression_loss(pred_warp, pred, weight=dilated_masks)
+        loss_dict['loss_bg_warp'] = self.regression_loss(pred_warp, torch.zeros_like(pred_warp), weight=bg_masks)
+        loss_dict['loss_bg_pred'] = self.regression_loss(pred, torch.zeros_like(pred), weight=bg_masks)
         
         loss_dict['total'] = loss_dict['loss_fg'] + loss_dict['loss_bg_warp'] + loss_dict['loss_bg_pred']
 

@@ -193,9 +193,13 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
         if len(mismatch_keys) > 0:
             logging.warn("Mismatch keys: {}".format(mismatch_keys))
 
-    # TODO: Resume training
+    # Resume training
     start_epoch = 0
     start_cycle = 0
+    n_real_images = 0
+    n_real_instances = 0
+    n_syn_samples = 0
+    n_syn_instances = 0
     if cfg.train.resume_last:
         if os.path.exists(os.path.join(cfg.output_dir, 'last_opt.pth')):
             logging.info("Resuming last model from {}".format(cfg.output_dir))
@@ -203,6 +207,10 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 opt_dict = torch.load(os.path.join(cfg.output_dir, 'last_opt.pth'), map_location=device)
                 start_epoch = opt_dict['epoch']
                 start_cycle = opt_dict['cycle']
+                n_real_samples = opt_dict['n_real_samples']
+                n_real_instances = opt_dict['n_real_instances']
+                n_syn_samples = opt_dict['n_syn_samples']
+                n_syn_instances = opt_dict['n_syn_instances']
                 # Load optimizer and lr_scheduler
                 optimizer.load_state_dict(opt_dict['optimizer'])
                 lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
@@ -301,6 +309,18 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                             train_syn_iterator = iter(train_syn_loader)
                             batch = next(train_syn_iterator)
                     
+                    # For logging number of instances, number of images
+                    n_images = batch['image'].shape[0] * batch['image'].shape[1]
+                    masks = batch['mask']
+                    valid_instances = torch.sum(masks, dim=(-1, -2)) > 0
+                    n_instances = valid_instances.sum().item()
+                    if is_real:
+                        n_real_images += n_images
+                        n_real_instances += n_instances
+                    else:
+                        n_syn_samples += n_images
+                        n_syn_instances += n_instances
+
                     data_time.update(time.time() - end_time)
                     
                     # import pickle
@@ -391,6 +411,13 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                         wandb.log({"train/cycle": i_cycle}, commit=False)
                         wandb.log({"train/epoch": epoch}, commit=False)
                         wandb.log({"train/iter": step}, commit=False)
+                        
+                        # Log number of real/syn samples
+                        wandb.log({"train/n_real_images": n_real_images}, commit=False)
+                        wandb.log({"train/n_real_instances": n_real_instances}, commit=False)
+                        wandb.log({"train/n_syn_samples": n_syn_samples}, commit=False)
+                        wandb.log({"train/n_syn_instances": n_syn_instances}, commit=False)
+
                         wandb.log({"train/global_step": global_step}, commit=True)
 
                     end_time = time.time()
