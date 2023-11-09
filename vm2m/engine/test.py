@@ -147,8 +147,8 @@ def val_image(model, val_loader, device, log_iter, val_error_dict, do_postproces
                     current_trimap = (trimap[:, skip:] == 1).astype('float32')
                 
                 current_metrics[k] = v.update(alpha[:, skip:], alpha_gt[:, skip:], trimap=current_trimap, device=device)
-                if k == "Conn" and current_metrics[k] > 15.0:
-                    print(image_names[0][0], current_metrics[k])
+                # if k == "Conn" and current_metrics[k] > 15.0:
+                #     print(image_names[0][0], current_metrics[k])
                 logging.debug(f"Done {k}!")
 
             # Logging

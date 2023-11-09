@@ -14,7 +14,7 @@ echo "Starting training..."
 cd $ROOT_DIR
 
 CONFIG=configs/HIM/ours_1102_singlestage.yaml
-NAME=ours_1107_stronger-aug_guidance_scratch
+NAME=ours_1108_stronger-aug_guidance_scratch
 
 if [ -n "$WORLD_SIZE" ] && [ "$WORLD_SIZE" -gt 1 ]; then
     PYCMD="--nproc_per_node=$RUNAI_NUM_OF_GPUS --nnodes=$WORLD_SIZE --node_rank=$RANK --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT"
