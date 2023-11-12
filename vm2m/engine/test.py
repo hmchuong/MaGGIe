@@ -264,6 +264,8 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             # cv2.imwrite("test_alpha.png", alpha[0,2,0] * 255)
             # import pdb; pdb.set_trace()
 
+            
+
             # Fuse results
             # If no previous results, use the two first results
             if len(all_preds) == 0:
@@ -325,6 +327,25 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
                     all_preds[-1] = fused_pred
                     all_preds = np.concatenate([all_preds, pred_forward12[None]], axis=0)
 
+                    # TODO: Log the pred os8, os4, os1, alpha_pred, detail_mask, diff_pred forward, backward
+                    
+                    # Save the pred
+                    # detail_mask = output['detail_mask'].cpu().numpy()
+                    # alpha_os4 = output['alpha_os4'].cpu().numpy()
+                    # alpha_os8 = output['alpha_os8'].cpu().numpy()
+                    # alpha_os1 = output['alpha_os1'].cpu().numpy()
+                    # for i in range(3):
+                    #     for j in range(alpha.shape[2]):
+                    #         cv2.imwrite(f"vis/pred_{i}_{j}.png", alpha[0, i, j] * 255)
+                    #         cv2.imwrite(f"vis/detail_mask_{i}_{j}.png", detail_mask[0, i, j] * 255)
+                    #         cv2.imwrite(f"vis/alpha_os4_{i}_{j}.png", alpha_os4[0, i, j] * 255)
+                    #         cv2.imwrite(f"vis/alpha_os8_{i}_{j}.png", alpha_os8[0, i, j] * 255)
+                    #         cv2.imwrite(f"vis/alpha_os1_{i}_{j}.png", alpha_os1[0, i, j] * 255)
+                    #         cv2.imwrite(f"vis/diff_forward_{i}_{j}.png", diff_forward[0, i, j] * 255)
+                    #         cv2.imwrite(f"vis/diff_backward_{i}_{j}.png", diff_backward[0, i, j] * 255)
+                    #         cv2.imwrite(f"vis/fused_pred_{j}.png", fused_pred[j] * 255)
+                    # import pdb; pdb.set_trace()
+
                     # if not using fusion
                     # all_preds[-1] = alpha[0, 1]
                     # all_preds = np.concatenate([all_preds, alpha[0, 2][None]], axis=0)
@@ -347,6 +368,7 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             if i == len(val_loader) - 1:
                 get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
 
+            
             # Logging
             if i % log_iter == 0:
                 log_str = "Validation: Iter {}/{}: ".format(i, len(val_loader))

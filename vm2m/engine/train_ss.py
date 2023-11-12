@@ -167,6 +167,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
 
     # Define optimizer and lr scheduler
     logging.info("Building optimizer and lr scheduler...")
+    # import pdb; pdb.set_trace()
     cfg.train.max_iter = cfg.train.self_train.max_cycles * cfg.train.self_train.epoch_per_cycle * cfg.train.self_train.iter_per_epoch
     optimizer, lr_scheduler = build_optim_lr_scheduler(cfg, model)
 
@@ -203,30 +204,30 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
     if cfg.train.resume_last:
         if os.path.exists(os.path.join(cfg.output_dir, 'last_opt.pth')):
             logging.info("Resuming last model from {}".format(cfg.output_dir))
-            try:
-                opt_dict = torch.load(os.path.join(cfg.output_dir, 'last_opt.pth'), map_location=device)
-                start_epoch = opt_dict['epoch']
-                start_cycle = opt_dict['cycle']
-                n_real_samples = opt_dict['n_real_samples']
-                n_real_instances = opt_dict['n_real_instances']
-                n_syn_samples = opt_dict['n_syn_samples']
-                n_syn_instances = opt_dict['n_syn_instances']
-                # Load optimizer and lr_scheduler
-                optimizer.load_state_dict(opt_dict['optimizer'])
-                lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
-                logging.info("Done loading optimizer and lr_scheduler")
+            # try:
+            opt_dict = torch.load(os.path.join(cfg.output_dir, 'last_opt.pth'), map_location=device)
+            start_epoch = opt_dict['epoch']
+            start_cycle = opt_dict['cycle']
+            n_real_images = opt_dict['n_real_samples']
+            n_real_instances = opt_dict['n_real_instances']
+            n_syn_samples = opt_dict['n_syn_samples']
+            n_syn_instances = opt_dict['n_syn_instances']
+            # Load optimizer and lr_scheduler
+            optimizer.load_state_dict(opt_dict['optimizer'])
+            lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
+            logging.info("Done loading optimizer and lr_scheduler")
 
-                model_name = 'model_{}_{}.pth'.format(start_cycle, start_epoch)
-                logging.info("Loading model from {}".format(model_name))
-                state_dict = torch.load(os.path.join(cfg.output_dir, model_name), map_location=device)
-                if is_dist:
-                    model.module.load_state_dict(state_dict, strict=True)
-                else:
-                    model.load_state_dict(state_dict, strict=True)
-                logging.info("Resumed from cycle {}, epoch {}".format( start_cycle, start_epoch))
-                start_epoch = start_epoch + 1
-            except:
-                logging.info("Cannot resume last model from {}".format(cfg.output_dir))
+            model_name = 'model_{}_{}.pth'.format(start_cycle, start_epoch)
+            logging.info("Loading model from {}".format(model_name))
+            state_dict = torch.load(os.path.join(cfg.output_dir, model_name), map_location=device)
+            if is_dist:
+                model.module.load_state_dict(state_dict, strict=True)
+            else:
+                model.load_state_dict(state_dict, strict=True)
+            logging.info("Resumed from cycle {}, epoch {}".format( start_cycle, start_epoch))
+            start_epoch = start_epoch + 1
+            # except:
+            #     logging.info("Cannot resume last model from {}".format(cfg.output_dir))
 
 
     batch_time = AverageMeter('batch_time')
@@ -476,6 +477,10 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 save_dict = {
                     'optimizer': optimizer.state_dict(),
                     'lr_scheduler': lr_scheduler.state_dict(),
+                    'n_real_samples': n_real_images,
+                    'n_real_instances': n_real_instances,
+                    'n_syn_samples': n_syn_samples,
+                    'n_syn_instances': n_syn_instances,
                     'epoch': epoch,
                     'cycle': i_cycle
                 }

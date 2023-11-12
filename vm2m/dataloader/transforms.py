@@ -192,9 +192,10 @@ class Stack(object):
         return input_dict
 
 class RandomCropByAlpha(object):
-    def __init__(self, crop_size, random):
+    def __init__(self, crop_size, random, padding_prob=0.5):
         self.crop_size = crop_size
         self.random = random
+        self.padding_prob = padding_prob
     
     def crop(self, frames, alphas, masks, min_x, min_y, max_x, max_y, w, h):
         max_x = max(max_x - self.crop_size[1], min_x + 1)
@@ -241,7 +242,7 @@ class RandomCropByAlpha(object):
             min_x, max_x = 0, w
             min_y, max_y = 0, h
 
-        if self.random.rand() < 0.5:
+        if self.random.rand() > self.padding_prob:
             # Cropping
             crop_frames, crop_alphas, crop_masks = self.crop(frames, alphas, masks, min_x, min_y, max_x, max_y, w, h)
         else:
@@ -539,6 +540,37 @@ class CutMask(object):
             sample['masks'] = np.stack([self.internal(sample['masks'][i]) for i in range(sample['masks'].shape[0])], axis=0)
         else:
             sample['masks'] = self.external(sample['masks'])
+        return sample
+
+class MaskDropout(object):
+    def __init__(self, random):
+        self.random = random  
+    
+    def __call__(self, sample):
+        ''' Drop a region in center of the mask
+        '''
+        masks = sample['masks']
+        if self.random.rand() < 0.5 or masks.shape[0] // 2 < 3:
+            return sample
+        
+        n_dropouts = self.random.randint(1, masks.shape[0] // 2)
+        selected_indices = self.random.choice(masks.shape[0], n_dropouts, replace=False)
+        for i in selected_indices:
+            ys, xs = np.where(masks[i] > 0)
+            if len(ys) == 0:
+                continue
+            xmin, xmax, ymin, ymax = xs.min(), xs.max(), ys.min(), ys.max()
+            if (ymax - ymin + 1) // 8 < 2 or (xmax - xmin + 1) // 8 < 2:
+                continue
+            
+            perturb_size_h, perturb_size_w = self.random.randint((ymax - ymin + 1) // 16, (ymax - ymin + 1) // 8), self.random.randint((xmax - xmin + 1) // 16, (xmax - xmin + 1) // 8)
+            idx = self.random.choice(range(len(ys)), 1)
+            x, y = int(xs[idx]), int(ys[idx])
+            
+            x = min(x, xmax - perturb_size_w)
+            y = min(y, ymax - perturb_size_h)
+            masks[i, y:y+perturb_size_h, x:x+perturb_size_w] = 0
+        sample['masks'] = masks
         return sample
 
 def get_random_structure(size):
@@ -880,7 +912,7 @@ class JpegCompression(object):
         frames = input_dict["frames"]
         fg = input_dict.get("fg", None)
         bg = input_dict.get("bg", None)
-        alphas = input_dict.get("alphas", None)
+        # alphas = input_dict.get("alphas", None)
 
         aug = self.jpeg_aug.to_deterministic()
         for i in range(frames.shape[0]):
@@ -890,10 +922,10 @@ class JpegCompression(object):
                 fg[i] = frames[i]
             if bg is not None:
                 bg[i] = aug.augment_image(np.uint8(bg[i]))
-        for i in range(alphas.shape[0]):
-            alphas[i] = aug.augment_image(np.uint8(alphas[i]))
+        # for i in range(alphas.shape[0]):
+        #     alphas[i] = aug.augment_image(np.uint8(alphas[i]))
         input_dict["frames"] = frames
-        input_dict["alphas"] = alphas
+        # input_dict["alphas"] = alphas
         if fg is not None:
             input_dict["fg"] = fg
         if bg is not None:

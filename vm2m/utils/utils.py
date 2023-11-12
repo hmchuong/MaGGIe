@@ -25,11 +25,11 @@ def resizeAnyShape(x, scale_factor=None, size=None, mode='bilinear', align_corne
     return x
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
-def compute_unknown(masks, k_size=30, is_train=False, lower_thres=1.0/255.0):
+def compute_unknown(masks, k_size=30, is_train=False, lower_thres=1.0/255.0, upper_thres=254.0/255.0):
     # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
     
     h, w = masks.shape[-2:]
-    uncertain = (masks > lower_thres) & (masks < 254.0/255.0)
+    uncertain = (masks > lower_thres) & (masks < upper_thres)
     ori_shape = uncertain.shape
 
     # ----- Using kornia -----

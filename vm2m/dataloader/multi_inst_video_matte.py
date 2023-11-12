@@ -48,15 +48,21 @@ class MultiInstVidDataset(Dataset):
                            T.PaddingMultiplyBy(32, transform_alphas=is_train), 
                            T.Stack()]
         if self.is_train:
-            self.transforms.extend([
-                T.RandomCropByAlpha(crop, self.random),
-                T.RandomHorizontalFlip(self.random, flip_p),
-                T.GammaContrast(self.random),
-                T.MotionBlur(self.random),
-                T.AdditiveGaussionNoise(self.random),
-                T.JpegCompression(self.random),
-                T.RandomAffine(self.random)
-            ])
+            if is_ss_dataset:
+                self.transforms.extend([
+                    T.RandomCropByAlpha(crop, self.random, padding_prob=0.1),
+                    T.RandomHorizontalFlip(self.random, flip_p)
+                ])
+            else:
+                self.transforms.extend([
+                    T.RandomCropByAlpha(crop, self.random, padding_prob=0.1),
+                    T.RandomHorizontalFlip(self.random, flip_p),
+                    T.GammaContrast(self.random),
+                    T.MotionBlur(self.random, p=0.1),
+                    T.AdditiveGaussionNoise(self.random),
+                    T.JpegCompression(self.random),
+                    T.RandomAffine(self.random, p=0.1)
+                ])
         if self.is_train or self.mask_dir_name == '':
             self.transforms.append(T.GenMaskFromAlpha(1.0))
         if self.is_train and not is_ss_dataset:
@@ -71,7 +77,8 @@ class MultiInstVidDataset(Dataset):
             self.transforms.append(T.Compose([
                     T.RandomBinarizedMask(self.random, bin_alpha_max_k),
                     T.DownUpMask(self.random, 0.125, downscale_mask_p),
-                    T.CutMask(self.random)
+                    T.CutMask(self.random),
+                    T.MaskDropout(self.random)
                 ]))
         else:
             if self.mask_dir_name == '':
@@ -245,9 +252,9 @@ class MultiInstVidDataset(Dataset):
         return out
 
 if __name__ == "__main__":
-    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="train", clip_length=3, overlap=2, padding_inst=10, is_train=True, short_size=576, 
-    #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-    #                 max_step_size=5, random_seed=2023)
+    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/syn", split="train", clip_length=3, overlap=2, padding_inst=10, is_train=True, short_size=576, 
+                    crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
+                    max_step_size=5, random_seed=2023)
     # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/VHM/syn", split="test", clip_length=8, overlap=2, is_train=False, short_size=576, 
     #                 random_seed=2023)
     # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/syn", split="pexels-train", clip_length=8, overlap=2, padding_inst=10, is_train=False, short_size=576, 
@@ -255,9 +262,9 @@ if __name__ == "__main__":
     #                 max_step_size=5, random_seed=2023, mask_dir_name='xmem_rename', pha_dir='xmem_rename', weight_mask_dir='', is_ss_dataset=True)
     # from torch.utils import data as torch_data
 
-    dataset = MultiInstVidDataset(root_dir="/mnt/localssd/syn/benchmark", split="real_qual_filtered", clip_length=3, overlap=2, padding_inst=10, is_train=False, short_size=576, 
-                    crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
-                    max_step_size=5, random_seed=2023, mask_dir_name='xmem', pha_dir='xmem', weight_mask_dir='', is_ss_dataset=False)
+    # dataset = MultiInstVidDataset(root_dir="/mnt/localssd/syn/benchmark", split="real_qual_filtered", clip_length=3, overlap=2, padding_inst=10, is_train=False, short_size=576, 
+    #                 crop=[512, 512], flip_p=0.5, bin_alpha_max_k=30,
+    #                 max_step_size=5, random_seed=2023, mask_dir_name='xmem', pha_dir='xmem', weight_mask_dir='', is_ss_dataset=False)
     # dataloader = torch_data.DataLoader(
     #     dataset, batch_size=1, shuffle=False, pin_memory=True,
     #     sampler=None,
@@ -267,7 +274,7 @@ if __name__ == "__main__":
         # print(batch_i, len(dataloader))
         # continue
         frames, masks, alphas, transition_gt = batch["image"], batch["mask"], batch["alpha"], batch.get("transition", batch.get("trimap"))
-        weights = batch["weight"]
+        # weights = batch["weight"]
         print(frames.shape, masks.shape, alphas.shape, transition_gt.shape)
         shutil.rmtree("debug", ignore_errors=True)
         os.makedirs("debug", exist_ok=True)
@@ -276,7 +283,7 @@ if __name__ == "__main__":
             mask = masks[idx]
             alpha = alphas[idx]
             transition = transition_gt[idx]
-            weight = weights[idx]
+            # weight = weights[idx]
 
             frame = frame * torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1) + torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
             frame = (frame * 255).permute(1, 2, 0).numpy().astype(np.uint8)
@@ -288,7 +295,7 @@ if __name__ == "__main__":
                     continue
                 cv2.imwrite("debug/mask_{}_{}.png".format(inst_i, idx), mask[inst_i].numpy() * 255)
                 cv2.imwrite("debug/alpha_{}_{}.png".format(inst_i, idx), alpha[inst_i].numpy() * 255)
-                cv2.imwrite("debug/weight_{}_{}.png".format(inst_i, idx), weight[inst_i].numpy() * 255)
+                # cv2.imwrite("debug/weight_{}_{}.png".format(inst_i, idx), weight[inst_i].numpy() * 255)
                 # cv2.imwrite("debug/transition_{}_{}.png".format(idx, inst_i), transition[inst_i].numpy() * 120)
             cv2.imwrite("debug/transition_{}.png".format(idx), transition[0].numpy() * 255)
         import pdb; pdb.set_trace()

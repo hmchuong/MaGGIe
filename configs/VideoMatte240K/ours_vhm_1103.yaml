@@ -58,7 +58,7 @@ model:
     use_detail_temp: False
     use_query_temp: False #'mlp'
     warmup_mask_atten_iter: 0
-    warmup_detail_iter: 1000
+    warmup_detail_iter: 500
     temp_method: 'bi_fusion'
   dynamic_kernel:
     dec_layers: 5
@@ -83,9 +83,9 @@ model:
   loss_dtSSD_w: 1.0
   loss_multi_inst_type: smooth_l1_0.5
   loss_multi_inst_w: 1.0
-  loss_multi_inst_warmup: 2000
+  loss_multi_inst_warmup: 500
   mgm:
-    warmup_iter: 1000
+    warmup_iter: 500
   refinement:
     n_test_points: 16000
     n_train_points: 2048

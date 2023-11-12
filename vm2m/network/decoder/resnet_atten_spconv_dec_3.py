@@ -517,6 +517,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
         # guided_mask_os8 = gaussian_smoothing(guided_mask_os8, sigma=3)
         
         unknown_os8 = compute_unknown(guided_mask_os8, k_size=30)
+        
         # TODO: Check the connectivity of unknown_os8 and remove noise
         # remove noise by using x_os8 alpha matte > 0.5 + padding 30px each side
         # if not self.training:
@@ -542,7 +543,9 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             unknown_os8[:, :, 200: 250, 200: 250] = 1.0
 
         if unknown_os8.sum() > 0 or self.training:
-
+            # import pdb; pdb.set_trace()
+            # Expand queries to N_F
+            queries = queries[:, None].expand(-1, n_f, -1, -1).reshape(b * n_f, *queries.shape[1:])
             x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details, queries, [fea1, fea2, fea3])
 
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
@@ -695,6 +698,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         # Upsample - normalize OS8 pred
         x_os8 = F.interpolate(x_os8, scale_factor=8.0, mode='bilinear', align_corners=False)
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
+        
 
         if self.training:
             x_os8 = x_os8 * valid_masks
@@ -710,7 +714,48 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
             is_use_alphas_gt = True
         
         # Compute unknown regions
+        upper_thres = 0.95
+        # lower_thres = 0.03
+        if not self.training:
+            x_os8[x_os8 >= upper_thres] = 1.0
+            # x_os8[x_os8 <= lower_thres] = 0.0
+
         unknown_os8 = compute_unknown(guided_mask_os8, k_size=30)
+        
+        # cv2.imwrite("mask.png", unknown_os8[0,1].cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
+        
+        
+        # cv2.imwrite("mask_before.png", unknown_os8[0,1].cpu().numpy() * 255)
+        # Ignore out of the box region
+        if not self.training:
+            h, w = image.shape[-2:]
+            thresh = 0.1
+            padding = 30
+            # cv2.imwrite("test_os8.png", (x_os8[0, 1] > thresh).cpu().numpy() * 255) 
+            smooth_os8 = gaussian_smoothing(x_os8, sigma=3)
+            for i in range(smooth_os8.shape[0]):
+                for j in range(n_i):
+                    coarse_inst = smooth_os8[i, j] > thresh
+                    ys, xs = torch.nonzero(coarse_inst, as_tuple=True)
+                    if len(ys) == 0:
+                        continue
+                    y_min, y_max = ys.min(), ys.max()
+                    x_min, x_max = xs.min(), xs.max()
+                    y_min = max(0, y_min - padding)
+                    y_max = min(y_max + padding, h)
+                    x_min = max(0, x_min - padding)
+                    x_max = min(x_max + padding, w)
+                    target_mask = torch.zeros_like(coarse_inst)
+                    target_mask[y_min: y_max, x_min: x_max] = 1
+                    # print(i, j, x_min, x_max, y_min, y_max)
+                    # cv2.imwrite("mask_before.png", unknown_os8[i,j].cpu().numpy() * 255)
+                    # cv2.imwrite("pred_before.png", x_os8[i,j].cpu().numpy() * 255)
+                    unknown_os8[i, j] = unknown_os8[i, j] * target_mask
+                    x_os8[i, j] = x_os8[i, j] * target_mask
+                    # cv2.imwrite("mask.png", unknown_os8[i,j].cpu().numpy() * 255)
+                    # cv2.imwrite("pred.png", x_os8[i,j].cpu().numpy() * 255)
+                    # import pdb; pdb.set_trace()
 
         # Dummy code to prevent all zeros
         if unknown_os8.max() == 0 and self.training:

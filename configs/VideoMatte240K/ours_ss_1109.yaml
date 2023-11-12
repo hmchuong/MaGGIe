@@ -160,7 +160,7 @@ train:
     gamma: 0.1
     name: cosine
     power: 0.9
-    step_size: 10000
+    step_size: 1000000
     warmup_iters: 1000
   seed: 1105
   val_best_metric: dtSSD

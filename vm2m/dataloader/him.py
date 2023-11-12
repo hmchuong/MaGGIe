@@ -110,12 +110,12 @@ class HIMDataset(Dataset):
                 
             # ]
             self.transforms += [
-                T.RandomCropByAlpha(crop, self.random),
+                T.RandomCropByAlpha(crop, self.random, padding_prob=0.1),
                 T.RandomHorizontalFlip(self.random, flip_p),
-                T.GammaContrast(self.random),
-                T.AdditiveGaussionNoise(self.random),
-                T.JpegCompression(self.random),
-                T.RandomAffine(self.random, p=0.1),
+                T.GammaContrast(self.random, p=0.3),
+                T.AdditiveGaussionNoise(self.random, p=0.3),
+                T.JpegCompression(self.random, p=0.1), # Jpeg compression on alpha matte?
+                T.RandomAffine(self.random, p=0.1), # Can cause wrong with the alpha matte
                 T.Compose([
                     T.RandomBinarizedMask(self.random, bin_alpha_max_k),
                     T.DownUpMask(self.random, 0.125, downscale_mask_p),

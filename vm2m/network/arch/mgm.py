@@ -441,11 +441,11 @@ class MGM(nn.Module):
         :param weight: [N, 1, H, W]
         :return:
         """
-        # pred = pred.sum(1)
-        # mask = (pred > 1.0).float()
-        # loss = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
-        # loss = loss.sum() / (mask.sum() + 1e-6)
-        # return loss
+        pred = pred.sum(1)
+        mask = (pred > 1.0).float()
+        loss = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
+        loss = loss.sum() / (mask.sum() + 1e-6)
+        return loss
 
         sum_inst = pred.sum(1)
         sum_gt = gt.sum(1)
