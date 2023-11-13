@@ -35,12 +35,12 @@ class MGM_SS(MGM_TempSpar):
         self.image_model = img_model
 
         # Load video teacher model
-        video_config = "configs/VideoMatte240K/ours_vhm_1103.yaml"
+        video_config = "output/VHM/ours_vhm_bi-temp_1108_2/config.yaml"
         video_weights = "output/VHM/ours_vhm_bi-temp_1108_2/last_model_13k.pth"
         video_config = CN().load_cfg(open(video_config, "r"))
 
         teacher_model = build_model(video_config.model)
-        teacher_model.load_state_dict(torch.load(video_weights))
+        teacher_model.load_state_dict(torch.load(video_weights), strict=False)
         self.teacher_model = teacher_model
         self.momentum = 0.99
         self.train()
@@ -410,13 +410,14 @@ class MGM_SS(MGM_TempSpar):
         pred_os8 = aug_out["alpha_os8"]
 
         # FG/ Unknown mask: Dilate the input masks and union them
-        dilated_masks = self.dilate_mask(real_batch['mask'][pred.shape[0]:])
+        dilated_masks = (detail_pred_warp > 0.1) | (pred_warp > 0.1)
+        dilated_masks = self.dilate_mask(dilated_masks)
 
         # Compute mask for BG, FG loss
         bg_masks = (dilated_masks < 0.5).float()
         bg_masks = bg_masks * valid_masks
         # remove uncertainty region predicted by the image model
-        bg_masks = bg_masks * (detail_pred_warp < 0.1)
+        # bg_masks = bg_masks * (detail_pred_warp < 0.1)
 
         fg_masks = (dilated_masks >= 0.5).float()
         fg_masks = fg_masks * valid_masks
@@ -439,10 +440,10 @@ class MGM_SS(MGM_TempSpar):
 
         # Lap loss
         h, w = pred_warp.shape[-2:]
-        loss_dict['loss_detail_pred_lap'] = self.lap_loss(pred_warp.view(-1, 1, h, w), detail_pred_warp.view(-1, 1, h, w), weight=detail_mask.view(-1, 1, h, w))
+        loss_dict['loss_detail_pred_lap'] = self.lap_loss(pred_warp.reshape(-1, 1, h, w), detail_pred_warp.reshape(-1, 1, h, w), weight=detail_mask.reshape(-1, 1, h, w))
 
         # Grad loss
-        loss_dict['loss_detail_pred_grad'] = self.grad_loss(pred_warp.view(-1, 1, h, w), detail_pred_warp.view(-1, 1, h, w), mask=detail_mask.view(-1, 1, h, w))
+        loss_dict['loss_detail_pred_grad'] = self.grad_loss(pred_warp.reshape(-1, 1, h, w), detail_pred_warp.reshape(-1, 1, h, w), mask=detail_mask.reshape(-1, 1, h, w))
         
         loss_dict['total'] = loss_dict['loss_bg_pred'] \
                 + loss_dict['loss_fg_rec'] * 0.5 \
@@ -451,7 +452,7 @@ class MGM_SS(MGM_TempSpar):
                 + loss_dict['loss_detail_pred_lap'] * 0.2 \
                 + loss_dict['loss_detail_pred_grad']
 
-        return aug_out, loss_dict
+        return teacher_out, loss_dict
 
         loss_dict = {}
         loss_dict['loss_mo_os1'] = self.custom_regression_loss(alpha_pred_warp['alpha_os1'].detach(), alpha_pred['alpha_os1'], weight=weight) # F.l1_loss(alpha_pred_warp['alpha_os1'], alpha_pred['alpha_os1'], reduction='sum') / weight.sum()

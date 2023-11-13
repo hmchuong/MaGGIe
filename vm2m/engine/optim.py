@@ -125,6 +125,13 @@ def build_optim_lr_scheduler(cfg, model):
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda x: (1 - x / (cfg.train.max_iter + 1)) ** scheduler_config.power)
     elif scheduler_config.name == 'step':
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=scheduler_config.step_size, gamma=scheduler_config.gamma)
+    elif scheduler_config.name == 'warmup_decay':
+        def lr_lambda(iter):
+            if iter < scheduler_config.warmup_iters:
+                return iter * 1.0 / scheduler_config.warmup_iters
+            else:
+                return math.sqrt(scheduler_config.warmup_iters * 1.0 / iter)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
     elif scheduler_config.name == 'cosine':
         # scheduler = CosineAnnealingWarmupRestarts(optimizer, warmup_steps= scheduler_config.warmup_iters, 
         #                                           max_lr=optim_config.lr, min_lr=optim_config.lr * scheduler_config.gamma, 

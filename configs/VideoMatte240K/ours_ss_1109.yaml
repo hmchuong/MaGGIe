@@ -23,7 +23,7 @@ dataset:
     - 1.5
     - 3.0
     - 5.0
-    clip_length: 3
+    clip_length: 5
     crop:
     - 512
     - 512
@@ -78,7 +78,7 @@ model:
     warmup_mask_atten_iter: 0
     warmup_detail_iter: 0
     temp_method: 'bi_fusion'
-    context_token: True
+    context_token: False
   dynamic_kernel:
     dec_layers: 5
     dim_feedforward: 256
@@ -137,7 +137,7 @@ test:
   temp_aggre: false
   use_trimap: true
 train:
-  batch_size: 1
+  batch_size: 2
   log_iter: 1
   self_train:
     use: true
@@ -159,7 +159,8 @@ train:
   resume_last: True
   scheduler:
     gamma: 0.1
-    name: cosine
+    # name: cosine
+    name: warmup_decay
     power: 0.9
     step_size: 1000000
     warmup_iters: 1000

@@ -58,10 +58,10 @@ class MultiInstVidDataset(Dataset):
                     T.RandomCropByAlpha(crop, self.random, padding_prob=0.1),
                     T.RandomHorizontalFlip(self.random, flip_p),
                     T.GammaContrast(self.random),
-                    T.MotionBlur(self.random, p=0.1),
+                    T.MotionBlur(self.random),
                     T.AdditiveGaussionNoise(self.random),
                     T.JpegCompression(self.random),
-                    T.RandomAffine(self.random, p=0.1)
+                    T.RandomAffine(self.random)
                 ])
         if self.is_train or self.mask_dir_name == '':
             self.transforms.append(T.GenMaskFromAlpha(1.0))

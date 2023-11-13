@@ -32,7 +32,7 @@ def create_train_dataset(cfg):
                                             crop=dataset_cfg.crop, flip_p=dataset_cfg.flip_prob,
                                             max_step_size=dataset_cfg.max_step_size, random_seed=cfg.train.seed)
     real_dataset = MultiInstVidDataset(root_dir=dataset_cfg.root_dir, split=dataset_cfg.ss_split, 
-                                            clip_length=3, padding_inst=dataset_cfg.padding_inst, is_train=True, short_size=dataset_cfg.short_size, 
+                                            clip_length=dataset_cfg.clip_length, padding_inst=dataset_cfg.padding_inst, is_train=True, short_size=dataset_cfg.short_size, 
                                             crop=dataset_cfg.crop, flip_p=dataset_cfg.flip_prob,
                                             max_step_size=dataset_cfg.max_step_size, random_seed=cfg.train.seed, 
                                             pha_dir=dataset_cfg.mask_dir_name, mask_dir_name=dataset_cfg.mask_dir_name, is_ss_dataset=True)
@@ -136,7 +136,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
         generator=g)
     
     train_real_loader = torch_data.DataLoader(
-        train_real_dataset, batch_size=cfg.train.batch_size, shuffle=(train_real_sampler is None),
+        train_real_dataset, batch_size=1, shuffle=(train_real_sampler is None),
         num_workers=cfg.train.num_workers,
         pin_memory=True, sampler=train_real_sampler,
         generator=g)
@@ -263,11 +263,11 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
     train_real_iterator = iter(train_real_loader)
     train_syn_iterator = iter(train_syn_loader)
     
-    if start_cycle == 0 and start_epoch == 0:
+    if start_cycle == 0 and start_epoch == 0 and False:
         model.eval()
         val_model = model.module if is_dist else model
         evaluation_ss(global_rank, val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, 0, 0, 0, 0)
-
+    
     for i_cycle in range(start_cycle, n_cycles):
         logging.info("Starting cycle: {}".format(i_cycle))
         
@@ -290,6 +290,8 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                     global_step = i_cycle * n_epochs * n_iters + epoch * n_iters + step
                     is_real = real_masks[step]
                     batch = None
+                    if global_step < cfg.train.scheduler.warmup_iters:
+                        is_real = False
                     if is_real:
                         try:
                             batch = next(train_real_iterator)
@@ -437,9 +439,13 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
             
             # Evaluate here, both syn and real
             # if global_rank == 0 or global_rank == 1:
-            model.eval()
-            val_model = model.module if is_dist else model
-            evaluation_ss(global_rank, val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratios[epoch], global_step)
+            # ema update
+            if global_step >= cfg.train.scheduler.warmup_iters:
+                diff_sum = model.module.ema_update_teacher()
+                logging.info("Diff between weights: {}".format(diff_sum))
+                model.eval()
+                val_model = model.module.teacher_model if is_dist else model.teacher_model
+                evaluation_ss(global_rank, val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratios[epoch], global_step)
                 # logging.info("Start validation...")
                 # model.eval()
                 # val_model = model.module if is_dist else model
@@ -472,7 +478,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 #                "val/real_ratio": real_ratios[epoch],
                 #                "val/global_step": global_step
                 #                }, commit=True)
-            if global_rank == 0:
+            if global_rank == 0 and global_step >= cfg.train.scheduler.warmup_iters:
                 # Save the model
                 logging.info("Saving the model...")
                 save_dict = {
