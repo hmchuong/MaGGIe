@@ -55,7 +55,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
                  atten_dim=128, atten_block=2, 
                  atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000,
                   use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, \
-                    use_temp=False, freeze_detail_branch=False, **kwargs):
+                    use_temp=False, freeze_detail_branch=False, context_token=False, **kwargs):
         super(ResShortCut_AttenSpconv_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -94,7 +94,8 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             return_feat=True,
             use_temp_pe=False,
             use_id_pe=use_id_pe,
-            use_temp=use_temp
+            use_temp=use_temp,
+            context_token=context_token
         )
         # relu_layer = nn.ReLU(inplace=True)
 
@@ -320,6 +321,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         # Sol 2: Instance-spec guidance detail feat
         # x: os8 instance spec feat, fea3: detail feat
+        # import pdb; pdb.set_trace()
         x = self.instance_spec_guidance(x, fea3, b, n_i, H // 4, W // 4)
         
         x = self.layer3_smooth(x)
@@ -665,7 +667,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         fuse_preds = torch.stack(fuse_preds, dim=1)
         return forward_diffs, backward_diffs, fuse_preds
     
-    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, spar_gt=None, **kwargs):
+    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, spar_gt=None, is_real=False, **kwargs):
         
         '''
         masks: [b * n_f * n_i, 1, H, W]
@@ -688,7 +690,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         x_os8, x, hidden_state, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
                                                                             prev_tokens=mem_query if self.use_query_temp else None, 
                                                                             use_mask_atten=False, gt_mask=gt_masks, 
-                                                                            aggregate_mem_fn=self.os8_temp_module.forward, prev_h_state=mem_feat, temp_method=self.temp_method)
+                                                                            aggregate_mem_fn=self.os8_temp_module.forward, prev_h_state=mem_feat, temp_method=self.temp_method, is_real=is_real)
         
         mem_feat = hidden_state
 

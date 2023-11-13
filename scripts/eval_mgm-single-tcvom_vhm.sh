@@ -11,7 +11,8 @@
 
 python -m tools.main --eval-only --config output/VHM/mgm-single-tcvom_1102/config.yaml \
         dataset.test.mask_dir_name xmem \
-        dataset.test.split real_mosaic \
+        dataset.test.alpha_dir_name xmem \
+        dataset.test.split real_qual_filtered \
         model.weights output/VHM/mgm-single-tcvom_1102/best_model.pth \
         test.save_results True \
-        test.save_dir output/VHM/mgm-single-tcvom_1102/vis/real_mosaic
+        test.save_dir output/VHM/mgm-single-tcvom_1102/vis/real_qual_filtered

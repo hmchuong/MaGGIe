@@ -17,7 +17,7 @@ from .mgm import MGM
 
 class MGM_TempSpar(MGM):
 
-    def forward(self, batch, return_ctx=False, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
+    def forward(self, batch, return_ctx=False, mem_feat=None, mem_query=None, mem_details=None, is_real=False, **kwargs):
         '''
         x: b, n_f, 3, h, w, image tensors
         masks: b, n_frames, n_instances, h//8, w//8, coarse masks
@@ -84,7 +84,7 @@ class MGM_TempSpar(MGM):
         
         pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, 
                             masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, 
-                            gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details, spar_gt=trans_gt)
+                            gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details, spar_gt=trans_gt, is_real=is_real)
         pred_notemp = None
         if isinstance(pred, tuple):
             pred, pred_notemp = pred

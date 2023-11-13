@@ -196,7 +196,7 @@ def get_single_video_metrics(callback, all_image_names, all_preds, transform_inf
     logging.info(log_str)
 
 @torch.no_grad()
-def val_video(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
+def val_video(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False, is_real=False):
     
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
@@ -249,7 +249,7 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             end_time = time.time()
             if batch['mask'].sum() == 0:
                 continue
-            output = model(batch, mem_feat=mem_feats, mem_query=None, mem_details=None)
+            output = model(batch, mem_feat=mem_feats, mem_query=None, mem_details=None, is_real=is_real)
 
             batch_time.update(time.time() - end_time)
                 
@@ -434,7 +434,7 @@ def test(cfg, rank=0, is_dist=False):
     val_fn = val_video if cfg.dataset.test.name == 'MultiInstVideo' else val_image
     batch_time, data_time = val_fn(model, val_loader, device, cfg.test.log_iter, \
                                 val_error_dict, do_postprocessing=cfg.test.postprocessing, \
-                                    callback=partial(save_visualization, save_dir=cfg.test.save_dir) if cfg.test.save_results else None, use_trimap=cfg.test.use_trimap, use_temp=cfg.test.temp_aggre)
+                                    callback=partial(save_visualization, save_dir=cfg.test.save_dir) if cfg.test.save_results else None, use_trimap=cfg.test.use_trimap, use_temp=cfg.test.temp_aggre, is_real="real" in cfg.dataset.test.split)
     
     logging.info("Testing done!")
 

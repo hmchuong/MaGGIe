@@ -7,7 +7,7 @@ from .mask_attention import MLP, SelfAttentionLayer, CrossAttentionLayer, FFNLay
 
 class MaskMatteEmbAttenHead(nn.Module):
     def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_head=4, 
-                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True, use_temp=False):
+                 output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True, use_temp=False, context_token=False):
         super().__init__()
         
         self.n_block = n_block
@@ -77,6 +77,10 @@ class MaskMatteEmbAttenHead(nn.Module):
         self.id_embedding = nn.Embedding(max_inst + 1, self.n_id_embed)
         nn.init.xavier_uniform_(self.id_embedding.weight)
         nn.init.xavier_uniform_(self.query_feat.weight)
+
+        self.context_token = None
+        if context_token:
+            self.context_token = nn.Parameter(torch.zeros_like(self.query_feat.weight))
 
         # Convolutions to smooth features
         self.conv = nn.Sequential(
@@ -168,7 +172,7 @@ class MaskMatteEmbAttenHead(nn.Module):
         masks[coords[:, 0], coords[:, 1], selected_indices, coords[:, 2], coords[:, 3]] = 1
         return masks
     
-    def forward(self, ori_feat, mask, prev_tokens=None, use_mask_atten=True, gt_mask=None, aggregate_mem_fn=None, prev_h_state=None, temp_method='bi'):
+    def forward(self, ori_feat, mask, prev_tokens=None, use_mask_atten=True, gt_mask=None, aggregate_mem_fn=None, prev_h_state=None, temp_method='bi', is_real=False):
         '''
         Params:
         -----
@@ -223,6 +227,10 @@ class MaskMatteEmbAttenHead(nn.Module):
 
         # Learnable Token feat
         tokens = self.query_feat.weight[None].repeat(b, 1, 1) # (b, max_inst,  c_atten)
+
+        if self.context_token is not None and is_real:
+            # print("using context token")
+            tokens = tokens + self.context_token[None].repeat(b, 1, 1)
         # mask = mask.view(b, n_f, -1, 1, h * w)
         # tokens = (feat * mask).sum(dim=-1) / (mask.sum(dim=-1) + 1e-6) # (b, n_f, n_i, c)
         # if tokens.shape[2] < self.max_inst:

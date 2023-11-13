@@ -90,7 +90,9 @@ class MGM(nn.Module):
 
         # Init weights
         for module in need_init_weights:
-            for p in module.parameters():
+            for name, p in module.named_parameters():
+                if "context_token" in name:
+                    continue
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
         

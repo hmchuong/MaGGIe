@@ -42,11 +42,12 @@ done
 
 python -m tools.main --dist --gpus 4 --dist-url tcp://127.0.0.1:1100 --config output/HIM/ours_1110_stronger-aug_guidance_scratch/config.yaml --eval-only \
                                                     model.weights output/HIM/ours_1110_stronger-aug_guidance_scratch/last_model_24k.pth \
-                                                    dataset.test.split natural \
+                                                    dataset.test.split test \
                                                     dataset.test.downscale_mask False \
-                                                    dataset.test.mask_dir_name masks_matched_r50_fpn_3x_new \
+                                                    dataset.test.mask_dir_name masks \
+                                                    dataset.test.short_size 512 \
                                                     test.save_results True \
-                                                    test.save_dir output/HIM/ours_1110_stronger-aug_guidance_scratch/vis_24.5k_r50_fpn_3x \
+                                                    test.save_dir output/HIM/ours_1110_stronger-aug_guidance_scratch/test \
                                                     test.postprocessing False \
                                                     test.use_trimap True \
                                                     test.temp_aggre False \

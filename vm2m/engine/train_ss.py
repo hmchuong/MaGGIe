@@ -20,6 +20,7 @@ from .optim import build_optim_lr_scheduler
 from .test import val_video as val
 from .train import load_state_dict, wandb_log_image
 
+
 global batch
 batch = None
 
@@ -54,11 +55,11 @@ def evaluation_ss(rank, val_model, is_dist, val_syn_error_dict, val_real_error_d
     _ = [v.reset() for v in val_real_error_dict.values()]
     if rank == 0:
         logging.info("Evaluating the synthetic dataset...")
-        _ = val(val_model, val_syn_loader, device, cfg.test.log_iter, val_syn_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+        _ = val(val_model, val_syn_loader, device, cfg.test.log_iter, val_syn_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False, is_real=False)
 
     if rank == 1:
         logging.info("Evaluating the real dataset...")
-        _ = val(val_model, val_real_loader, device, cfg.test.log_iter, val_real_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False)
+        _ = val(val_model, val_real_loader, device, cfg.test.log_iter, val_real_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=False, is_real=True)
 
     for k, v in val_real_error_dict.items():
         v.gather_metric(0)
@@ -221,9 +222,9 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
             logging.info("Loading model from {}".format(model_name))
             state_dict = torch.load(os.path.join(cfg.output_dir, model_name), map_location=device)
             if is_dist:
-                model.module.load_state_dict(state_dict, strict=True)
+                model.module.load_state_dict(state_dict, strict=False)
             else:
-                model.load_state_dict(state_dict, strict=True)
+                model.load_state_dict(state_dict, strict=False)
             logging.info("Resumed from cycle {}, epoch {}".format( start_cycle, start_epoch))
             start_epoch = start_epoch + 1
             # except:
