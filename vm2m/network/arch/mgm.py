@@ -475,11 +475,11 @@ class MGM(nn.Module):
         valid_mask = alphas.sum((2, 3), keepdim=True) > 0
         weight_os8 = weight_os8 * valid_mask
 
-        # TODO: For training stage 2 only
-        # if reweight_os8:
-        #     unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
-        #     unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
-        #     weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype) + weight_os8
+        # For training stage 2 only
+        if reweight_os8:
+            unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
+            unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
+            weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype) + weight_os8
         # import pdb; pdb.set_trace()
 
         # Add padding to alphas and trans_gt
@@ -505,7 +505,7 @@ class MGM(nn.Module):
                 ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
                 loss_dict['loss_rec_os8'] = ref_alpha_os8
                 ref_alpha_loss += ref_alpha_os8 * 1
-            
+
             # Upper bound
             # unknown_gt = (alphas > 1.0/255.0) & (alphas < 254.0/ 255.0)
             # unknown_pred = alpha_pred_os8[unknown_gt]

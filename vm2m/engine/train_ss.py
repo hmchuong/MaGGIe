@@ -218,13 +218,27 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
             lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
             logging.info("Done loading optimizer and lr_scheduler")
 
-            model_name = 'model_{}_{}.pth'.format(start_cycle, start_epoch)
+            model_name = 'student_{}_{}.pth'.format(start_cycle, start_epoch)
+            if not os.path.exists(os.path.join(cfg.output_dir, model_name)):
+                model_name = 'model_{}_{}.pth'.format(start_cycle, start_epoch)
             logging.info("Loading model from {}".format(model_name))
             state_dict = torch.load(os.path.join(cfg.output_dir, model_name), map_location=device)
             if is_dist:
                 model.module.load_state_dict(state_dict, strict=False)
             else:
                 model.load_state_dict(state_dict, strict=False)
+
+            # Load teacher
+            model_name = 'teacher_{}_{}.pth'.format(start_cycle, start_epoch)
+            if not os.path.exists(os.path.join(cfg.output_dir, model_name)):
+                model_name = 'model_{}_{}.pth'.format(start_cycle, start_epoch)
+            logging.info("Loading teacher model from {}".format(model_name))
+            state_dict = torch.load(os.path.join(cfg.output_dir, model_name), map_location=device)
+            if is_dist:
+                model.module.teacher_model.load_state_dict(state_dict, strict=False)
+            else:
+                model.teacher_model.load_state_dict(state_dict, strict=False)
+
             logging.info("Resumed from cycle {}, epoch {}".format( start_cycle, start_epoch))
             start_epoch = start_epoch + 1
             # except:
@@ -283,15 +297,22 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
 
             if is_dist:
                 torch.distributed.broadcast(real_masks, 0)
-            
+            loss_value = 0
             for step in range(n_iters):
                 try:
                     # Train here
                     global_step = i_cycle * n_epochs * n_iters + epoch * n_iters + step
                     is_real = real_masks[step]
                     batch = None
-                    if global_step < cfg.train.scheduler.warmup_iters:
-                        is_real = False
+
+                    # Warmup
+                    # if global_step < cfg.train.scheduler.warmup_iters:
+                    #     is_real = False
+                    
+                    # Prevent 2 consecutive real samples
+                    # if is_real and step > 0 and real_masks[step - 1]:
+                    #     is_real = False
+
                     if is_real:
                         try:
                             batch = next(train_real_iterator)
@@ -337,7 +358,6 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                     batch['iter'] = global_step
                     # torch.save(model.module.state_dict(), f"debug_model_{global_rank}.pth")
 
-                    optimizer.zero_grad()
                     try:
                         if precision == 16:
                             with autocast():
@@ -348,8 +368,10 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                         import pickle
                         pickle.dump(batch, open(f"error_batch_{global_rank}.pkl", "wb"))
                         raise e
-                    
-                    if global_rank == 0 and is_real and cfg.wandb.use:
+                    # import cv2
+                    # cv2.imwrite("mask.png", batch["alpha"][0, 0, 3].detach().cpu().numpy() * 255)
+                    # import pdb; pdb.set_trace()
+                    if global_rank == 0 and (is_real or step % cfg.train.vis_iter == 0) and cfg.wandb.use:
                         # Visualize to wandb
                         try:
                             wandb_log_image(batch, output, global_step - 1)
@@ -361,11 +383,12 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                     # logging.info("Is real: {}".format(is_real))
                     # logging.info("batch size {}".format(batch['mask'].shape))
                     # logging.info("Done forward {}".format(loss['total']))
-
+                    loss_value = loss['total'] #* 0.25 if not is_real else loss['total'] * 2.0
+                    # if not is_real or step == n_iters - 1:
                     if precision == 16:
-                        scaler.scale(loss['total']).backward()
+                        scaler.scale(loss_value).backward()
                     else:
-                        loss['total'].backward()
+                        loss_value.backward()
 
                     # logging.info("Done backward")
 
@@ -376,6 +399,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                     torch.nn.utils.clip_grad_norm_(all_params, 0.01)
                     
                     # logging.info("Done clipnorm")
+                    optimizer.zero_grad()
 
                     # Update
                     if precision == 16:
@@ -383,6 +407,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                         scaler.update()
                     else:
                         optimizer.step()
+                    # loss_value = 0
 
                     lr_scheduler.step()
                     batch_time.update(time.time() - end_time)
@@ -440,12 +465,16 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
             # Evaluate here, both syn and real
             # if global_rank == 0 or global_rank == 1:
             # ema update
-            if global_step >= cfg.train.scheduler.warmup_iters:
-                diff_sum = model.module.ema_update_teacher()
-                logging.info("Diff between weights: {}".format(diff_sum))
-                model.eval()
-                val_model = model.module.teacher_model if is_dist else model.teacher_model
-                evaluation_ss(global_rank, val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratios[epoch], global_step)
+            # if global_step >= cfg.train.scheduler.warmup_iters or True:
+            is_update = True #global_step >= cfg.train.scheduler.warmup_iters
+            diff_sum = model.module.ema_update_teacher(is_update)
+            if global_rank == 0 and cfg.wandb.use:
+                wandb.log({"train/weight_diff": diff_sum}, commit=True)
+            logging.info("Diff between weights: {}".format(diff_sum))
+            model.eval()
+            val_model = model.module.teacher_model if is_dist else model.teacher_model
+            # if is_update:
+            #     evaluation_ss(global_rank, val_model, is_dist, val_syn_error_dict, val_real_error_dict, val_syn_loader, val_real_loader, cfg, device, epoch, i_cycle, real_ratios[epoch], global_step)
                 # logging.info("Start validation...")
                 # model.eval()
                 # val_model = model.module if is_dist else model
@@ -478,7 +507,7 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 #                "val/real_ratio": real_ratios[epoch],
                 #                "val/global_step": global_step
                 #                }, commit=True)
-            if global_rank == 0 and global_step >= cfg.train.scheduler.warmup_iters:
+            if global_rank == 0 and is_update:
                 # Save the model
                 logging.info("Saving the model...")
                 save_dict = {
@@ -494,8 +523,11 @@ def train_ss(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 save_path = os.path.join(cfg.output_dir, 'last_opt.pth')
                 torch.save(save_dict, save_path)
 
-                save_path = os.path.join(cfg.output_dir, 'model_{}_{}.pth'.format(i_cycle, epoch))
+                save_path = os.path.join(cfg.output_dir, 'teacher_{}_{}.pth'.format(i_cycle, epoch))
                 torch.save(val_model.state_dict(), save_path)
+
+                save_path = os.path.join(cfg.output_dir, 'student_{}_{}.pth'.format(i_cycle, epoch))
+                torch.save(model.module.state_dict(), save_path)
 
         start_epoch = 0
     # while iter < cfg.train.max_iter:

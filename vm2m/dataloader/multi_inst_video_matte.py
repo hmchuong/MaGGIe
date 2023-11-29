@@ -162,6 +162,7 @@ class MultiInstVidDataset(Dataset):
         mask_paths = None
         if self.mask_dir_name != '' and not self.is_train:
             mask_paths = [x.replace(f'/{self.pha_dir}/', '/' + self.mask_dir_name + '/') for x in alpha_paths]
+        # mask_paths = mask_paths[::-1]
         # weight_paths = [''] * len(alpha_paths)
         # if self.weight_mask_dir != '' and self.is_train:
         #     weight_paths = [x.replace(f'/{self.pha_dir}/', '/' + self.weight_mask_dir + '/') for x in alpha_paths]

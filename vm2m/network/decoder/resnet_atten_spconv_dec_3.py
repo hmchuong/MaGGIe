@@ -667,7 +667,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         fuse_preds = torch.stack(fuse_preds, dim=1)
         return forward_diffs, backward_diffs, fuse_preds
     
-    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, spar_gt=None, is_real=False, **kwargs):
+    def forward(self, x, mid_fea, b, n_f, n_i, masks, iter, gt_alphas, mem_feat=None, mem_query=None, mem_details=None, spar_gt=None, is_real=False, use_mask2refine=False, **kwargs):
         
         '''
         masks: [b * n_f * n_i, 1, H, W]
@@ -687,6 +687,8 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         x = self.layer1(x) + fea5
         x = self.layer2(x) + fea4
         
+        # import pdb; pdb.set_trace()
+        # padding_masks = torch.cat([masks, torch.zeros((1, 3, 4, 576, 1120), device=masks.device, dtype=masks.dtype)], dim=2)
         x_os8, x, hidden_state, queries, loss_max_atten, loss_min_atten = self.refine_OS8(x, masks, 
                                                                             prev_tokens=mem_query if self.use_query_temp else None, 
                                                                             use_mask_atten=False, gt_mask=gt_masks, 
@@ -702,16 +704,39 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
         x_os8 = (torch.tanh(x_os8) + 1.0) / 2.0
         
 
+
+
         if self.training:
             x_os8 = x_os8 * valid_masks
         else:
             x_os8 = x_os8[:, :n_i]
 
+        # cv2.imwrite("alpha.png", x_os8[0,4].cpu().numpy() * 255)
+        # import pdb; pdb.set_trace()
+        # Filter out noises
+        # if not self.training:
+        #     all_alpha = x_os8.sum(1)
+        #     conflict_mask = all_alpha > 1.0
+        #     # Keep the argmax values
+        #     max_prob = x_os8.max(1)[0] * conflict_mask
+
+        #     norm_factor = torch.minimum(torch.full_like(max_prob, 0.05), 1.0 - max_prob) / (max_prob + 1e-5)
+        #     norm_factor[max_prob == 0] = 0
+        #     norm_factor = norm_factor[:, None].expand_as(x_os8).clone()
+        #     norm_factor = norm_factor.permute(0,2,3,1)
+        #     selected_indices = x_os8.permute(0,2,3,1).argmax(-1).flatten()
+        #     norm_factor = norm_factor.flatten(0,2)
+        #     # import pdb; pdb.set_trace()
+        #     norm_factor[torch.arange(len(norm_factor)), selected_indices] = 1.0
+        #     norm_factor = norm_factor.reshape(b*n_f, *x_os8.shape[-2:], n_i)
+        #     norm_factor = norm_factor.permute(0,3,1,2)
+        #     conflict_mask = conflict_mask[:, None].expand_as(x_os8)
+        #     x_os8[conflict_mask] = x_os8[conflict_mask] * norm_factor[conflict_mask]
 
         # Warm-up - Using gt_alphas instead of x_os8 for later steps
         guided_mask_os8 = x_os8
         is_use_alphas_gt = False
-        if self.training and (iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 3 and random.random() < 0.5)):
+        if self.training and ((iter < self.warmup_detail_iter or x_os8.sum() == 0 or (iter < self.warmup_detail_iter * 3 and random.random() < 0.5)) or use_mask2refine):
             guided_mask_os8 = gt_alphas.clone()
             is_use_alphas_gt = True
         
@@ -723,10 +748,10 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
             # x_os8[x_os8 <= lower_thres] = 0.0
 
         unknown_os8 = compute_unknown(guided_mask_os8, k_size=30)
+
+        
         
         # cv2.imwrite("mask.png", unknown_os8[0,1].cpu().numpy() * 255)
-        # import pdb; pdb.set_trace()
-        
         
         # cv2.imwrite("mask_before.png", unknown_os8[0,1].cpu().numpy() * 255)
         # Ignore out of the box region
@@ -758,7 +783,7 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
                     # cv2.imwrite("mask.png", unknown_os8[i,j].cpu().numpy() * 255)
                     # cv2.imwrite("pred.png", x_os8[i,j].cpu().numpy() * 255)
                     # import pdb; pdb.set_trace()
-
+        # import pdb; pdb.set_trace()
         # Dummy code to prevent all zeros
         if unknown_os8.max() == 0 and self.training:
             unknown_os8[:, :, 200: 250, 200: 250] = 1.0

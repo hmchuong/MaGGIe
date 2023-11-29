@@ -150,24 +150,8 @@ class HIMDataset(Dataset):
         all_alphas = []
         target_dir_name = self.alpha_dir_name if self.mask_dir_name == '' else self.mask_dir_name
         valid_images = []
-        target_files = set([
-            # "google_middle_2e2db6b037aa4f61a70f32904e52e7d7"
-            # "google_easy_b36f65b827254a129da6347a7a0faf28",
-            # "google_easy_22b3ffecdf594a75a765e25b3e4ccda8"
-            "google_easy_7cb3473a7b20434781a344a10f0b7408",
-            "celebrity_middle_cc9ad659757144dabfc04a168bcb4ec8",
-            "google_easy_7cb3473a7b20434781a344a10f0b7408",
-            "google_easy_22b3ffecdf594a75a765e25b3e4ccda8",
-            "google_easy_42fbb3c0abaf4fe2807db58090a39f45",
-            "google_easy_b36f65b827254a129da6347a7a0faf28",
-            "Pexels_middle_pexels-photo-939702",
-            "Pexels_middle_pexels-photo-1140916",
-            "Pexels_middle_pexels-photo-7148443"
-        ])
         for image in images:
             image_name = os.path.basename(image).replace(".jpg", "")
-            # if not image_name in target_files:
-            #     continue
             alpha_dir = os.path.join(self.root_dir, target_dir_name, self.split, image_name)
             if not os.path.exists(alpha_dir):
                 continue

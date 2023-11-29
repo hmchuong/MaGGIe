@@ -1,14 +1,15 @@
 dataset:
   test:
-    alpha_dir_name: pha
-    clip_length: 3
+    alpha_dir_name: alphas
+    clip_length: 8
     clip_overlap: 2
-    downscale_mask: false
-    mask_dir_name: xmem
-    name: MultiInstVideo
-    root_dir: /mnt/localssd/syn/benchmark
-    short_size: 576
-    split: comp_medium
+    downscale_mask: true
+    mask_dir_name: masks_matched
+    name: VideoMatte240K
+    random_seed: 2023
+    root_dir: ''
+    short_size: 768
+    split: valid
     use_thresh_mask: false
   train:
     bg_dir: ''
@@ -23,37 +24,37 @@ dataset:
     - 1.5
     - 3.0
     - 5.0
-    clip_length: 3
+    clip_length: 8
     crop:
     - 512
     - 512
     downscale_mask: false
     downscale_mask_p: 0.5
     flip_prob: 0.5
-    mask_dir_name: xmem
-    max_inst: 2
-    max_step_size: 5
+    mask_dir_name: masks_matched
+    max_inst: 3
+    max_step_size: 2
     modify_mask_p: 0.1
-    name: MultiInstVideo
+    name: VideoMatte240K
     padding_inst: 10
+    pha_dir: pha
     random_state: 2023
-    root_dir: /mnt/localssd/syn
-    short_size: 576
+    root_dir: ''
+    short_size: 768
     split: train
-    ss_split: qual_train
+    ss_split: pexels-train
     use_maskrcnn_p: 0.2
     use_single_instance_only: true
+    weight_mask_dir: ''
 model:
-  arch: MGM_SS
+  arch: VM2M
   aspp:
     in_channels: 512
     out_channels: 512
-  backbone: res_embed_shortcut_encoder_29
+  backbone: res_encoder_29
   backbone_args:
-    num_embed: 3
-    num_mask: 10
+    num_mask: 1
     pretrained: true
-    shortcut_dropout: 0.0
   breakdown:
     in_channels:
     - 32
@@ -62,23 +63,8 @@ model:
     in_features:
     - os4
     - os1
-  decoder: res_shortcut_attention_spconv_temp_decoder_22
-  decoder_args:
-    atten_block: 2
-    atten_dim: 128
-    atten_head: 1
-    atten_stride: 1
-    embed_dim: 3
-    final_channel: 64
-    head_channel: 120
-    max_inst: 10
-    stm_dropout: 0.0
-    use_detail_temp: False
-    use_query_temp: False
-    warmup_mask_atten_iter: 0
-    warmup_detail_iter: 0
-    temp_method: 'bi_fusion'
-    context_token: False
+  decoder: ''
+  decoder_args: {}
   dynamic_kernel:
     dec_layers: 5
     dim_feedforward: 256
@@ -89,25 +75,28 @@ model:
     - os32
     - os16
     - os8
-  nheads: 4
+    nheads: 4
     out_incoherence: 157
     out_pixeldecoder: 864
     pre_norm: false
-  loss_alpha_grad_w: 0.05
-  loss_alpha_lap_w: 0.05
+  freeze_coarse: false
+  having_unused_params: false
+  loss_alpha_grad_w: 1.0
+  loss_alpha_lap_w: 1.0
   loss_alpha_type: l1
   loss_alpha_w: 1.0
-  loss_atten_w: 5.0
-  loss_comp_w: 0.0
+  loss_atten_w: 0.1
+  loss_comp_w: 0.25
   loss_dtSSD_w: 1.0
-  loss_multi_inst_type: smooth_l1_0.5
+  loss_multi_inst_type: l1
   loss_multi_inst_w: 0.0
   loss_multi_inst_warmup: 0
   mgm:
-    warmup_iter: 0
+    warmup_iter: 5000
   refinement:
     n_test_points: 16000
     n_train_points: 2048
+  reweight_os8: true
   shm:
     dilation_kernel: 15
     lr_scale: 0.5
@@ -119,9 +108,10 @@ model:
   - 64
   - 128
   - 256
-  weights: output/VHM/ours_vhm_bi-temp_1108_2/last_model_13k.pth
-name: ours_ss_1109
-output_dir: output/VHM
+  sync_bn: true
+  weights: ''
+name: ours_ss_1114_ema_context_warmup
+output_dir: logs
 test:
   batch_size: 1
   log_iter: 50
@@ -129,54 +119,55 @@ test:
   - MAD
   - MSE
   - SAD
+  - Conn
+  - Grad
   - dtSSD
+  - MESSDdt
   num_workers: 4
-  postprocessing: false
+  postprocessing: true
   save_dir: logs
   save_results: true
   temp_aggre: false
   use_trimap: true
 train:
   batch_size: 2
-  log_iter: 1
-  self_train:
-    use: true
-    max_cycles: 10
-    epoch_per_cycle: 10
-    iter_per_epoch: 100
-    start_ratio: 0.5
-    end_ratio: 0.7
-  num_workers: 8
+  log_iter: 50
+  max_iter: 100000
+  num_workers: 16
   optimizer:
     betas:
     - 0.9
     - 0.999
-    lr: 0.00001
-    # lr: 0.00005
+    lr: 0.0001
     momentum: 0.9
-    name: adamw
+    name: sgd
     weight_decay: 0.01
   resume: ''
-  resume_last: True
+  resume_last: true
   scheduler:
     gamma: 0.1
-    # name: cosine
-    name: warmup_decay
+    name: poly
     power: 0.9
-    step_size: 1000000
+    step_size: 10000
     warmup_iters: 1000
-  seed: 1105
-  val_best_metric: dtSSD
-  val_dist: False
-  val_iter: 500
+  seed: 7164
+  self_train:
+    end_ratio: 1.0
+    epoch_per_cycle: 10
+    iter_per_epoch: 500
+    max_cycles: 10
+    start_ratio: 0.05
+    use: false
+  val_best_metric: MAD
+  val_dist: true
+  val_iter: 2000
   val_metrics:
   - MAD
   - MSE
-  - SAD
   - dtSSD
-  vis_iter: 50
+  vis_iter: 500
 wandb:
   entity: research-dmo
-  id: ''
+  id: 61vb4v77
   project: video-maskg-matting
   use: true

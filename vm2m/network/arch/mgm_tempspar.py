@@ -84,7 +84,7 @@ class MGM_TempSpar(MGM):
         
         pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, 
                             masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, 
-                            gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details, spar_gt=trans_gt, is_real=is_real)
+                            gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details, spar_gt=trans_gt, is_real=is_real, **kwargs)
         pred_notemp = None
         if isinstance(pred, tuple):
             pred, pred_notemp = pred

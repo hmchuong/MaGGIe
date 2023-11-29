@@ -1,6 +1,7 @@
 
 from functools import partial
 import os
+from collections import defaultdict
 import copy
 import random
 import time
@@ -71,14 +72,14 @@ def save_visualization(image_names, alpha_names, alphas, transform_info, output,
                 cv2.imwrite(os.path.join(inc_bin_path, image_name), inc_bin_pred)
 
 @torch.no_grad()
-def val_image(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
+def val_image(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False, **kwargs):
     
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
     end_time = time.time()
 
     model.eval()
-    torch.cuda.empty_cache()
+    # torch.cuda.empty_cache()
 
     target_files = set([
         # "google_middle_2e2db6b037aa4f61a70f32904e52e7d7"
@@ -94,6 +95,8 @@ def val_image(model, val_loader, device, log_iter, val_error_dict, do_postproces
         "Pexels_middle_pexels-photo-1140916",
         "Pexels_middle_pexels-photo-7148443"
     ])
+    tracked_time = defaultdict(list)
+    tracked_memory = defaultdict(list)
     with torch.no_grad():
 
         for i, batch in enumerate(val_loader):
@@ -114,16 +117,21 @@ def val_image(model, val_loader, device, log_iter, val_error_dict, do_postproces
 
             batch = {k: v.to(device) for k, v in batch.items()}
 
-            end_time = time.time()
+            
             if batch['mask'].sum() == 0:
                 continue
+            n_i = int(batch['mask'].shape[2])
+            # torch.cuda.empty_cache()
+            # torch.cuda.reset_max_memory_allocated()
+            end_time = time.time()
             output = model(batch, mem_feat=None)
-
-            batch_time.update(time.time() - end_time)
-                
             alpha = output['refined_masks']
-
             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
+            exec_time = time.time() - end_time
+            batch_time.update(exec_time)
+            memory = torch.cuda.max_memory_allocated() / 1024.0 / 1024.0
+            # tracked_memory[n_i].append(memory)
+            # tracked_time[n_i].append(exec_time)
             
             # Threshold some high-low values
             alpha[alpha <= 1.0/255.0] = 0.0
@@ -165,6 +173,13 @@ def val_image(model, val_loader, device, log_iter, val_error_dict, do_postproces
                 callback(image_names, alpha_names, alpha, transform_info, output)
 
             end_time = time.time()
+    # for k in tracked_memory.keys():
+    #     logging.info("Mem: {} - {}".format(k, sum(tracked_memory[k])/ len(tracked_memory[k]) / 1024.0))
+    #     logging.info("Time: {} - {}".format(k, sum(tracked_time[k])/ len(tracked_time[k])*1000))
+    # import pickle
+    # pickle.dump(tracked_time, open('tracked_time_natural_mgm_stacked.pkl', 'wb'))
+    # pickle.dump(tracked_memory, open('tracked_memory_natural_mgm_stacked.pkl', 'wb'))
+
     return batch_time.avg, data_time.avg
 
 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)) 
@@ -231,8 +246,8 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             if image_names[0][0].split('/')[-2] != video_name:
 
                 if len(all_preds) > 0:
-                    
-                    get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
+                    callback(all_image_names, None, all_preds[None], transform_info, {})
+                    # get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
 
                     # Free the saving frames
                     all_preds = []
@@ -365,9 +380,22 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             # if mem_feats.shape[1] > 2:
             #     mem_feats = mem_feats[:, -2:]
 
-            if i == len(val_loader) - 1:
-                get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
+            # if i == len(val_loader) - 1:
+            #     get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
+            
+            # Save the first frame, delete the previous pred
+            # import pdb; pdb.set_trace()
+            callback(all_image_names[0:1], None, all_preds[None, 0:1], transform_info, {})
 
+            if len(all_preds) > 3:
+                all_preds = all_preds[-3:]
+                all_gts = all_gts[-3:]
+                all_trimap = all_trimap[-3:]
+                all_image_names = all_image_names[-3:]
+
+            # TODO: Save last frame
+            if i == len(val_loader) - 1:
+                callback(all_image_names, None, all_preds[None], transform_info, {})
             
             # Logging
             if i % log_iter == 0:

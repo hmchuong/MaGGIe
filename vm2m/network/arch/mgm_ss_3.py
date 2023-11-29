@@ -25,23 +25,23 @@ class MGM_SS(MGM_TempSpar):
 
 
         # Load image model
-        img_config = "output/HIM/ours_1110_stronger-aug_guidance_scratch/config.yaml"
-        img_weights = "output/HIM/ours_1110_stronger-aug_guidance_scratch/last_model_24k.pth"
-        img_config = CN().load_cfg(open(img_config, "r"))
+        # img_config = "output/HIM/ours_1110_stronger-aug_guidance_scratch/config.yaml"
+        # img_weights = "output/HIM/ours_1110_stronger-aug_guidance_scratch/last_model_24k.pth"
+        # img_config = CN().load_cfg(open(img_config, "r"))
 
         from vm2m.network import build_model
-        img_model = build_model(img_config.model)
-        img_model.load_state_dict(torch.load(img_weights))
-        self.image_model = img_model
+        # img_model = build_model(img_config.model)
+        # img_model.load_state_dict(torch.load(img_weights))
+        # self.image_model = img_model
 
         # Load video teacher model
         video_config = "output/VHM/ours_vhm_bi-temp_1108_2/config.yaml"
         video_weights = "output/VHM/ours_vhm_bi-temp_1108_2/last_model_13k.pth"
         video_config = CN().load_cfg(open(video_config, "r"))
 
-        video_config.model.decoder_args.context_token = True
+        video_config.model.decoder_args.context_token = False #True
         teacher_model = build_model(video_config.model)
-        teacher_model.load_state_dict(torch.load(video_weights), strict=False)
+        teacher_model.load_state_dict(torch.load(video_weights, map_location='cpu'), strict=False)
         self.teacher_model = teacher_model
         self.momentum = 0.95
         self.train()
@@ -70,10 +70,10 @@ class MGM_SS(MGM_TempSpar):
     
     def train(self, mode=True):
         super().train(mode)
-        self.image_model.eval()
+        # self.image_model.eval()
         self.teacher_model.eval()
-        for p in self.image_model.parameters():
-            p.requires_grad = False
+        # for p in self.image_model.parameters():
+        #     p.requires_grad = False
         for p in self.teacher_model.parameters():
             p.requires_grad = False
     
@@ -156,6 +156,7 @@ class MGM_SS(MGM_TempSpar):
         '''
         # Flip
         flip = random.random() > 0.5
+        masks = masks.clone()
         if flip:
             images = images.flip(-1)
             masks = masks.flip(-1)
@@ -196,9 +197,10 @@ class MGM_SS(MGM_TempSpar):
         images = (images - mean) / std
         
         # Augment masks - random drop some regions in masks
+        no_dropped_masks = masks.clone()
         masks = self.drop_mask(masks)
         
-        return images, masks, flip
+        return images, no_dropped_masks, masks, flip
         
 
     def extract_batch(self, batch, select_mask):
@@ -384,16 +386,16 @@ class MGM_SS(MGM_TempSpar):
         motion_kernel = self.motion_aug.get_params()["kernel"]
         motion_kernel = torch.from_numpy(motion_kernel).to(batch["image"].device)
 
-        aug_images, aug_masks, is_flip = self.generate_aug_input(batch["image"], batch["mask"], motion_kernel)
+        aug_images, nodropped_aug_masks, aug_masks, is_flip = self.generate_aug_input(batch["image"], batch["mask"], motion_kernel)
         # import pdb; pdb.set_trace()
         # For the input without gt, compute supervised loss for the input without gt
         # real_batch = self.extract_batch(batch, real_data_mask)
-        real_batch = batch
-        valid_masks = aug_masks.sum((-1, -2), keepdim=True) > 0
+        # real_batch = batch
+        # valid_masks = aug_masks.sum((-1, -2), keepdim=True) > 0
 
         # Predict with image model
-        with torch.no_grad():
-            real_detail_out = self.image_model(real_batch)
+        # with torch.no_grad():
+        #     real_detail_out = self.image_model(real_batch)
 
         # Predict with the teacher model
         with torch.no_grad():
@@ -412,9 +414,9 @@ class MGM_SS(MGM_TempSpar):
         
         # Compute motioned alpha with motion kernel
         # alpha_detail_warp, alpha_pred_warp, alpha_pred = self.warp_alpha(real_detail_out, real_out, motion_kernel, is_flip)
-        alpha_detail_warp, alpha_pred_warp = self.new_warp_alpha(real_detail_out, teacher_out, motion_kernel, is_flip)
+        _, alpha_pred_warp = self.new_warp_alpha(teacher_out, teacher_out, motion_kernel, is_flip)
 
-        detail_pred_warp = alpha_detail_warp["refined_masks"].detach()
+        # detail_pred_warp = alpha_detail_warp["refined_masks"].detach()
         pred_warp = alpha_pred_warp["refined_masks"].detach()
         # pred_warp_os8 = alpha_pred_warp["alpha_os8"]
         # pred = aug_out["refined_masks"]
@@ -472,13 +474,25 @@ class MGM_SS(MGM_TempSpar):
                 # if mask.sum() == 0 and gt.sum() > 0:
                 #     import pdb; pdb.set_trace()
 
-        aug_out, aug_losses = super().forward(aug_batch, is_real=random.random() < 0.5, use_mask2refine=True, **kwargs)
+        aug_out, aug_losses = super().forward(aug_batch, is_real=True, use_mask2refine=random.random() < 0.2, **kwargs)
 
         
 
         # FG/ Unknown mask: Dilate the input masks and union them
-        # dilated_masks = (detail_pred_warp > 0.1) | (pred_warp > 0.1)
-        # dilated_masks = self.dilate_mask(dilated_masks)
+        dilated_fg_masks = nodropped_aug_masks
+        dilalted_bg_masks = 1 - dilated_fg_masks
+        dilated_fg_masks = self.dilate_mask(dilated_fg_masks)
+        dilalted_bg_masks = self.dilate_mask(dilalted_bg_masks)
+
+        # fg confident masks
+        fg_masks = dilalted_bg_masks < 0.5
+        bg_masks = dilated_fg_masks < 0.5
+        fg_masks = fg_masks * valid_preds
+        bg_masks = bg_masks * valid_preds
+
+        # update the prediction
+        pred_warp[fg_masks] = 1.0
+        pred_warp[bg_masks] = 0.0
 
         # Compute mask for BG, FG loss
         # bg_masks = (dilated_masks < 0.5).float()
@@ -525,6 +539,14 @@ class MGM_SS(MGM_TempSpar):
         loss_dict['loss_grad_os4'] = aug_losses['loss_grad_os4']
         loss_dict['loss_grad_os8'] = aug_losses['loss_grad_os8']
         loss_dict['loss_grad'] = aug_losses['loss_grad']
+        loss_dict['loss_max_atten'] = aug_losses['loss_max_atten']
+        loss_dict['loss_dtSSD_os1'] = aug_losses['loss_dtSSD_os1']
+        loss_dict['loss_dtSSD_os4'] = aug_losses['loss_dtSSD_os4']
+        loss_dict['loss_dtSSD_os8'] = aug_losses['loss_dtSSD_os8']
+        loss_dict['loss_dtSSD'] = aug_losses['loss_dtSSD']
+        # loss_dict['loss_multi_inst'] = aug_losses['loss_multi_inst']
+        # TODO: Add dtSSD loss
+
         # print(loss_dict)
         
         batch["image"].mul_(0.0)
@@ -571,7 +593,7 @@ class MGM_SS(MGM_TempSpar):
         #         + loss_dict['loss_detail_pred_grad'] \
         #         + loss_dict['loss_rec'] * 0.2 + loss_dict['loss_dtSSD'] * 0.2 + loss_dict['loss_lap'] * 0.2 + loss_dict['loss_grad'] * 0.2
 
-        loss_dict['total'] = loss_dict['loss_rec'] + loss_dict['loss_lap'] * 0.05 + loss_dict['loss_grad'] * 0.05
+        loss_dict['total'] = loss_dict['loss_rec'] + loss_dict['loss_lap'] * 0.05 + loss_dict['loss_grad'] * 0.05 + loss_dict['loss_dtSSD'] + loss_dict['loss_max_atten'] #+ loss_dict['loss_multi_inst']
         
         return aug_out, loss_dict
 

@@ -6,7 +6,7 @@ from .vm2m_0711 import VM2M0711
 from .mgm_dk import MGM_DK
 from .dummy import Dummy
 from .instmatt import InstMatt
-from .mgm_ss_2 import MGM_SS
+from .mgm_ss_3 import MGM_SS
 from .mgm_lap import MGM_Laplacian
 from .mgm_tempspar import MGM_TempSpar
 from .mgm_hr import MGM_HR
