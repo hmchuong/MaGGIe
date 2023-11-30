@@ -210,6 +210,31 @@ def get_single_video_metrics(callback, all_image_names, all_preds, transform_inf
         log_str += "{} - {:.4f}, ".format(k, v)
     logging.info(log_str)
 
+def compute_metrics(all_preds, all_trimap, all_gts, prev_preds, prev_trimap, prev_gts, val_error_dict, device):
+    current_metrics = {}
+    for k, v in val_error_dict.items():
+        current_trimap = None
+        cur_preds = all_preds
+        cur_gts = all_gts
+        cur_trimap = all_trimap
+        if k in ['dtSSD', 'MESSDdt']:
+            if prev_preds is None:
+                continue
+            else:
+                cur_preds = np.concatenate([prev_preds, all_preds], axis=0)
+                cur_gts = np.concatenate([prev_gts, all_gts], axis=0)
+                cur_trimap = np.concatenate([prev_trimap, all_trimap], axis=0)
+            
+        if k.endswith("_fg"):
+            current_trimap = (cur_trimap[None] == 2).astype('float32')
+        elif k.endswith("_bg"):
+            current_trimap = (cur_trimap[None] == 0).astype('float32')
+        elif k.endswith("_unk"):
+            current_trimap = (cur_trimap[None] == 1).astype('float32')
+       
+        current_metrics[k] = v.update(cur_preds[None], cur_gts[None], trimap=current_trimap, device=device)
+    return current_metrics
+
 @torch.no_grad()
 def val_video(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False, is_real=False):
     
@@ -246,8 +271,24 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             if image_names[0][0].split('/')[-2] != video_name:
 
                 if len(all_preds) > 0:
-                    callback(all_image_names, None, all_preds[None], transform_info, {})
                     # get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
+
+                    # Eval the last frame
+                    if callback is not None:
+                        callback(all_image_names, None, all_preds[None], transform_info, {})
+                    # current_metrics = compute_metrics(all_preds[-2:], all_trimap[-2:], all_gts[-2:], val_error_dict, device)
+                    # log_str = f"{video_name}: "
+                    # for k, v in current_metrics.items():
+                    #     log_str += "{} - {:.4f}, ".format(k, v)
+                    # logging.info(log_str)
+
+                    # For the last chunk, eval the t and t+1, prev_frames: t-1
+                    current_metrics = compute_metrics(all_preds[-2:], all_trimap[-2:], all_gts[-2:], prev_preds[-3:-2], prev_trimaps[-3:-2], prev_gts[-3:-2], val_error_dict, device)
+                    log_str = f"{video_name}: "
+                    for k, v in current_metrics.items():
+                        log_str += "{} - {:.4f}, ".format(k, v)
+                    logging.info(log_str)
+
 
                     # Free the saving frames
                     all_preds = []
@@ -385,17 +426,27 @@ def val_video(model, val_loader, device, log_iter, val_error_dict, do_postproces
             
             # Save the first frame, delete the previous pred
             # import pdb; pdb.set_trace()
-            callback(all_image_names[0:1], None, all_preds[None, 0:1], transform_info, {})
+            if callback is not None:
+                callback(all_image_names[0:1], None, all_preds[None, 0:1], transform_info, {})
 
+            # Compute the evaluation metrics
+            prev_preds = all_preds[-4:-3] if len(all_preds) > 3 else None
+            prev_trimaps = all_trimap[-4:-3] if len(all_preds) > 3 else None
+            prev_gts = all_gts[-4:-3] if len(all_preds) > 3 else None
+            
+            current_metrics = compute_metrics(all_preds[-3:-2], all_trimap[-3:-2], all_gts[-3:-2], prev_preds, prev_trimaps, prev_gts, val_error_dict, device)
+            log_str = f"{video_name}: "
+            for k, v in current_metrics.items():
+                log_str += "{} - {:.4f}, ".format(k, v)
+            logging.info(log_str)
+
+            # For each chunk, eval the t-1 and dtssd t-1 and t-2
+                
             if len(all_preds) > 3:
                 all_preds = all_preds[-3:]
                 all_gts = all_gts[-3:]
                 all_trimap = all_trimap[-3:]
                 all_image_names = all_image_names[-3:]
-
-            # TODO: Save last frame
-            if i == len(val_loader) - 1:
-                callback(all_image_names, None, all_preds[None], transform_info, {})
             
             # Logging
             if i % log_iter == 0:

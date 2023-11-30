@@ -6,9 +6,7 @@ import tqdm
 import shutil
 from multiprocessing import Pool
 global iou_threshold, alpha_dir, mask_dir, out_dir
-alpha_dir = '/home/chuongh/vm2m/data/HHM/synthesized/masks'
-mask_dir = '/home/chuongh/vm2m/data/HHM/synthesized/alphas'
-out_dir = '/home/chuongh/vm2m/data/HHM/synthesized/masks_matched'
+
 iou_threshold = 0.7
 def process(image_name):
     image_dir = os.path.join(alpha_dir, image_name)
@@ -37,8 +35,14 @@ def process(image_name):
             shutil.copy(os.path.join(alpha_dir, image_name, all_names[match_idx]), target_path)
 
 if __name__ == "__main__":
-    image_names = os.listdir(alpha_dir)
-    with Pool(80) as p:
-        pbar = tqdm.tqdm(total=len(image_names))
-        for _ in p.imap_unordered(process, image_names):
-            pbar.update(1)
+    for subset in ["comp", "natural"]:
+        for model in ["r50_c4_3x", "r50_dc5_3x", "r50_fpn_400e", "r101_c4_3x", "r101_fpn_3x", "r101_fpn_400e", "regnetx_400e", "regnety_400e", "x101_fpn_3x"]:
+            alpha_dir = f'/home/chuongh/vm2m/data/HIM2K/masks_{model}/{subset}'
+            mask_dir = f'/home/chuongh/vm2m/data/HIM2K/alphas/{subset}'
+            out_dir = f'/home/chuongh/vm2m/data/HIM2K/masks_matched_{model}/{subset}'
+
+            image_names = os.listdir(alpha_dir)
+            with Pool(80) as p:
+                pbar = tqdm.tqdm(total=len(image_names))
+                for _ in p.imap_unordered(process, image_names):
+                    pbar.update(1)

@@ -13,7 +13,6 @@ from vm2m.dataloader import MultiInstVidDataset
 
 pred_dir = sys.argv[1]
 subset = sys.argv[2]
-postfix = sys.argv[3] if len(sys.argv) > 3 else ""
 is_fast = os.getenv("FAST_EVAL", "0") == "1"
 
 # create dataset and dataloader
@@ -71,10 +70,10 @@ def evaluate(subset):
         
         # TODO: load the prediction
         video_name, frame_name = image_names[0][0].split('/')[-2:]
-        mask_names = glob.glob(os.path.join(pred_dir, subset + postfix, video_name, frame_name.replace(".jpg", "")) + '/*.png')
+        mask_names = glob.glob(os.path.join(pred_dir, subset, video_name, frame_name.replace(".jpg", "")) + '/*.png')
         mask_names = sorted(mask_names)
         if len(mask_names) == 0:
-            mask_names = [os.path.join(pred_dir, subset + postfix, video_name, frame_name.replace(".jpg", ".png"))]
+            mask_names = [os.path.join(pred_dir, subset, video_name, frame_name.replace(".jpg", ".png"))]
         all_masks = []
         for mask_name in mask_names:
             mask = cv2.imread(mask_name, cv2.IMREAD_GRAYSCALE)
