@@ -179,16 +179,16 @@ Weights and config:
 - Video (+TCVOM): `s3://a-chuonghm/checkpoints/baselines/video/mgm_stacked_tcvom/`
 
 #### 5. FTP-VM
-You can use this repo
+Source code: https://github.com/csvt32745/FTP-VM
 
 Updated scripts: `tools/FTP-VM`
 
-Finetuned weights on V-HIM2K5:
+Finetuned weights on V-HIM2K5: `s3://a-chuonghm/checkpoints/baselines/video/ftp-vm/`
 
 
 #### 6. OTVM
-You can use this repo
+Source code: https://github.com/Hongje/OTVM
 
-Finetuned weights on V-HIM2K5:
+Update scripts: `tools/OTVM`
 
-Inference script:
+Finetuned weights on V-HIM2K5: `s3://a-chuonghm/checkpoints/baselines/video/otvm/`
