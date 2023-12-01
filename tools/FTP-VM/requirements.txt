@@ -1,0 +1,20 @@
+# torch==1.8.2+cu111
+# torchvision==0.9.2+cu111
+# numpy==1.23.0
+mediapy==1.0.3
+# tqdm==4.58.0
+pims==0.6.1
+av==9.2.0
+fastai==2.6.3
+seaborn==0.11.1
+pandas==1.2.3
+torchinfo==1.5.3
+einops==0.3.0
+kornia==0.6.3
+progressbar==2.5
+# scipy==1.6.1
+matplotlib==3.3.4
+xlsxwriter==3.0.3
+# timm==0.4.12
+warmup-scheduler
+easing-functions

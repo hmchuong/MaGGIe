@@ -142,11 +142,17 @@ Those files would be helpful:
 - `tools/visualize_him2k_images.py` for image visualization between methods.
 - `tools/notebooks/vis_video_results.ipynb` for visualize video results.
 - `tools/notebooks/process_video_website.ipynb` for processing the website videos. 
+- `tools/gen_mask`: for generate M-HIM2K with detectron2.
 
 ### Other baselines
 #### 1. InstMatt:
-Source code: 
+Source code: https://github.com/nowsyn/InstMatt
+
+Updated scripts: `tools/InstMatt`
+
 Weights: 
+- Image: `s3://a-chuonghm/checkpoints/baselines/image/instmatt/`
+- Video: `s3://a-chuonghm/checkpoints/baselines/video/instmatt/`
 
 Inference script:
 
@@ -175,13 +181,14 @@ Weights and config:
 #### 5. FTP-VM
 You can use this repo
 
-Retrained weights on V-HIM2K5:
+Updated scripts: `tools/FTP-VM`
 
-Inference script:
+Finetuned weights on V-HIM2K5:
+
 
 #### 6. OTVM
 You can use this repo
 
-Retrained weights on V-HIM2K5:
+Finetuned weights on V-HIM2K5:
 
 Inference script:
