@@ -148,24 +148,40 @@ Those files would be helpful:
 Source code: 
 Weights: 
 
+Inference script:
+
 #### 2. SparseMat
 You can use this repo
 
 Weights and config:
-- Image:
-- Video:
+- Image: `s3://a-chuonghm/checkpoints/baselines/image/sparsemat/`
+- Video: `s3://a-chuonghm/checkpoints/baselines/video/sparsemat/`
 
 #### 3. MGM
 You can use this repo
 
 Weights and config:
-- Converted from MGM-In-The-Wild:
-- Image:
-- Video:
+- Converted from MGM-In-The-Wild: `s3://a-chuonghm/checkpoints/baselines/image/mgm_wild/`
+- Image: `s3://a-chuonghm/checkpoints/baselines/image/mgm/`
+- Video (+TCVOM): `s3://a-chuonghm/checkpoints/baselines/video/mgm_tcvom/`
 
 #### 4. MGM Stacked masks
 You can use this repo
 
 Weights and config:
-- Image:
-- Video:
+- Image: `s3://a-chuonghm/checkpoints/baselines/image/mgm_stacked/`
+- Video (+TCVOM): `s3://a-chuonghm/checkpoints/baselines/video/mgm_stacked_tcvom/`
+
+#### 5. FTP-VM
+You can use this repo
+
+Retrained weights on V-HIM2K5:
+
+Inference script:
+
+#### 6. OTVM
+You can use this repo
+
+Retrained weights on V-HIM2K5:
+
+Inference script:
