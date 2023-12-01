@@ -1,0 +1,2 @@
+export CUDA_VISIBLE_DEVICES=3
+python count_people_newbaselines.py --config-file ../configs/new_baselines/mask_rcnn_R_101_FPN_400ep_LSJ.py --input "/mnt/localssd/matting/unsplash/street_people/*" --output unsplash_street_people.txt --opts MODEL.WEIGHTS ../pretrained/model_r101_fpn_400e.pkl
