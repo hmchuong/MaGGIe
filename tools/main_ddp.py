@@ -12,8 +12,8 @@ import torch.multiprocessing as mp
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from vm2m.utils import CONFIG
-from vm2m.engine import train, test, train_ss
+from maggie.utils import CONFIG
+from maggie.engine import train, test
 
 def main(cfg, eval_only=False, precision=32, is_sweep=False):
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -45,10 +45,6 @@ def main(cfg, eval_only=False, precision=32, is_sweep=False):
     # Set up wandb
     if global_rank == 0 and not eval_only:
         if cfg.wandb.use:
-            # try:
-            #     wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"))
-            # except:
-            # wandb.login(host=os.getenv("WANDB_BASE_URL"), key=os.getenv("WANDB_API_KEY"), force=True)
             if not is_sweep:
                 if cfg.wandb.id == '':
                     wandb.init(project=cfg.wandb.project, entity=cfg.wandb.entity, name=cfg.name)
@@ -134,8 +130,6 @@ if __name__ == "__main__":
             f.write(CONFIG.dump())
 
     CONFIG.output_dir = output_dir
-    
-    
 
     # Set random seed
     torch.manual_seed(seed)

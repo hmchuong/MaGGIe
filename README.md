@@ -1,25 +1,62 @@
-# Human Masked Guided Instance Matting
+# <img src="figs/maggie.png" alt="maggie" width="28"/> MaGGIe: Mask Guided Gradual Human Instance Matting
+[[Project Page]()] [[Demo]()] [[Paper]()] [[Model Zoo](docs/MODEL_ZOO.md)] [[Datasets](docs/DATASET.md)]
 
-Predict instance-awareness alpha matte for human with binary mask guidance
+*Instance-awareness alpha human matting with binary mask guidance for images and video*
 
-Authors: Chuong Huynh, Markus Woodson, Seoung Wug Oh, Joon-Young Lee
- 
-Summer Internship 2023
+**Accepted at CVPR 2024**
 
-## Requirements
-Install:
-- Pytorch 2.0
-- CUDA 12.0
-- Pillow
-- numpy
-- opencv
+**[Chuong Huynh](https://hmchuong.github.io/), [Seoung Wug Oh](https://sites.google.com/view/seoungwugoh/), [Abhinav Shrivastava](https://www.cs.umd.edu/~abhinav/), [Joon-Young Lee](https://joonyoung-cv.github.io/)**
 
-or use the docker image: `docker-matrix-experiments-snapshot.dr-uw2.adobeitc.com/runai/clio-base-demo:0.06`
+Work is a part of Summer Internship 2023 at [Adobe Research](https://research.adobe.com/)
 
-Other dependencies:
+<img src="figs/teaser.gif" alt="maggie" width="800"/>
+
+## Release
+- [2024/04/10] Demo on Huggingface is ready!
+- [2024/04/07] Code, dataset and paper are released!
+- [2024/04/04] Webpage is up!
+
+## Install
+
+We tested our model on Linux CUDA 12.0, for other OS, the framework should work fine!
+
+1. Clone this repository and navigate to `MaGGIe` folder:
+```bash
+git clone https://github.com/hmchuong/MaGGIe.git
+cd MaGGIe
 ```
+
+2. Make sure you install CUDA 12.0 and install dependencies via:
+
+```
+conda create -n maggie python=3.8 pip
+conda activate maggie
+conda install -y pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
 pip install -r requirements.txt
 ```
+
+## MaGGIe Weights
+Please check our [Model Zoo](docs/MODEL_ZOO.md) for all public MaGGIe checkpoints, and instructions for how to use weights.
+
+## Demo
+
+## Train
+### 1. Please firstly follow [datasets](docs/DATASET.md) to prepare training data.
+### 2. Training the image instance matting. 
+
+It is recommended to use 4 A100-40GB GPUs for this step. 
+Please check the [config](configs/maggie_image.yaml) and set `wandb` settings to your project.
+```bash
+NAME=<name of the experiment>
+torchrun --standalone --nproc_per_node=4 tools/main_ddp.py \
+                    --config configs/maggie_image.yaml --precision 16 name $NAME
+```
+### 3. Training the video instance matting
+
+It is recommend to use 8 A100-80GB GPUs for this step.
+Please check the [config]()
+
+## Evaluate
 
 ## Dataset
 
