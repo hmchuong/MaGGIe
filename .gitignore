@@ -127,8 +127,6 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-*.png
-*.jpg
 
 # Logging files and models
 output/*
