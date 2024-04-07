@@ -3,9 +3,8 @@ import torch.nn as nn
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from   vm2m.network.ops import SpectralNorm
 
-from vm2m.network.module.base import conv1x1, conv3x3
+from ..module import SpectralNorm, conv1x1, conv3x3
 
 class BasicBlock(nn.Module):
     expansion = 1
@@ -205,8 +204,6 @@ def _res_shortcut_D_dec(block, layers, **kwargs):
     model = ResShortCut_D_Dec(block, layers, **kwargs)
     return model
 
-def res_shortcut_decoder_22(**kwargs):
-    """Constructs a resnet_encoder_14 model.
-    """
+def res_shortcut_22(**kwargs):
     return _res_shortcut_D_dec(BasicBlock, [2, 3, 3, 2], **kwargs)
 

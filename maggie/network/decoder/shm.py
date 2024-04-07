@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import spconv.pytorch as spconv
 
-from vm2m.network.backbone.sparse_resnet_bn import l_sparse_resnet18
+from .sparse_resnet_bn import l_sparse_resnet18
 
 class IBNorm(nn.Module):
     """ Combine Instance Norm and Batch Norm into One Layer

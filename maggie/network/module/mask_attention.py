@@ -3,7 +3,6 @@ from typing import Optional
 import torch
 from torch import nn, Tensor
 from torch.nn import functional as F
-# from pudb.remote import set_trace
 
 from .position_encoding import TemporalPositionEmbeddingSine
 

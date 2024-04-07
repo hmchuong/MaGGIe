@@ -12,11 +12,11 @@ from torch.cuda.amp import autocast, GradScaler
 
 from maggie.dataloader import build_dataset
 from maggie.network import build_model
-from maggie.utils.dist import AverageMeter, reduce_dict
+from maggie.utils.dist import AverageMeter
 from maggie.utils.metric import build_metric
 
 from .optim import build_optim_lr_scheduler
-from .test import val_image, val_video
+from .test import eval_image, eval_video
 
 def log_alpha(tensor, tag, index=0, inst_idx=0):
     alpha = tensor[0,index,inst_idx].detach().cpu().numpy()
@@ -95,6 +95,21 @@ def load_state_dict(model, state_dict):
     
     return missing_keys, unexpected_keys, mismatch_keys
 
+def load_resume_model(model, optimizer, lr_scheduler, resume_path, device):
+    logging.info("Resuming model from {}".format(resume_path))
+    state_dict = torch.load(os.path.join(resume_path, 'last_model.pth'), map_location=device)
+    opt_dict = torch.load(os.path.join(resume_path, 'last_opt.pth'), map_location=device)
+    model.load_state_dict(state_dict, strict=True)
+    
+    # Load optimizer and lr_scheduler
+    optimizer.load_state_dict(opt_dict['optimizer'])
+    lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
+
+    # Load epoch, iteration, best score
+    iter = opt_dict['iter']
+    best_score = opt_dict['best_score']
+    return iter, best_score
+
 def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
     if global_rank is None:
         global_rank = rank
@@ -142,25 +157,18 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
     if is_dist:
         if cfg.model.sync_bn:
             model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
-        # model.convert_syn_bn()
         having_unused_params = cfg.model.having_unused_params
-        if cfg.model.arch in ['VM2M', 'VM2M0711', 'MGM_SS']:
-            having_unused_params = True
         model = torch.nn.parallel.DistributedDataParallel(
                 model, device_ids=[rank], find_unused_parameters=having_unused_params)
 
     epoch = 0
     iter = 0
-    best_score = 99999999999 # SAD?
+    best_score = 99999999999
 
     # Load pretrained model
     if os.path.isfile(cfg.model.weights):
         logging.info("Loading pretrained model from {}".format(cfg.model.weights))
         state_dict = torch.load(cfg.model.weights, map_location=device)
-        # if is_dist:
-        #     missing_keys, unexpected_keys = model.module.load_state_dict(state_dict, strict=False)
-        # else:
-        #     missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
         missing_keys, unexpected_keys, mismatch_keys = load_state_dict(model if not is_dist else model.module, state_dict)
         if len(missing_keys) > 0:
             logging.warn("Missing keys: {}".format(missing_keys))
@@ -169,52 +177,15 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
         if len(mismatch_keys) > 0:
             logging.warn("Mismatch keys: {}".format(mismatch_keys))
 
-    # Resume model from last checkpoint
-    if cfg.train.resume != '':
-        if os.path.isdir(cfg.train.resume):
-            logging.info("Resuming model from {}".format(cfg.train.resume))
-            state_dict = torch.load(os.path.join(cfg.train.resume, 'last_model.pth'), map_location=device)
-            opt_dict = torch.load(os.path.join(cfg.train.resume, 'last_opt.pth'), map_location=device)
-            if is_dist:
-                model.module.load_state_dict(state_dict, strict=True)
-            else:
-                model.load_state_dict(state_dict, strict=True)
-            
-            # Load optimizer and lr_scheduler
-            optimizer.load_state_dict(opt_dict['optimizer'])
-            lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
-
-            # Load epoch, iteration, best score
-            iter = opt_dict['iter']
-            best_score = opt_dict['best_score']
+    # Resume model from a checkpoint
+    if cfg.train.resume != '' or cfg.train.resume_last:
+        model_path = cfg.train.resume if cfg.train.resume != '' else cfg.output_dir
+        if os.path.exists(model_path) and os.path.isdir(model_path):
+            iter, best_score = load_resume_model(model if not is_dist else model.module, optimizer, lr_scheduler, cfg.train.resume, device)
             epoch =  iter // len(train_loader)
             logging.info("Resuming from epoch {}, iter {}, best score {}".format(epoch, iter, best_score))
         else:
-            raise ValueError("Cannot resume model from {}".format(cfg.train.resume))
-    
-    if cfg.train.resume_last:
-        if os.path.exists(os.path.join(cfg.output_dir, 'last_model.pth')):
-            logging.info("Resuming last model from {}".format(cfg.output_dir))
-            try:
-                state_dict = torch.load(os.path.join(cfg.output_dir, 'last_model.pth'), map_location=device)
-                opt_dict = torch.load(os.path.join(cfg.output_dir, 'last_opt.pth'), map_location=device)
-                if is_dist:
-                    model.module.load_state_dict(state_dict, strict=True)
-                else:
-                    model.load_state_dict(state_dict, strict=True)
-                
-                # Load optimizer and lr_scheduler
-                optimizer.load_state_dict(opt_dict['optimizer'])
-                lr_scheduler.load_state_dict(opt_dict['lr_scheduler'])
-
-                # Load epoch, iteration, best score
-                iter = opt_dict['iter']
-                best_score = opt_dict['best_score']
-                epoch =  iter // len(train_loader)
-                logging.info("Resuming from epoch {}, iter {}, best score {}".format(epoch, iter, best_score))
-            except:
-                logging.info("Cannot resume last model from {}".format(cfg.output_dir))
-
+            raise ValueError("Cannot resume model from {}".format(model_path))
 
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
@@ -234,7 +205,7 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
     epoch =  iter // len(train_loader)
     scaler = GradScaler() if precision == 16 else None
 
-    val = val_video if cfg.dataset.test.name == 'MultiInstVideo' else val_image
+    eval_fn = eval_video if cfg.dataset.test.name == 'VIM' else eval_image
     while iter < cfg.train.max_iter:
         
         for _, batch in enumerate(train_loader):
@@ -261,7 +232,7 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 continue
                 
             # Store to log_metrics
-            loss_reduced = loss #reduce_dict(loss)
+            loss_reduced = loss
             for k, v in loss_reduced.items():
                 if k not in log_metrics:
                     log_metrics[k] = AverageMeter(k)
@@ -277,6 +248,7 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 log_str += ", data_time: {:.4f}s".format(data_time.avg)
 
                 logging.info(log_str)
+
             if global_rank == 0 and cfg.wandb.use and iter % cfg.train.log_iter == 0:
                 for k, v in log_metrics.items():
                     wandb.log({"train/" + k: v.val}, commit=False)
@@ -287,8 +259,6 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 wandb.log({"train/iter": iter}, commit=True)
 
             batch_time.update(time.time() - end_time)
-
-            
 
             if precision == 16:
                 scaler.scale(loss['total']).backward()
@@ -302,7 +272,6 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
             torch.nn.utils.clip_grad_norm_(all_params, 0.01)
             
             # Update
-            logging.debug("Updating")
             if precision == 16:
                 scaler.step(optimizer)
                 scaler.update()
@@ -310,7 +279,6 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 optimizer.step()
 
             lr_scheduler.step()
-            
             
             # Visualization
             if global_rank == 0 and iter % cfg.train.vis_iter == 0 and cfg.wandb.use:
@@ -320,25 +288,27 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 except:
                     pass
                 
-            # Validation
+            # Evaluation
             if iter % cfg.train.val_iter == 0 and (cfg.train.val_dist or (not cfg.train.val_dist and global_rank == 0)):
                 logging.info("Start validation...")
                 model.eval()
                 val_model = model.module if is_dist else model
                 _ = [v.reset() for v in val_error_dict.values()]
                 use_temp = cfg.test.temp_aggre and ((not cfg.train.val_dist) or not is_dist)
-                _ = val(val_model, val_loader, device, cfg.test.log_iter, val_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=use_temp)
+                _ = eval_fn(val_model, val_loader, device, cfg.test.log_iter, val_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=use_temp)
 
                 if is_dist and cfg.train.val_dist:
                     logging.info("Gathering metrics...")
                     # Gather all metrics
                     for k, v in val_error_dict.items():
                         v.gather_metric(0)
+
                 if global_rank == 0:
                     log_str = "Validation:"
                     for k, v in val_error_dict.items():
                         log_str += "{}: {:.4f}, ".format(k, v.average())
                     logging.info(log_str)
+                    
                     # Save best model
                     total_error = val_error_dict[cfg.train.val_best_metric].average()
                     if total_error < best_score:
@@ -351,13 +321,15 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                             for k, v in val_error_dict.items():
                                 f.write("{}: {:.4f}\n".format(k, v.average()))
                         torch.save(val_model.state_dict(), save_path)
+                    
                     if cfg.wandb.use:
                         for k, v in val_error_dict.items():
                             wandb.log({"val/" + k: v.average()}, commit=False)
                         wandb.log({"val/epoch": epoch}, commit=False)
                         wandb.log({"val/best_error": best_score}, commit=False)
                         wandb.log({"val/iter": iter}, commit=True)
-                    logging.info("Saving last model...")
+                    
+                    logging.info("Saving the last model...")
                     save_dict = {
                         'optimizer': optimizer.state_dict(),
                         'lr_scheduler': lr_scheduler.state_dict(),
@@ -371,5 +343,4 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
 
                 model.train()
             end_time = time.time()
-            logging.debug("Loading data")
         epoch += 1

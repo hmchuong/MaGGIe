@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from .mgm import MGM
+from .maggie import MGM
 from vm2m.network.loss import loss_dtSSD
 
 class TCVOM(MGM):

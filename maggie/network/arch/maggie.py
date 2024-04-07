@@ -2,18 +2,14 @@ from functools import partial
 import logging
 import numpy as np
 import cv2
-import random
 import copy
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from vm2m.network.module.aspp import ASPP
-from vm2m.network.decoder import *
-from vm2m.network.loss import LapLoss, loss_comp, loss_dtSSD, GradientLoss
-from vm2m.network.backbone.resnet_enc import ResMaskEmbedShortCut_D
-from vm2m.network.decoder.resnet_embed_atten_dec import ResShortCut_EmbedAtten_Dec
-from vm2m.network.module.temporal_nn import TemporalNN
+from maggie.network.module.aspp import ASPP
+from maggie.network.decoder import *
+from maggie.network.loss import LapLoss, loss_dtSSD, GradientLoss
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
@@ -41,50 +37,34 @@ def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
 
     return weight
 
-class MGM(nn.Module):
-    def __init__(self, backbone, decoder, cfg):
-        super(MGM, self).__init__()
+class MaGGIe(nn.Module):
+    def __init__(self, encoder, decoder, cfg):
+        super(MaGGIe, self).__init__()
         self.cfg = cfg
-
-        self.encoder = backbone
         self.num_masks = cfg.backbone_args.num_mask
-        self.freeze_coarse = cfg.freeze_coarse
 
+        self.encoder = encoder
+        
         self.aspp = ASPP(in_channel=512, out_channel=512)
         self.decoder = decoder
+
+        # TODO: Check this one
         if hasattr(self.encoder, 'mask_embed_layer'):
             if hasattr(self.decoder, 'temp_module_os16'):
                 self.decoder.temp_module_os16.mask_embed_layer = self.encoder.mask_embed_layer
             if hasattr(self.decoder, 'temp_module_os8'):
                 self.decoder.temp_module_os8.mask_embed_layer = self.encoder.mask_embed_layer
-        # if isinstance(self.encoder, ResMaskEmbedShortCut_D) and isinstance(self.decoder, ResShortCut_EmbedAtten_Dec):
-        #     self.decoder.refine_OS1.id_embedding = self.encoder.mask_embed
-        #     self.decoder.refine_OS4.id_embedding = self.encoder.mask_embed
-        #     self.decoder.refine_OS8.id_embedding = self.encoder.mask_embed
 
         # Some weights for loss
         self.loss_alpha_w = cfg.loss_alpha_w
-        self.loss_comp_w = cfg.loss_comp_w
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
-        self.loss_dtSSD_w = cfg.loss_dtSSD_w
         self.loss_alpha_grad_w = cfg.loss_alpha_grad_w
         self.loss_atten_w = cfg.loss_atten_w
-        self.reweight_os8 = cfg.reweight_os8
+        self.reweight_os8 = cfg.loss_reweight_os8
+        self.loss_dtSSD_w = cfg.loss_dtSSD_w
+        
         self.lap_loss = LapLoss()
         self.grad_loss = GradientLoss()
-
-        self.train_temporal = False #cfg.decoder in ['res_shortcut_attention_spconv_temp_decoder_22']
-
-        # For multi-inst loss
-        self.loss_multi_inst_w = cfg.loss_multi_inst_w
-        self.loss_multi_inst_warmup = cfg.loss_multi_inst_warmup
-        if cfg.loss_multi_inst_type == 'l1':
-            self.loss_multi_inst_func = F.l1_loss
-        elif cfg.loss_multi_inst_type == 'l2':
-            self.loss_multi_inst_func = F.mse_loss
-        elif cfg.loss_multi_inst_type.startswith('smooth_l1'):
-            beta = float(cfg.loss_multi_inst_type.split('_')[-1])
-            self.loss_multi_inst_func = partial(F.smooth_l1_loss, beta=beta)
 
         need_init_weights = [self.aspp, self.decoder]
 
@@ -95,61 +75,6 @@ class MGM(nn.Module):
                     continue
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
-        
-        if self.train_temporal:
-            self.freeze_to_train_temporal()
-
-        if self.freeze_coarse:
-            self.freeze_coarse_layers()
-    
-    def freeze_coarse_layers(self):
-        for param in self.encoder.parameters():
-            param.requires_grad = False
-        for param in self.aspp.parameters():
-            param.requires_grad = False
-        try:
-            self.decoder.freeze_coarse_layers()
-        except:
-            print("cannot freeze coarse layers in decoder")
-            pass
-    
-    def train(self, mode=True):
-        super().train(mode=mode)
-        if mode and self.freeze_coarse:
-            self.freeze_coarse_layers()
-    
-    def convert_syn_bn(self):
-        self.encoder = nn.SyncBatchNorm.convert_sync_batchnorm(self.encoder)
-        self.aspp = nn.SyncBatchNorm.convert_sync_batchnorm(self.aspp)
-        self.decoder.convert_syn_bn()
-
-    def freeze_to_train_temporal(self):
-        # Freeze the encoder
-        self.encoder.eval()
-        for param in self.encoder.parameters():
-            param.requires_grad = False
-        
-        # Freeze the ASPP
-        self.aspp.eval()
-        for param in self.aspp.parameters():
-            param.requires_grad = False
-        
-        # Unfreeze the decoder
-        self.decoder.train()
-        for param in self.decoder.parameters():
-            param.requires_grad = True
-        
-        # Train the temporal module
-        # self.decoder.temp_module.train()
-        # for param in self.decoder.temp_module.parameters():
-        #     param.requires_grad = True
-
-    
-    def train(self, mode: bool = True):
-        super().train(mode=mode)
-        if mode and self.train_temporal:
-            self.freeze_to_train_temporal()
-
 
     def fushion(self, pred):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
@@ -184,7 +109,6 @@ class MGM(nn.Module):
         masks[coords[:, 0], coords[:, 1], selected_indices, coords[:, 2], coords[:, 3]] = 1
 
         return masks
-        # import pdb; pdb.set_trace()
 
     def forward(self, batch, return_ctx=False, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
         '''
@@ -200,10 +124,6 @@ class MGM(nn.Module):
         trans_gt = batch.get('transition', None)
         fg = batch.get('fg', None)
         bg = batch.get('bg', None)
-
-        # masks = self.processing_masks(masks)
-        # masks[:, :, 1] = masks[:, :, 1] * (1.0 - masks[:, :, 0])
-        # import pdb; pdb.set_trace()
 
         # Combine input image and masks
         b, n_f, _, h, w = x.shape
@@ -377,15 +297,8 @@ class MGM(nn.Module):
                     output[k] = v[:, :, chosen_ids, :, :]
             return output, loss_dict
 
-        # import pdb; pdb.set_trace()
         for k, v in output.items():
             output[k] = v[:, :, :n_i]
-        # if 'embedding' in pred:
-            # output['embedding'] = pred['embedding']
-        # if 'embedding_os8' in pred:
-            # output['embedding'] = {'os32': pred['embedding_os32'], 'os8': pred['embedding_os8']}
-            # output['embedding'] = {'os8': pred['embedding_os8']}
-        # output['prev_mask'] = alpha_pred
         for k in pred:
             if k.startswith("mem_"):
                 output[k] = pred[k]
@@ -448,11 +361,6 @@ class MGM(nn.Module):
         loss = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
         loss = loss.sum() / (mask.sum() + 1e-6)
         return loss
-
-        sum_inst = pred.sum(1)
-        sum_gt = gt.sum(1)
-        loss = F.mse_loss(sum_inst, sum_gt, reduction='mean')
-        return loss
     
     def compute_loss(self, pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape, reweight_os8=True):
         '''
@@ -488,7 +396,6 @@ class MGM(nn.Module):
             padding = torch.zeros((alphas.shape[0], self.num_masks - n_i, *alphas.shape[-2:]), device=alphas.device)
             alphas = torch.cat([alphas, padding], dim=1)
             trans_gt = torch.cat([trans_gt, padding], dim=1)
-
        
         # Reg loss
         total_loss = 0
@@ -520,19 +427,6 @@ class MGM(nn.Module):
             
             loss_dict['loss_rec'] = ref_alpha_loss
             total_loss += ref_alpha_loss * self.loss_alpha_w
-        
-        # Comp loss
-        if self.loss_comp_w > 0 and fg is not None and bg is not None:
-            alphas_comp = alphas.flatten(0,1)[:, None]
-            comp_loss_os1 = loss_comp(alpha_pred_os1.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os1.flatten(0,1)[:, None])
-            comp_loss_os4 = loss_comp(alpha_pred_os4.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os4.flatten(0,1)[:, None])
-            comp_loss_os8 = loss_comp(alpha_pred_os8.flatten(0,1)[:, None], alphas_comp, fg, bg, weight_os8.flatten(0,1)[:, None])
-            comp_loss = comp_loss_os1 * 2 + comp_loss_os4 * 1 + comp_loss_os8 * 1
-            loss_dict['loss_comp_os1'] = comp_loss_os1
-            loss_dict['loss_comp_os4'] = comp_loss_os4
-            loss_dict['loss_comp_os8'] = comp_loss_os8
-            loss_dict['loss_comp'] = comp_loss
-            total_loss += comp_loss * self.loss_comp_w
 
         # Lap loss
         if self.loss_alpha_lap_w > 0:
@@ -571,25 +465,6 @@ class MGM(nn.Module):
             loss_dict['loss_grad'] = grad_loss
             total_loss += grad_loss * self.loss_alpha_grad_w
 
-        
-
-        if self.loss_multi_inst_w > 0 and iter >= self.loss_multi_inst_warmup:
-            multi_loss = 0
-            # if alpha_pred_os1 is not None:
-            #     multi_loss_os1 = self.loss_multi_instances(alpha_pred_os1 * valid_mask)
-            #     multi_loss_os4 = self.loss_multi_instances(alpha_pred_os4 * valid_mask)
-            #     multi_loss += multi_loss_os1 * 2 + multi_loss_os4 * 1
-            #     loss_dict['loss_multi_inst_os1'] = multi_loss_os1
-            #     loss_dict['loss_multi_inst_os4'] = multi_loss_os4
-            
-            if not self.freeze_coarse:
-                multi_loss_os8 = self.loss_multi_instances(alpha_pred_os8 * valid_mask, alphas)
-                multi_loss += multi_loss_os8 * 1
-                loss_dict['loss_multi_inst_os8'] = multi_loss_os8
-
-            loss_dict['loss_multi_inst'] = multi_loss
-            total_loss += multi_loss * self.loss_multi_inst_w
-
         if self.loss_dtSSD_w > 0:
             # import pdb; pdb.set_trace()
             alpha_pred_os8 = alpha_pred_os8.reshape(*alpha_shape)
@@ -621,13 +496,12 @@ class MGM(nn.Module):
 
         return bce_loss + diff_dtSSD
 
-class MGM_SingInst(MGM):
+class MGM_SingInst(MaGGIe):
     def forward(self, batch, **kwargs):
         if self.training:
             return super().forward(batch, **kwargs)
         masks = batch['mask']
         n_i = masks.shape[2]
-        # if self.num_masks == 1:
         outputs = []
         # interate one mask at a time
         batch = copy.deepcopy(batch)
@@ -637,4 +511,3 @@ class MGM_SingInst(MGM):
         for k in outputs[0].keys():
             outputs[0][k] = torch.cat([o[k] for o in outputs], 2)
         return outputs[0]
-        # return super().forward(batch, return_ctx)

@@ -1,17 +1,13 @@
-import logging
 import torch
-import random
 import numpy as np
 import cv2
 from torch import nn
 from torch.nn import functional as F
-from vm2m.network.ops import SpectralNorm
-from .resnet_dec import BasicBlock
-from vm2m.network.module.base import conv1x1
-from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead
-from vm2m.network.module.instance_matte_head import InstanceMatteHead
-from vm2m.network.module.temporal_nn import TemporalNN
-from vm2m.utils.utils import compute_unknown, resizeAnyShape, gaussian_smoothing
+
+from .resnet import BasicBlock
+from ..module import SpectralNorm, conv1x1
+from ..module.instance_matte_decoder import InstanceMatteDecoder
+from ...utils.utils import compute_unknown, resizeAnyShape
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
@@ -39,14 +35,14 @@ def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
 
     return weight
 
-class ResShortCut_EmbedAtten_Dec(nn.Module):
+class ResShortCut_InstMatt_Dec(nn.Module):
     def __init__(self, block, layers, norm_layer=None, large_kernel=False, 
                  late_downsample=False, final_channel=32,
                  atten_dim=128, atten_block=2, 
                  atten_head=1, atten_stride=1, max_inst=10, warmup_mask_atten_iter=4000,
                   use_id_pe=True, use_query_temp=False, use_detail_temp=False, detail_mask_dropout=0.2, warmup_detail_iter=3000, \
                     use_temp=False, freeze_detail_branch=False, context_token=False, **kwargs):
-        super(ResShortCut_EmbedAtten_Dec, self).__init__()
+        super(ResShortCut_InstMatt_Dec, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
         self._norm_layer = norm_layer
@@ -75,7 +71,7 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         self.layer4 = self._make_layer(block, self.midplanes, layers[3], stride=2)
         
         ## 1/8 scale
-        self.refine_OS8 = MaskMatteEmbAttenHead(
+        self.refine_OS8 = InstanceMatteDecoder(
             input_dim=128,
             atten_stride=atten_stride,
             attention_dim=atten_dim,
@@ -257,5 +253,5 @@ class ResShortCut_EmbedAtten_Dec(nn.Module):
         ret['mem_details'] = mem_details
         return ret
 
-def res_shortcut_embed_attention_decoder_22(**kwargs):
-    return ResShortCut_EmbedAtten_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)
+def res_shortcut_inst_matt_22(**kwargs):
+    return ResShortCut_InstMatt_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)

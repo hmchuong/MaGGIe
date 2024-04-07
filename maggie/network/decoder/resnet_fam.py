@@ -1,7 +1,7 @@
 import torch
 from torch.nn import functional as F
-from vm2m.network.module.fam import FeatureAggregationModule
-from .resnet_dec import BasicBlock, ResShortCut_D_Dec
+from .resnet import BasicBlock, ResShortCut_D_Dec
+from ..module import FeatureAggregationModule
 
 class ResShortCut_D_Dec_FAM(ResShortCut_D_Dec):
     def __init__(self, **kwargs):
@@ -56,5 +56,5 @@ def _res_shortcut_D_dec_fam(**kwargs):
     model = ResShortCut_D_Dec_FAM(**kwargs)
     return model
 
-def res_shortcut_decoder_fam_22(**kwargs):
+def res_shortcut_fam_22(**kwargs):
     return _res_shortcut_D_dec_fam(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)

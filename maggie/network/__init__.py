@@ -1,5 +1,5 @@
 from .arch import *
-from .backbone import *
+from .encoder import *
 from .decoder import *
 
 def build_model(cfg):

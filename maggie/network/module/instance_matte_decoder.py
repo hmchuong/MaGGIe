@@ -1,11 +1,12 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from vm2m.utils.utils import resizeAnyShape
+
 from .position_encoding import TemporalPositionEmbeddingSine
 from .mask_attention import MLP, SelfAttentionLayer, CrossAttentionLayer, FFNLayer
+from ...utils.utils import resizeAnyShape
 
-class MaskMatteEmbAttenHead(nn.Module):
+class InstanceMatteDecoder(nn.Module):
     def __init__(self, input_dim=256, atten_stride=1.0, attention_dim=256, n_block=2, n_head=4, 
                  output_dim=32, return_feat=True, max_inst=10, use_temp_pe=True, use_id_pe=True, use_temp=False, context_token=False):
         super().__init__()

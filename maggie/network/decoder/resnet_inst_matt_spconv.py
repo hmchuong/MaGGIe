@@ -1,27 +1,20 @@
 from functools import partial
-import logging
-import torch
 import random
+
 import cv2
 import numpy as np
+
+import torch
 from torch import nn
 from torch.nn import functional as F
+
 import spconv.pytorch as spconv
-from spconv.pytorch import functional as Fsp
-from vm2m.network.ops import SpectralNorm
-from vm2m.network.module.base import conv1x1, conv3x3
-from vm2m.network.module.mask_matte_embed_atten import MaskMatteEmbAttenHead, FFNLayer
-from vm2m.network.module.instance_matte_head import InstanceMatteHead
-from vm2m.network.module.temporal_nn import TemporalNN
-from vm2m.network.module.ligru_conv import LiGRUConv
-from vm2m.network.module.stm_2 import STM
-from vm2m.network.module.conv_gru import ConvGRU
-from vm2m.network.module.stm_window import WindowSTM
-from vm2m.network.module.detail_aggregation import DetailAggregation
-from vm2m.network.module.instance_query_atten import InstanceQueryAttention
-from vm2m.utils.utils import compute_unknown, resizeAnyShape, gaussian_smoothing
-from .resnet_dec import BasicBlock
-from vm2m.network.loss import loss_dtSSD
+
+from .resnet import BasicBlock
+from ..loss import loss_dtSSD
+from ..module import SpectralNorm, conv1x1, conv3x3, ConvGRU, InstanceMatteDecoder
+from ..module.mask_attention import FFNLayer
+from ...utils.utils import compute_unknown, resizeAnyShape, gaussian_smoothing
 
 Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
 def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
@@ -83,7 +76,7 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         
         ## 1/8 scale
-        self.refine_OS8 = MaskMatteEmbAttenHead(
+        self.refine_OS8 = InstanceMatteDecoder(
             input_dim=128,
             atten_stride=atten_stride,
             attention_dim=atten_dim,
@@ -97,12 +90,6 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
             use_temp=use_temp,
             context_token=context_token
         )
-        # relu_layer = nn.ReLU(inplace=True)
-
-        # Instance feature guidance at OS8
-        # self.fg_fc = nn.Sequential(nn.Linear(64, 64), nn.ReLU(inplace=True), nn.Linear(64, 64), nn.Sigmoid()) # OS8, FC -> ReLU
-        # self.bg_fc = nn.Sequential(nn.Linear(128, 128), nn.ReLU(inplace=True)) # OS8, FC -> ReLU
-        # self.guidance_fc = nn.Sequential(nn.Linear(256, 128), nn.Sigmoid()) # OS8
         
         # Modules to save the sampling path of sparse Conv
         self.dummy_downscale = spconv.SparseSequential(
@@ -242,7 +229,6 @@ class ResShortCut_AttenSpconv_Dec(nn.Module):
 
         x = spconv.SparseConvTensor(x, sparse_feat.indices, (h, w), b * n_i, indice_dict=sparse_feat.indice_dict)
         x = x.replace_feature(torch.cat([x.features, sparse_feat.features], dim=1))
-        # x = Fsp.sparse_add(x, sparse_feat)
         return x
 
     def instance_spec_guidance(self, sparse_feat, dense_feat, b, n_i, h, w):
@@ -870,8 +856,8 @@ class ResShortCut_AttenSpconv_BiTempSpar_Dec(ResShortCut_AttenSpconv_Dec):
 
         return loss
 
-def res_shortcut_attention_spconv_decoder_22(**kwargs):
+def res_shortcut_inst_matt_spconv_22(**kwargs):
     return ResShortCut_AttenSpconv_Dec(BasicBlock, [2, 3, 3, 2], **kwargs)
 
-def res_shortcut_attention_spconv_bitempspar_decoder_22(**kwargs):
+def res_shortcut_inst_matt_spconv_temp_22(**kwargs):
     return ResShortCut_AttenSpconv_BiTempSpar_Dec(block=BasicBlock, layers=[2, 3, 3, 2], **kwargs)

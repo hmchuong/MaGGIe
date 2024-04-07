@@ -12,7 +12,7 @@ from vm2m.network.module.aspp import ASPP
 from vm2m.network.decoder import *
 from vm2m.network.loss import LapLoss, loss_comp, loss_dtSSD, GradientLoss
 
-from .mgm import MGM
+from .maggie import MGM
 
 
 class MGM_TempSpar(MGM):

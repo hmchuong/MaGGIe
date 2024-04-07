@@ -92,7 +92,6 @@ model:
     out_incoherence: 157
     out_pixeldecoder: 864
     pre_norm: false
-  freeze_coarse: false
   having_unused_params: false
   loss_alpha_grad_w: 0.05
   loss_alpha_lap_w: 0.05

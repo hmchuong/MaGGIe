@@ -11,10 +11,7 @@ import imgaug.augmenters as iaa
 from imgaug import parameters as iap
 from skimage import exposure
 
-try:
-    from .utils import random_transform
-except ImportError:
-    from utils import random_transform
+from .utils import random_transform
 
 class Compose(object):
     def __init__(self, transforms):

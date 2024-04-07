@@ -11,25 +11,15 @@ CONFIG.train = CN({})
 CONFIG.train.seed = -1
 CONFIG.train.batch_size = 2
 CONFIG.train.num_workers = 16
-CONFIG.train.resume = ''
-CONFIG.train.resume_last = False
+CONFIG.train.resume = '' # Resume from a checkpoint
+CONFIG.train.resume_last = False # Resume last model or not
 CONFIG.train.max_iter = 100000
 CONFIG.train.log_iter = 50
 CONFIG.train.vis_iter = 500
 CONFIG.train.val_iter = 2000
 CONFIG.train.val_metrics = ['MAD', 'MSE', 'dtSSD']
-CONFIG.train.val_best_metric = 'MAD'
-CONFIG.train.val_dist = True
-
-
-self_train = CN({}, new_allowed=True)
-self_train.use = False
-self_train.max_cycles = 10
-self_train.epoch_per_cycle = 10
-self_train.iter_per_epoch = 500
-self_train.start_ratio = 0.05
-self_train.end_ratio = 1.0
-CONFIG.train.self_train = self_train
+CONFIG.train.val_best_metric = 'MAD' # Metric to save the best model
+CONFIG.train.val_dist = True # Evaluate distributed
 
 optimizer = CN({})
 optimizer.name = 'sgd' # sgd
@@ -48,8 +38,8 @@ scheduler.warmup_iters = 1000
 CONFIG.train.scheduler = scheduler
 
 CONFIG.wandb = CN({})
-CONFIG.wandb.project = 'video-maskg-matting'
-CONFIG.wandb.entity = 'research-dmo'
+CONFIG.wandb.project = 'maggie'
+CONFIG.wandb.entity = 'research'
 CONFIG.wandb.use = True
 CONFIG.wandb.id = ''
 
@@ -60,7 +50,6 @@ CONFIG.test.num_workers = 4
 CONFIG.test.save_results = True
 CONFIG.test.save_dir = 'logs'
 CONFIG.test.postprocessing = True
-# CONFIG.test.metrics = ['BgMAD', 'FgMAD', 'TransMAD', 'MAD', 'SAD', 'MSE', 'Conn', 'Grad']
 CONFIG.test.metrics = ['MAD', 'MSE', 'SAD', 'Conn', 'Grad', 'dtSSD', 'MESSDdt']
 CONFIG.test.log_iter = 50
 CONFIG.test.use_trimap = True
@@ -69,21 +58,34 @@ CONFIG.test.temp_aggre = False
 # ------------------------ Model ------------------------
 CONFIG.model = CN({})
 CONFIG.model.weights = ''
-CONFIG.model.arch = 'VM2M'
+CONFIG.model.arch = 'MaGGIe'
 CONFIG.model.sync_bn = True
 CONFIG.model.having_unused_params = False
-CONFIG.model.freeze_coarse = False
-CONFIG.model.reweight_os8 = True
 
-# Backbone aka encoder
-CONFIG.model.backbone = 'res_encoder_29' # resnet34
-CONFIG.model.backbone_args = CN({}, new_allowed=True)
-CONFIG.model.backbone_args.pretrained = True
-CONFIG.model.backbone_args.num_mask = 1
+
+# Encoder
+CONFIG.model.encoder = 'res_encoder_29' # resnet34
+CONFIG.model.encoder_args = CN({}, new_allowed=True)
+CONFIG.model.encoder_args.pretrained = True
+CONFIG.model.encoder_args.num_mask = 1
+
+# ASPP
+CONFIG.model.aspp = CN({})
+CONFIG.model.aspp.in_channels = 512
+CONFIG.model.aspp.out_channels = 512
 
 # Decoder
 CONFIG.model.decoder = ''
 CONFIG.model.decoder_args = CN({}, new_allowed=True)
+
+# For loss
+CONFIG.model.loss_alpha_w = 1.0
+CONFIG.model.loss_alpha_type = 'l1'
+CONFIG.model.loss_alpha_grad_w = 1.0
+CONFIG.model.loss_alpha_lap_w = 1.0
+CONFIG.model.loss_atten_w = 1.0
+CONFIG.model.loss_reweight_os8 = True
+CONFIG.model.loss_dtSSD_w = 1.0
 
 # For MGM
 CONFIG.model.mgm = CN({})
@@ -96,47 +98,7 @@ CONFIG.model.shm.dilation_kernel = 15
 CONFIG.model.shm.max_n_pixel = 4000000
 CONFIG.model.shm.mgm_weights = ''
 
-# For loss
-CONFIG.model.loss_alpha_w = 1.0
-CONFIG.model.loss_alpha_type = 'l1'
-CONFIG.model.loss_alpha_grad_w = 1.0
-CONFIG.model.loss_alpha_lap_w = 1.0
-CONFIG.model.loss_atten_w = 1.0
-
-CONFIG.model.loss_comp_w = 0.25
-CONFIG.model.loss_dtSSD_w = 1.0
-
-CONFIG.model.loss_multi_inst_w = 0.0
-CONFIG.model.loss_multi_inst_type = 'l1' # 'l2', 'smooth_l1_0.5'
-CONFIG.model.loss_multi_inst_warmup = 0 
-
-CONFIG.model.loss_atten_w = 0.1
-
-CONFIG.model.aspp = CN({})
-CONFIG.model.aspp.in_channels = 512
-CONFIG.model.aspp.out_channels = 512
-
 CONFIG.model.shortcut_dims = [32, 32, 64, 128, 256]
-
-# Dynamic kernel
-dynamic_kernel = CN({})
-dynamic_kernel.in_features = ['os32', 'os16', 'os8']
-dynamic_kernel.hidden_dim = 256
-dynamic_kernel.nheads = 4
-dynamic_kernel.dim_feedforward = 256
-dynamic_kernel.dec_layers = 5
-dynamic_kernel.pre_norm = False
-dynamic_kernel.enforce_input_project = True
-dynamic_kernel.in_channels = 256
-dynamic_kernel.out_incoherence = 157 # 99
-dynamic_kernel.out_pixeldecoder = 288 * 3
-CONFIG.model.dynamic_kernel = dynamic_kernel
-
-# Breakdown incoherence
-breakdown = CN({})
-breakdown.in_channels = [32, 32, 32]
-breakdown.in_features = ['os4', 'os1']
-CONFIG.model.breakdown = breakdown
 
 refinement = CN({})
 refinement.n_train_points = 2048 # number of training points for each instance
