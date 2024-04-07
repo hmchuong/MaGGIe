@@ -8,14 +8,11 @@ import copy
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from vm2m.network.module.aspp import ASPP
-from vm2m.network.decoder import *
-from vm2m.network.loss import LapLoss, loss_comp, loss_dtSSD, GradientLoss
 
-from .maggie import MGM
+from .maggie import MaGGIe
 
 
-class MGM_TempSpar(MGM):
+class MaGGIe_Temp(MaGGIe):
 
     def forward(self, batch, return_ctx=False, mem_feat=None, mem_query=None, mem_details=None, is_real=False, **kwargs):
         '''
@@ -157,7 +154,7 @@ class MGM_TempSpar(MGM):
 
             
 
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, (b, n_f, self.num_masks, h, w))
 
             # Compute gradient loss for fusion to prevent sharp transformation from OS8 -> OS4 and OS1
             # import pdb; pdb.set_trace()

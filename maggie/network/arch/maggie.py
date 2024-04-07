@@ -7,35 +7,10 @@ import copy
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-from maggie.network.module.aspp import ASPP
-from maggie.network.decoder import *
-from maggie.network.loss import LapLoss, loss_dtSSD, GradientLoss
 
-Kernels = [None] + [cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (size, size)) for size in range(1,30)]
-def get_unknown_tensor_from_pred(pred, rand_width=30, train_mode=True):
-    ### pred: N, 1 ,H, W 
-    N, C, H, W = pred.shape
-
-    device = pred.device
-    pred = pred.data.cpu().numpy()
-    uncertain_area = np.ones_like(pred, dtype=np.uint8)
-    uncertain_area[pred<1.0/255.0] = 0
-    uncertain_area[pred>1-1.0/255.0] = 0
-
-    for n in range(N):
-        uncertain_area_ = uncertain_area[n,0,:,:] # H, W
-        if train_mode:
-            width = np.random.randint(1, rand_width)
-        else:
-            width = rand_width // 2
-        uncertain_area_ = cv2.dilate(uncertain_area_, Kernels[width])
-        uncertain_area[n,0,:,:] = uncertain_area_
-
-    weight = np.zeros_like(uncertain_area)
-    weight[uncertain_area == 1] = 1
-    weight = torch.from_numpy(weight).to(device)
-
-    return weight
+from ..module import ASPP
+from ..loss import LapLoss, loss_dtSSD, GradientLoss
+from ...utils.utils import compute_unknown
 
 class MaGGIe(nn.Module):
     def __init__(self, encoder, decoder, cfg):
@@ -45,15 +20,8 @@ class MaGGIe(nn.Module):
 
         self.encoder = encoder
         
-        self.aspp = ASPP(in_channel=512, out_channel=512)
+        self.aspp = ASPP(in_channel=cfg.aspp.in_channels, out_channel=cfg.aspp.out_channels)
         self.decoder = decoder
-
-        # TODO: Check this one
-        if hasattr(self.encoder, 'mask_embed_layer'):
-            if hasattr(self.decoder, 'temp_module_os16'):
-                self.decoder.temp_module_os16.mask_embed_layer = self.encoder.mask_embed_layer
-            if hasattr(self.decoder, 'temp_module_os8'):
-                self.decoder.temp_module_os8.mask_embed_layer = self.encoder.mask_embed_layer
 
         # Some weights for loss
         self.loss_alpha_w = cfg.loss_alpha_w
@@ -66,7 +34,7 @@ class MaGGIe(nn.Module):
         self.lap_loss = LapLoss()
         self.grad_loss = GradientLoss()
 
-        need_init_weights = [self.aspp, self.decoder]
+        need_init_weights = [self.aspp]
 
         # Init weights
         for module in need_init_weights:
@@ -76,93 +44,60 @@ class MaGGIe(nn.Module):
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
 
-    def fushion(self, pred):
+    def fuse(self, pred):
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred['alpha_os1'], pred['alpha_os4'], pred['alpha_os8']
 
         ### Progressive Refinement Module in MGMatting Paper
         alpha_pred = alpha_pred_os8.clone()
-        weight_os4 = get_unknown_tensor_from_pred(alpha_pred, rand_width=30, train_mode=self.training)
+        weight_os4 = compute_unknown(alpha_pred, k_size=30, train_mode=self.training)
         alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
-        weight_os1 = get_unknown_tensor_from_pred(alpha_pred, rand_width=15, train_mode=self.training)
+        weight_os1 = compute_unknown(alpha_pred, k_size=15, train_mode=self.training)
         alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
 
         return alpha_pred, weight_os4, weight_os1
-    
-    def processing_masks(self, masks):
-        '''
-        randomly select one mask at the intersection
-        '''
-        intersection = masks.sum(2) > 1
-        if intersection.sum() == 0:
-            return masks
 
-        coords = intersection.nonzero()
-        ori_values = masks[coords[:, 0], coords[:, 1], :, coords[:, 2], coords[:, 3]]
-
-        # Generate random masks and get the highest values on the mask
-        g_cpu = torch.Generator(masks.device)
-        g_cpu.manual_seed(1234)
-        rand_masks = torch.rand(ori_values.shape, device=masks.device, generator=g_cpu)
-        rand_masks = rand_masks * ori_values
-        selected_indices = rand_masks.argmax(1)
-        masks[coords[:, 0], coords[:, 1], :, coords[:, 2], coords[:, 3]] = 0
-        masks[coords[:, 0], coords[:, 1], selected_indices, coords[:, 2], coords[:, 3]] = 1
-
-        return masks
-
-    def forward(self, batch, return_ctx=False, mem_feat=None, mem_query=None, mem_details=None, **kwargs):
+    def forward(self, batch, **kwargs):
         '''
-        x: b, n_f, 3, h, w, image tensors
-        masks: b, n_frames, n_instances, h//8, w//8, coarse masks
-        alphas: b, n_frames, n_instances, h, w, alpha matte
-        trans_gt: b, n_frames, n_instances, h, w, incoherence mask ground truth
+        batch:
+            image: b, n_f, 3, h, w 
+                image tensors
+            mask: b, n_f, n_i, h//8, w//8
+                coarse masks
+            alpha: b, n_f, n_i, h, w
+                GT alpha matte
+            transition: b, n_f, n_i, h, w, 
+                GT unknown mask
+            fg: b, n_f, 3, h, w
+                foreground image
+            bg: b, n_f, 3, h, w
+                background image
         '''
+
+        # Get input
         x = batch['image']
         masks = batch['mask']
         alphas = batch.get('alpha', None)
-        weights = batch.get('weight', None)
-        trans_gt = batch.get('transition', None)
+        trans_gt = batch.get('transition', None) # Unknown region ground truth
         fg = batch.get('fg', None)
         bg = batch.get('bg', None)
 
-        # Combine input image and masks
+        # Get shape information
         b, n_f, _, h, w = x.shape
         n_i = masks.shape[2]
 
         x = x.view(-1, 3, h, w)
+        
+        # Resize masks
         if masks.shape[-1] != w:
             masks = masks.flatten(0,1)
             masks = F.interpolate(masks, size=(h, w), mode="nearest")
         else:
             masks = masks.view(-1, n_i, h, w)
 
-        chosen_ids = None
-        if self.num_masks > 0:
-            inp_masks = masks
-            if self.num_masks - n_i > 0:
-                if not self.training:
-                    padding = torch.zeros((b*n_f, self.num_masks - n_i, h, w), device=x.device)
-                    inp_masks = torch.cat([masks, padding], dim=1)
-                else:
-                    # Pad randomly: input masks, trans_gt, alphas
-                    chosen_ids = np.random.choice(self.num_masks, n_i, replace=False)
-                    inp_masks = torch.zeros((b*n_f, self.num_masks, h, w), device=x.device)
-                    inp_masks[:, chosen_ids, :, :] = masks
-                    masks = inp_masks
-                    if alphas is not None:
-                        new_alphas = torch.zeros((b, n_f, self.num_masks, h, w), device=x.device)
-                        new_alphas[:, :, chosen_ids, :, :] = alphas
-                        alphas = new_alphas
-                    if trans_gt is not None:
-                        new_trans_gt = torch.zeros((b, n_f, self.num_masks, h, w), device=x.device)
-                        new_trans_gt[:, :, chosen_ids, :, :] = trans_gt
-                        trans_gt = new_trans_gt
-                    n_i = self.num_masks
+        # Prepare input
+        masks, alphas, trans_gt, n_i, chosen_ids, inp = self.prepare_input(x, masks, alphas, trans_gt, b, n_f, h, w, n_i)
 
-            inp = torch.cat([x, inp_masks], dim=1)
-        else:
-            inp = x
-
+        # Reshape the input
         if alphas is not None:
             alphas = alphas.view(-1, n_i, h, w)
         if trans_gt is not None:
@@ -172,25 +107,18 @@ class MaGGIe(nn.Module):
         if bg is not None:
             bg = bg.view(-1, 3, h, w)
 
-        if self.train_temporal:
-            with torch.no_grad():
-                embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
-                embedding = self.aspp(embedding)
-        else:
-            # import pdb; pdb.set_trace()
-            embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
-            embedding = self.aspp(embedding)
+        # Forward through encoder and ASPP
+        embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
+        embedding = self.aspp(embedding)
         
-        # TODO: Replace mid_fea images with orginal iamge size
-
-        pred = self.decoder(embedding, mid_fea, return_ctx=return_ctx, b=b, n_f=n_f, n_i=n_i, 
-                            masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.mgm.warmup_iter, 
-                            gt_alphas=alphas, mem_feat=mem_feat, mem_query=mem_query, mem_details=mem_details, spar_gt=trans_gt)
-        pred_notemp = None
+        # Forward through decoder
+        pred = self.decoder(embedding, mid_fea, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.warmup_iters, spar_gt=trans_gt
+                            **kwargs)
+        
         if isinstance(pred, tuple):
-            pred, pred_notemp = pred
+            pred = pred[0]
 
-        # Fushion
+        # Fusion
         weight_os1, weight_os4 = None, None
         if 'refined_masks' in pred:
             alpha_pred = pred.pop("refined_masks")
@@ -198,68 +126,35 @@ class MaGGIe(nn.Module):
                 weight_os4 = pred["detail_mask"].type(alpha_pred.dtype)
                 weight_os1 = weight_os4
         else:
-            alpha_pred, weight_os4, weight_os1 = self.fushion(pred)
+            alpha_pred, weight_os4, weight_os1 = self.fuse(pred)
         
-        # 75% use the weight os4 and os1 masks, 25% use the detail mask
-        if 'weight_os4' in pred and self.training and np.random.rand() < 0.75:
+        # During training: 75% use the weight os4 and os1 masks, 25% use the detail mask
+        if self.training and 'weight_os4' in pred and np.random.rand() < 0.75:
             weight_os4 = pred.pop("weight_os4")
             weight_os1 = pred.pop("weight_os1")
         
+        # Reshape output back to 5D tensors
         output = {}
-        if self.num_masks > 0 and self.training:
-            if 'alpha_os4' in pred:
-                output['alpha_os1'] = pred['alpha_os1'].view(b, n_f, self.num_masks, h, w)
-                output['alpha_os4'] = pred['alpha_os4'].view(b, n_f, self.num_masks, h, w)
-                output['detail_mask'] = pred['detail_mask'].view(b, n_f, self.num_masks, h, w)
-            output['alpha_os8'] = pred['alpha_os8'].view(b, n_f, self.num_masks, h, w)
-        else:
-            if 'alpha_os1' in pred:
-                output['alpha_os1'] = pred['alpha_os1'][:, :n_i].view(b, n_f, n_i, h, w)
-                output['alpha_os4'] = pred['alpha_os4'][:, :n_i].view(b, n_f, n_i, h, w)
-            if 'detail_mask' in pred:
-                output['detail_mask'] = pred['detail_mask'].view(b, n_f, n_i, h, w)
-            output['alpha_os8'] = pred['alpha_os8'][:, :n_i].view(b, n_f, n_i, h, w)
-        if 'ctx' in pred:
-            output['ctx'] = pred['ctx']
-        # Reshape the output
-        if self.num_masks > 0 and self.training:
-            alpha_pred = alpha_pred.view(b, n_f, self.num_masks, h, w)
-        else:
-            alpha_pred = alpha_pred[:, :n_i].view(b, n_f, n_i, h, w)
+        n_out_inst = self.num_masks if (self.training and self.num_masks > 0) else n_i
+        if 'alpha_os1' in pred:
+            output['alpha_os1'] = pred['alpha_os1'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
+            output['alpha_os4'] = pred['alpha_os4'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
         
+        if 'detail_mask' in pred:
+            output['detail_mask'] = pred['detail_mask'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
+        
+        output['alpha_os8'] = pred['alpha_os8'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
+        
+        alpha_pred = alpha_pred[:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
         output['refined_masks'] = alpha_pred
 
-        diff_pred = pred.pop('diff_pred', None)
-
-        if diff_pred is not None:
-            out_diff_pred = F.interpolate(diff_pred, size=(h, w), mode="bilinear", align_corners=False)
-            out_diff_pred = torch.sigmoid(out_diff_pred)
-            out_diff_pred = out_diff_pred.view(b, n_f, 1, h, w)
-            out_diff_pred = out_diff_pred.repeat(1, 1, alpha_pred.shape[2], 1, 1)
-            diff_mask = (out_diff_pred > 0.5).float()
-            output['diff_pred'] = diff_mask
-            
-            
-            # Fuse results with diff map
-            if n_f > 1:
-                logging.debug(f"Fuse temporal alpha {alpha_pred.shape}")
-                temp_alpha_pred = alpha_pred.clone()
-                prev_alpha_pred = temp_alpha_pred[:, 0]
-                for i in range(1, n_f):
-                    prev_alpha_pred = prev_alpha_pred * (1.0 - diff_mask[:, i]) + temp_alpha_pred[:, i] * diff_mask[:, i]
-                    temp_alpha_pred[:, i] = prev_alpha_pred
-                # import pdb; pdb.set_trace()
-                # Replace refined masks in testing
-                if not self.training:
-                    output['refined_masks'] = temp_alpha_pred
-                else:
-                    output['refined_masks_temp'] = temp_alpha_pred
-
+        # Compute loss during training
         if self.training:
             alphas = alphas.view(-1, n_i, h, w)
             trans_gt = trans_gt.view(-1, n_i, h, w)
             if weights is not None:
                 weights = weights.view(-1, n_i, h, w)
+            
             iter = batch['iter']
             
             # maskout padding masks
@@ -270,39 +165,60 @@ class MaGGIe(nn.Module):
                     continue
                 pred[k] = v * valid_masks
 
-            # if pred_notemp is not None:
-            #     loss_dict = self.compute_loss_temp(pred, pred_notemp, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w))
-            # else:
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, fg, bg, iter, (b, n_f, self.num_masks, h, w), reweight_os8=self.reweight_os8)
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, (b, n_f, self.num_masks, h, w), reweight_os8=self.reweight_os8)
 
-            if diff_pred is not None:
-                loss_dict['loss_diff'] = self.compute_loss_diff_pred(diff_pred, trans_gt)
-                loss_dict['total'] += loss_dict['loss_diff'] * 0.25
-
-            # Add loss max and min attention
+            # Add attention loss from decoder
             if 'loss_max_atten' in pred and self.loss_atten_w > 0:
                 loss_dict['loss_max_atten'] = pred['loss_max_atten']
-                # loss_dict['loss_min_atten'] = pred['loss_min_atten']
-                loss_dict['total'] += loss_dict['loss_max_atten'] * self.loss_atten_w # + loss_dict['loss_min_atten']) * 0.1
-            
-            # Loss to prevent the sharp transition
-            if 'detail_mask' in pred:
-                detail_mask = pred['detail_mask']
-                fusion_grad_loss = self.grad_loss(alpha_pred.view_as(alphas), alphas, detail_mask.view_as(alphas).float())
-                loss_dict['loss_grad_fusion'] = fusion_grad_loss
-                loss_dict['total'] += fusion_grad_loss
+                loss_dict['total'] += loss_dict['loss_max_atten'] * self.loss_atten_w
 
+            # Ignore random padding positions
             if not chosen_ids is None:
                 for k, v in output.items():
                     output[k] = v[:, :, chosen_ids, :, :]
             return output, loss_dict
 
+        # During inference, remove padding instances
         for k, v in output.items():
             output[k] = v[:, :, :n_i]
-        for k in pred:
-            if k.startswith("mem_"):
-                output[k] = pred[k]
         return output
+
+    def prepare_input(self, x, masks, alphas, trans_gt, b, n_f, h, w, n_i):
+        chosen_ids = None
+        if self.num_masks > 0:
+            # If we have mask guidance
+            inp_masks = masks
+
+            if self.num_masks - n_i > 0:
+                # If we need to pad empty masks (for multi-instance forward)
+                if not self.training:
+                    # During inference, pad with zeros at the end
+                    padding = torch.zeros((b*n_f, self.num_masks - n_i, h, w), device=x.device)
+                    inp_masks = torch.cat([masks, padding], dim=1)
+                else:
+                    # Pad randomly: input masks, trans_gt, alphas
+                    chosen_ids = np.random.choice(self.num_masks, n_i, replace=False)
+                    inp_masks = torch.zeros((b*n_f, self.num_masks, h, w), device=x.device)
+                    inp_masks[:, chosen_ids, :, :] = masks
+                    masks = inp_masks
+                    
+                    if alphas is not None:
+                        new_alphas = torch.zeros((b, n_f, self.num_masks, h, w), device=x.device)
+                        new_alphas[:, :, chosen_ids, :, :] = alphas
+                        alphas = new_alphas
+                    
+                    if trans_gt is not None:
+                        new_trans_gt = torch.zeros((b, n_f, self.num_masks, h, w), device=x.device)
+                        new_trans_gt[:, :, chosen_ids, :, :] = trans_gt
+                        trans_gt = new_trans_gt
+                    
+                    n_i = self.num_masks
+            
+            # Stack image and guidance masks
+            inp = torch.cat([x, inp_masks], dim=1)
+        else:
+            inp = x
+        return masks, alphas, trans_gt, n_i, chosen_ids, inp
 
     @staticmethod
     def regression_loss(logit, target, loss_type='l1', weight=None, topk=-1):
@@ -335,60 +251,20 @@ class MaGGIe(nn.Module):
             else:
                 raise NotImplementedError("NotImplemented loss type {}".format(loss_type))
     
-    @staticmethod
-    def custom_regression_loss(logit, target, loss_type='l1', weight=None):
-        if weight is None:
-            weight = torch.ones_like(logit)
-        
-        alpha = 0.05
-        gamma = 5
-        diff = F.l1_loss(logit * weight, target * weight, reduction='none')
-        y1 = gamma * diff
-        y2 = alpha * gamma + (diff - alpha)**2
-        loss = torch.where(diff <= alpha, y1, y2)
-        return loss.sum() / (torch.sum(weight) + 1e-8)
+    def compute_loss(self, pred, weight_os4, weight_os1, alphas, trans_gt, alpha_shape, reweight_os8=True):
 
-
-    def loss_multi_instances(self, pred, gt):
-        """
-        :param pred: [N, C, H, W]
-        :param gt: [N, C, H, W]
-        :param weight: [N, 1, H, W]
-        :return:
-        """
-        pred = pred.sum(1)
-        mask = (pred > 1.0).float()
-        loss = self.loss_multi_inst_func((pred * mask), mask, reduction='none')
-        loss = loss.sum() / (mask.sum() + 1e-6)
-        return loss
-    
-    def compute_loss(self, pred, weight_os4, weight_os1, correct_weights, alphas, trans_gt, fg, bg, iter, alpha_shape, reweight_os8=True):
-        '''
-        pred: dict of output from forward
-        batch: dict of input batch
-        '''
         alpha_pred_os1, alpha_pred_os4, alpha_pred_os8 = pred.get('alpha_os1', None), pred.get('alpha_os4', None), pred['alpha_os8']
-
-        # if iter < self.cfg.mgm.warmup_iter or (iter < self.cfg.mgm.warmup_iter * 3 and random.randint(0,1) == 0):
-        #     weight_os1 = trans_gt
-        #     weight_os4 = trans_gt
-        #     # logging.debug('Using ground truth mask')
-        # else:
-        # alpha_pred_os4[weight_os4==0] = alpha_pred_os8[weight_os4==0]
-        # alpha_pred_os1[weight_os1==0] = alpha_pred_os4[weight_os1==0]
-            # logging.debug('Using prediction mask')
 
         loss_dict = {}
         weight_os8 = torch.ones_like(alpha_pred_os8)
         valid_mask = alphas.sum((2, 3), keepdim=True) > 0
         weight_os8 = weight_os8 * valid_mask
 
-        # For training stage 2 only
+        # Using reweighting
         if reweight_os8:
             unknown_gt = (alphas <= 254.0/255.0) & (alphas >= 1.0/255.0)
             unknown_pred_os8 = (alpha_pred_os8 <= 254.0/255.0) & (alpha_pred_os8 >= 1.0/255.0)
             weight_os8 = (unknown_gt | unknown_pred_os8).type(weight_os8.dtype) + weight_os8
-        # import pdb; pdb.set_trace()
 
         # Add padding to alphas and trans_gt
         n_i = alphas.shape[1]
@@ -397,34 +273,23 @@ class MaGGIe(nn.Module):
             alphas = torch.cat([alphas, padding], dim=1)
             trans_gt = torch.cat([trans_gt, padding], dim=1)
        
-        # Reg loss
+        # Reconstruction loss
         total_loss = 0
         if self.loss_alpha_w > 0:
             ref_alpha_loss = 0
+            
             if alpha_pred_os1 is not None:
+                
                 ref_alpha_os1 = self.regression_loss(alpha_pred_os1, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os1)
                 ref_alpha_os4 = self.regression_loss(alpha_pred_os4, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os4)
-                ref_alpha_loss += ref_alpha_os1 * 2 + ref_alpha_os4 * 1
+                ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
+                
+                ref_alpha_loss += ref_alpha_os1 * 2 + ref_alpha_os4 + ref_alpha_os8
+                
                 loss_dict['loss_rec_os1'] = ref_alpha_os1
                 loss_dict['loss_rec_os4'] = ref_alpha_os4
-
-            if not self.freeze_coarse:
-                ref_alpha_os8 = self.regression_loss(alpha_pred_os8, alphas, loss_type=self.cfg.loss_alpha_type, weight=weight_os8)
                 loss_dict['loss_rec_os8'] = ref_alpha_os8
-                ref_alpha_loss += ref_alpha_os8 * 1
 
-            # Upper bound
-            # unknown_gt = (alphas > 1.0/255.0) & (alphas < 254.0/ 255.0)
-            # unknown_pred = alpha_pred_os8[unknown_gt]
-            # upper_weight = unknown_pred >= 254.0 / 255.0
-            # lower_weight = unknown_pred <= 1.0 / 255.0
-            # upper_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 253.0/255.0), reduction='none') * upper_weight).sum() / (torch.sum(upper_weight) + 1e-8)
-            # lower_loss = (F.l1_loss(unknown_pred, torch.full_like(unknown_pred, 2.0/255.0), reduction='none') * lower_weight).sum() / (torch.sum(lower_weight) + 1e-8)
-            # loss_dict['loss_os8_upper'] = upper_loss
-            # loss_dict['loss_os8_lower'] = lower_loss
-            
-            # ref_alpha_loss += upper_loss * 0.5 + lower_loss * 0.5
-            
             loss_dict['loss_rec'] = ref_alpha_loss
             total_loss += ref_alpha_loss * self.loss_alpha_w
 
@@ -433,68 +298,60 @@ class MaGGIe(nn.Module):
             logging.debug("Computing lap loss")
             h, w = alpha_pred_os8.shape[-2:]
             lap_loss = 0
+            
             if alpha_pred_os1 is not None:
                 lap_loss_os1 = self.lap_loss(alpha_pred_os1.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os1.view(-1, 1, h, w))
                 lap_loss_os4 = self.lap_loss(alpha_pred_os4.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os4.view(-1, 1, h, w))
+                lap_loss_os8 = self.lap_loss(alpha_pred_os8.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os8.view(-1, 1, h, w))
+            
                 loss_dict['loss_lap_os1'] = lap_loss_os1
                 loss_dict['loss_lap_os4'] = lap_loss_os4
-                lap_loss += lap_loss_os1 * 2 + lap_loss_os4 * 1
-
-            if not self.freeze_coarse:
-                lap_loss_os8 = self.lap_loss(alpha_pred_os8.view(-1, 1, h, w), alphas.view(-1, 1, h, w), weight_os8.view(-1, 1, h, w))
-                lap_loss += lap_loss_os8 * 1
                 loss_dict['loss_lap_os8'] = lap_loss_os8
+            
+                lap_loss += lap_loss_os1 * 2 + lap_loss_os4  + lap_loss_os8
 
             loss_dict['loss_lap'] = lap_loss
             total_loss += lap_loss * self.loss_alpha_lap_w
         
+        # Gradient loss
         if self.loss_alpha_grad_w > 0:
             grad_loss = 0
+            
             if alpha_pred_os1 is not None:
+            
                 grad_loss_os1 = self.grad_loss(alpha_pred_os1, alphas, weight_os1)
                 grad_loss_os4 = self.grad_loss(alpha_pred_os4, alphas, weight_os4)
-                grad_loss += grad_loss_os1 * 2 + grad_loss_os4 * 1
+                grad_loss_os8 = self.grad_loss(alpha_pred_os8, alphas, weight_os8)
+                grad_loss += grad_loss_os1 * 2 + grad_loss_os4 + grad_loss_os8
+            
                 loss_dict['loss_grad_os1'] = grad_loss_os1
                 loss_dict['loss_grad_os4'] = grad_loss_os4
-
-            if not self.freeze_coarse:
-                grad_loss_os8 = self.grad_loss(alpha_pred_os8, alphas, weight_os8)
-                grad_loss += grad_loss_os8
                 loss_dict['loss_grad_os8'] = grad_loss_os8
             
             loss_dict['loss_grad'] = grad_loss
             total_loss += grad_loss * self.loss_alpha_grad_w
 
+        # dtSSD loss, only for video
         if self.loss_dtSSD_w > 0:
-            # import pdb; pdb.set_trace()
             alpha_pred_os8 = alpha_pred_os8.reshape(*alpha_shape)
             alpha_pred_os4 = alpha_pred_os4.reshape(*alpha_shape)
             alpha_pred_os1 = alpha_pred_os1.reshape(*alpha_shape)
             alphas = alphas.reshape(*alpha_shape)
-            # trans_gt = trans_gt.reshape(*alpha_shape)
+
             dtSSD_loss_os1 = loss_dtSSD(alpha_pred_os1, alphas, weight_os1.reshape(*alpha_shape))
             dtSSD_loss_os4 = loss_dtSSD(alpha_pred_os4, alphas, weight_os4.reshape(*alpha_shape))
             dtSSD_loss_os8 = loss_dtSSD(alpha_pred_os8, alphas, weight_os8.reshape(*alpha_shape))
             dtSSD_loss = dtSSD_loss_os1 * 2 + dtSSD_loss_os4 * 1 + dtSSD_loss_os8 * 1
+            
             loss_dict['loss_dtSSD_os1'] = dtSSD_loss_os1
             loss_dict['loss_dtSSD_os4'] = dtSSD_loss_os4
             loss_dict['loss_dtSSD_os8'] = dtSSD_loss_os8
             loss_dict['loss_dtSSD'] = dtSSD_loss
+            
             total_loss += dtSSD_loss * self.loss_dtSSD_w
 
         loss_dict['total'] = total_loss
         return loss_dict
-
-    def compute_loss_diff_pred(self, pred, gt):
-        # gt = gt.sum(1, keepdim=True)
-        # gt = gt > 0
-        gt = gt[:, 1:2].float()
-        # import pdb; pdb.set_trace()
-        pred = F.interpolate(pred, size=gt.shape[-2:], mode='bilinear', align_corners=False)
-        bce_loss = F.binary_cross_entropy_with_logits(pred, gt)
-        diff_dtSSD = loss_dtSSD(pred[None].sigmoid(), gt[None], torch.ones_like(gt[None]))
-
-        return bce_loss + diff_dtSSD
 
 class MGM_SingInst(MaGGIe):
     def forward(self, batch, **kwargs):

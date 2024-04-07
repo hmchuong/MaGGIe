@@ -61,7 +61,7 @@ CONFIG.model.weights = ''
 CONFIG.model.arch = 'MaGGIe'
 CONFIG.model.sync_bn = True
 CONFIG.model.having_unused_params = False
-
+CONFIG.model.warmup_iters = 5000
 
 # Encoder
 CONFIG.model.encoder = 'res_encoder_29' # resnet34
@@ -87,18 +87,12 @@ CONFIG.model.loss_atten_w = 1.0
 CONFIG.model.loss_reweight_os8 = True
 CONFIG.model.loss_dtSSD_w = 1.0
 
-# For MGM
-CONFIG.model.mgm = CN({})
-CONFIG.model.mgm.warmup_iter = 5000
-
 # For SHM
 CONFIG.model.shm = CN({})
 CONFIG.model.shm.lr_scale = 0.5
 CONFIG.model.shm.dilation_kernel = 15
 CONFIG.model.shm.max_n_pixel = 4000000
 CONFIG.model.shm.mgm_weights = ''
-
-CONFIG.model.shortcut_dims = [32, 32, 64, 128, 256]
 
 refinement = CN({})
 refinement.n_train_points = 2048 # number of training points for each instance

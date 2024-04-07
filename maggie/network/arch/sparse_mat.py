@@ -1,15 +1,9 @@
 import copy
-import cv2
-import math
-import logging
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-# from vm2m.network.module.shm import SHM
-from vm2m.network.loss import LapLoss, loss_comp
-# from .mgm import MGM
+from ..loss import LapLoss, loss_comp
 
 
 def _upsample_like(src,tar,mode='bilinear'):
@@ -32,7 +26,6 @@ def batch_slice(tensor, pos, size, mode='bilinear'):
     n, c, h, w = tensor.shape
     patchs = []
     for i in range(n):
-        # x1, y1, x2, y2 = torch.clamp(pos[i], 0, 1)
         x1, y1, x2, y2 = pos[i]
         x1 = int(x1.item() * w)
         y1 = int(y1.item() * h)
@@ -118,32 +111,15 @@ class SparseMat(nn.Module):
             all_hr_preds.append(last_pred)
         all_hr_preds = torch.cat(all_hr_preds, dim=0)
         
-        # for i in range(len(lr_pred)):
-        #     cv2.imwrite('lr_pred_{}.png'.format(i), lr_pred[i].cpu().numpy().transpose(1,2,0) * 255)
-        #     cv2.imwrite('pred_{}.png'.format(i), preds[i].cpu().numpy().transpose(1,2,0) * 255)
-        #     cv2.imwrite('mask_{}.png'.format(i), mask[i].cpu().numpy().transpose(1,2,0) * 255)
-        #     cv2.imwrite('hr_pred_{}.png'.format(i), all_hr_preds[i].cpu().numpy().transpose(1,2,0) * 255)
-        #     import pdb; pdb.set_trace()
-        
         all_hr_preds = all_hr_preds.view(bs, n_f, -1, *all_hr_preds.shape[-2:])
         return {'refined_masks': all_hr_preds}
 
     def forward(self, input_dict, **kwargs):
-        # xlr = input_dict['lr_image'] # rescale to 256
-        # xhr = input_dict['hr_image'] # 512
 
-        # Resize image, mask, alpha, transition to 256
-        # lr_pred, ctx = self.lpn(xlr)
 
         lr_inp = self.gen_lr_batch(input_dict, scale=0.5)
-        # with torch.no_grad():
-        #     lr_out = self.mgm(lr_inp, return_ctx=True)
-        # import pdb; pdb.set_trace()
         xlr = torch.cat([lr_inp['image'], lr_inp['mask']], dim=2).flatten(0, 1)
         lr_pred, ctx = self.lpn(xlr)
-
-        # lr_pred = lr_out['refined_masks'].clone().detach()
-        # ctx = lr_out['ctx'].clone().detach()
 
         # reshape to B, C, H, W before passing to SHM
         xhr = input_dict['image']
@@ -151,29 +127,15 @@ class SparseMat(nn.Module):
         xhr = xhr.view(b*n_f, -1, h, w)
         lr_pred = lr_pred.view(b*n_f, -1, *lr_pred.shape[-2:])
 
-        # lr_pred = upas(lr_pred, xhr)
         lr_pred = F.interpolate(lr_pred, scale_factor=2.0, mode='bilinear', align_corners=False)
         lr_pred = lr_pred[:, :, :h, :w]
         
         if not self.training:
             return self.forward_inference(lr_pred, xhr, ctx, b, n_f)
         
-        # import pdb; pdb.set_trace()
-        # if 'transition' in input_dict:
-        #     mask = input_dict['transition']
-        #     mask = mask.view(b * n_f, -1, h, w)
-        # else:
         mask = self.dilate(lr_pred)
-
-        n_pixel = mask.sum().item()
-        
-
-        # if n_pixel > 1700000:
-        #     final_mask = lr_pred.reshape(b, n_f, -1, h, w)
-        #     return {'refined_masks': final_mask}, loss_dict
         
         sparse_inputs, coords = self.generate_sparse_inputs(xhr, lr_pred, mask=mask)
-        # logging.debug("num pixels: {}".format(coords.shape))
         pred_list = self.shm(sparse_inputs, lr_pred, coords, xhr.size(0), mask.size()[2:], ctx=ctx)
         final_mask = pred_list[-1]
         final_mask = final_mask.reshape(b, n_f, -1, h, w)
@@ -287,48 +249,6 @@ class SparseMat(nn.Module):
             mask_t = torch.ones_like(mask_s)
             mask = mask_s * mask_t
         return mask, mask_s, mask_t, shared
-
-    def inference(self, hr_img, lr_img=None, last_img=None, last_pred=None):
-        # TODO: need to fix
-        h, w = hr_img.shape[-2:]
-
-        if lr_img is None:
-            nh = 512. / min(h,w) * h
-            nh = math.ceil(nh / 32) * 32
-            nw = 512. / min(h,w) * w
-            nw = math.ceil(nw / 32) * 32
-            lr_img = F.interpolate(hr_img, (int(nh), int(nw)), mode="bilinear")
-
-        lr_pred, ctx = self.lpn(lr_img)
-        lr_pred_us = upas(lr_pred, hr_img)
-        mask, mask_s, mask_t, shared = self.generate_sparsity_map(lr_pred_us, hr_img, last_img)
-        n_pixel = mask.sum().item()
-
-        if n_pixel <= self.max_n_pixel:
-            sparse_inputs, coords = self.generate_sparse_inputs(hr_img, lr_pred_us, mask)
-            preds = self.shm(sparse_inputs, lr_pred_us, coords, hr_img.size(0), mask.size()[2:], ctx=ctx)
-            hr_pred_sp = preds[-1]
-            if last_pred is not None:
-                hr_pred = hr_pred_sp * mask + lr_pred_us * (1-mask) * (1-shared) + last_pred * (1-mask) * shared
-            else:
-                hr_pred = hr_pred_sp * mask + lr_pred_us * (1-mask)
-        else:
-            print("Rescaling is used.")
-            scale = math.sqrt(self.max_n_pixel / float(n_pixel))
-            nh = int(scale * h)
-            nw = int(scale * w)
-            nh = math.ceil(nh / 8) * 8
-            nw = math.ceil(nw / 8) * 8
-
-            hr_img_ds = F.interpolate(hr_img, (nh, nw), mode="bilinear")
-            lr_pred_us = upas(lr_pred, hr_img_ds)
-            mask_s = self.dilate(lr_pred_us)
-
-            sparse_inputs, coords = self.generate_sparse_inputs(hr_img_ds, lr_pred_us, mask_s)
-            preds = self.shm(sparse_inputs, lr_pred_us, coords, hr_img_ds.size(0), mask_s.size()[2:], ctx=ctx)
-            hr_pred_sp = preds[-1]
-            hr_pred = hr_pred_sp * mask_s + lr_pred_us * (1-mask_s)
-        return hr_pred
 
 class SparseMat_SingInst(SparseMat):
     def forward(self, batch, **kwargs):

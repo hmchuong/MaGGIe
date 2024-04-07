@@ -11,5 +11,4 @@ scikit-image
 scipy
 yacs
 fvcore
-timm
 huggingface_hub
