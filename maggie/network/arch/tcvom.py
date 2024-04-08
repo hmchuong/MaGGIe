@@ -4,31 +4,12 @@ import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from .maggie import MGM
-from vm2m.network.loss import loss_dtSSD
+from .maggie import MaGGIe
 
-class TCVOM(MGM):
-    def __init__(self, backbone, decoder, cfg):
-        super(TCVOM, self).__init__(backbone, decoder, cfg)
-        self.eval()
+class TCVOM(MaGGIe):
+    def __init__(self, encoder, decoder, cfg):
+        super(TCVOM, self).__init__(encoder, decoder, cfg)
         self.dilate_op = nn.MaxPool2d(15, stride=1, padding=15//2)
-        self.loss_dtSSD_w = cfg.loss_dtSSD_w
-        self.loss_atten_w = cfg.loss_atten_w
-
-        # for param in self.parameters():
-        #     param.requires_grad = False
-        # for param in self.decoder.parameters():
-        #     param.requires_grad = True
-        # for param in self.decoder.layer1.parameters():
-        #     param.requires_grad = False
-        # for param in self.decoder.layer2.parameters():
-        #     param.requires_grad = False
-
-    # def train(self, mode=True):
-    #     super().train(mode)
-        # if mode:
-        #     self.encoder.train(False)
-        #     self.aspp.train(False)
 
     def dilate(self, alpha, stride=15):
         mask = torch.logical_and(alpha>0.01, alpha<0.99).float()
@@ -36,57 +17,9 @@ class TCVOM(MGM):
         return mask
     
     def forward(self, batch, **kwargs):
-        x = batch['image']
-        masks = batch['mask']
-        alphas = batch.get('alpha', None)
-        trans_gt = batch.get('transition', None)
-        fg = batch.get('fg', None)
-        bg = batch.get('bg', None)
-
-        # Combine input image and masks
-        b, n_f, _, h, w = x.shape
-        n_i = masks.shape[2]
-
-        x = x.view(-1, 3, h, w)
-        if masks.shape[-1] != w:
-            masks = masks.flatten(0,1)
-            masks = F.interpolate(masks, size=(h, w), mode="nearest")
-        else:
-            masks = masks.view(-1, n_i, h, w)
         
-        chosen_ids = None
-        if self.num_masks > 0:
-            inp_masks = masks
-            if self.num_masks - n_i > 0:
-                if not self.training:
-                    padding = torch.zeros((b*n_f, self.num_masks - n_i, h, w), device=x.device)
-                    inp_masks = torch.cat([masks, padding], dim=1)
-                else:
-                    # Pad randomly: input masks, trans_gt, alphas
-                    chosen_ids = np.random.choice(self.num_masks, n_i, replace=False)
-                    inp_masks = torch.zeros((b*n_f, self.num_masks, h, w), device=x.device)
-                    inp_masks[:, chosen_ids, :, :] = masks
-                    masks = inp_masks
-                    if alphas is not None:
-                        new_alphas = torch.zeros((b, n_f, self.num_masks, h, w), device=x.device)
-                        new_alphas[:, :, chosen_ids, :, :] = alphas
-                        alphas = new_alphas
-                    if trans_gt is not None:
-                        new_trans_gt = torch.zeros((b, n_f, self.num_masks, h, w), device=x.device)
-                        new_trans_gt[:, :, chosen_ids, :, :] = trans_gt
-                        trans_gt = new_trans_gt
-                    n_i = self.num_masks
-
-            inp = torch.cat([x, inp_masks], dim=1)
-        else:
-            inp = x
-        if fg is not None:
-            fg = fg.view(-1, 3, h, w)
-        if bg is not None:
-            bg = bg.view(-1, 3, h, w)
-
-        embedding, mid_fea = self.encoder(inp)
-        embedding = self.aspp(embedding)
+        # Forward encoder
+        masks, alphas, trans_gt, b, n_f, h, w, n_i, chosen_ids, embedding, mid_fea = self.forward_encoder(batch)
 
         mid_fea = mid_fea['shortcut']
 
@@ -112,7 +45,6 @@ class TCVOM(MGM):
         for k, v in raw_preds.items():
             preds[k].append(v.view(b, n_f, -1, *v.shape[-2:])[:, 0])
 
-        # import pdb; pdb.set_trace()
         # Forward middle frames
         for i in range(1, n_f - 1):
             curr_mid_feat =[f[:, i] for f in mid_fea]
@@ -120,7 +52,6 @@ class TCVOM(MGM):
             for k, v in pred.items():
                 preds[k].append(v)
         
-        # import pdb; pdb.set_trace()
         # Add last frame to list
         for k, v in raw_preds.items():
             preds[k].append(v.view(b, n_f, -1, *v.shape[-2:])[:, -1])
@@ -128,39 +59,20 @@ class TCVOM(MGM):
             # Concatenate all frames
             preds[k] = torch.cat(preds[k], dim=1).view(-1, self.num_masks, h, w)
 
-        
 
         # Fuse all predictions
-        alpha_pred, weight_os4, weight_os1 = self.fushion(preds)
+        alpha_pred, weight_os4, weight_os1 = self.fuse(preds)
 
-        output = {}
-        # output['alpha_os1'] = preds['alpha_os1'].view(b, n_f, n_i, h, w)
-        # output['alpha_os4'] = preds['alpha_os4'].view(b, n_f, n_i, h, w)
-        # output['alpha_os8'] = preds['alpha_os8'].view(b, n_f, n_i, h, w)
-        # import pdb; pdb.set_trace()
-        if self.num_masks > 0 and self.training:
-            output['alpha_os1'] = preds['alpha_os1'].view(b, n_f, self.num_masks, h, w)
-            output['alpha_os4'] = preds['alpha_os4'].view(b, n_f, self.num_masks, h, w)
-            output['alpha_os8'] = preds['alpha_os8'].view(b, n_f, self.num_masks, h, w)
-            alpha_pred = alpha_pred.view(b, n_f, self.num_masks, h, w)
-        else:
-            output['alpha_os1'] = preds['alpha_os1'][:, :n_i].view(b, n_f, n_i, h, w)
-            output['alpha_os4'] = preds['alpha_os4'][:, :n_i].view(b, n_f, n_i, h, w)
-            output['alpha_os8'] = preds['alpha_os8'][:, :n_i].view(b, n_f, n_i, h, w)
-            alpha_pred = alpha_pred[:, :n_i].view(b, n_f, n_i, h, w)
-
-        # alpha_pred = alpha_pred.view(b, n_f, n_i, h, w)
-        output['refined_masks'] = alpha_pred
+        output = self.transform_output(b, n_f, h, w, n_i, pred, alpha_pred)
 
         if self.training:
             reshaped_alphas = alphas.view(-1, n_i, h, w)
             reshaped_trans_gt = trans_gt.view(-1, n_i, h, w)
             weight_os1 = weight_os1.view(-1, n_i, h, w)
             weight_os4 = weight_os4.view(-1, n_i, h, w)
-            iter = batch['iter']
 
             # Compute image loss
-            loss_dict = self.compute_loss(preds, weight_os4, weight_os1, None, reshaped_alphas, reshaped_trans_gt, fg, bg, iter, alphas.shape, reweight_os8=False)
+            loss_dict = self.compute_loss(preds, weight_os4, weight_os1, reshaped_alphas, reshaped_trans_gt, alphas.shape, reweight_os8=False)
 
             # Compute attention loss
             if self.loss_atten_w > 0:
@@ -169,9 +81,14 @@ class TCVOM(MGM):
                 loss_dict['loss_atten'] = attn_loss
                 total_loss = loss_dict['total'] + attn_loss * self.loss_atten_w
                 loss_dict['total'] = total_loss
-
-
+            
+            if not chosen_ids is None:
+                for k, v in output.items():
+                    output[k] = v[:, :, chosen_ids, :, :]
+            
             return output, loss_dict
+        for k, v in output.items():
+            output[k] = v[:, :, :n_i]
         return output
 
     def compute_atten_loss(self, alphas, attb, attf, small_mask):

@@ -46,3 +46,25 @@ class ConvGRU(nn.Module):
             return self.forward_time_series(x, h)
         else:
             return self.forward_single_frame(x, h)
+        
+    def propagate_features(self, feat, n_f, prev_hidden_state=None, temp_method='none'):
+        hidden_state = None
+        if temp_method == 'none':
+            all_x = []
+            for j in range(n_f):
+                o, hidden_state = self.forward(x=feat[:, j], h=None)
+                all_x.append(o)
+            feat = torch.stack(all_x, dim=1)
+        else:
+            feat_forward, hidden_state = self.forward(x=feat, h=prev_hidden_state)
+
+            if temp_method == 'bi':
+                # Backward
+                feat_backward, _ = self.forward(x=torch.flip(feat[:, :-1], dims=(1,)), h=hidden_state[:, -1])
+                feat_backward = torch.flip(feat_backward, dims=(1,))
+                feat = feat_forward
+                feat[:, :-1] = (feat_forward[:, :-1] + feat_backward) / 2
+            else:
+                feat = feat_forward
+        
+        return feat, hidden_state

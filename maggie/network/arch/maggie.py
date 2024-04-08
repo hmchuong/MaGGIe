@@ -34,7 +34,7 @@ class MaGGIe(nn.Module):
         self.lap_loss = LapLoss()
         self.grad_loss = GradientLoss()
 
-        need_init_weights = [self.aspp]
+        need_init_weights = [self.aspp, self.decoder]
 
         # Init weights
         for module in need_init_weights:
@@ -73,7 +73,89 @@ class MaGGIe(nn.Module):
                 background image
         '''
 
-        # Get input
+        # Forward encoder
+        masks, alphas, trans_gt, b, n_f, h, w, n_i, chosen_ids, embedding, mid_fea = self.forward_encoder(batch)
+        
+        # Forward through decoder
+        pred = self.decoder(embedding, mid_fea, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0), gt_alphas=alphas, spar_gt=trans_gt, **kwargs)
+        
+        if isinstance(pred, tuple):
+            pred = pred[0]
+
+        # Fusion
+        weight_os1, weight_os4 = None, None
+        if 'refined_masks' in pred:
+            alpha_pred = pred.pop("refined_masks")
+            if 'detail_mask' in pred:
+                weight_os4 = pred["detail_mask"].type(alpha_pred.dtype)
+                weight_os1 = weight_os4
+        else:
+            alpha_pred, weight_os4, weight_os1 = self.fuse(pred)
+        
+        # During training: 75% use the weight os4 and os1 masks, 25% use the detail mask
+        if self.training and 'weight_os4' in pred and np.random.rand() < 0.75:
+            weight_os4 = pred.pop("weight_os4")
+            weight_os1 = pred.pop("weight_os1")
+        
+        # Reshape output back to 5D tensors
+        output = self.transform_output(b, n_f, h, w, n_i, pred, alpha_pred)
+
+        # Compute loss during training
+        if self.training:
+            alphas = alphas.view(-1, n_i, h, w)
+            trans_gt = trans_gt.view(-1, n_i, h, w)
+            
+            # maskout padding masks
+            valid_masks = trans_gt.sum((2, 3), keepdim=True) > 0
+            valid_masks = valid_masks.float()
+            for k, v in pred.items():
+                if 'loss' in k or 'mem_' in k:
+                    continue
+                pred[k] = v * valid_masks
+
+            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, alphas, trans_gt, (b, n_f, self.num_masks, h, w), reweight_os8=self.reweight_os8)
+
+            # Add attention loss from decoder
+            self.update_additional_decoder_loss(pred, loss_dict)
+
+            # Ignore random padding positions
+            if not chosen_ids is None:
+                for k, v in output.items():
+                    output[k] = v[:, :, chosen_ids, :, :]
+            return output, loss_dict
+
+        # During inference, remove padding instances
+        for k, v in output.items():
+            output[k] = v[:, :, :n_i]
+        
+        # Update mem to output
+        for k in pred:
+            if k.startswith("mem_"):
+                output[k] = pred[k]
+                
+        return output
+
+    def update_additional_decoder_loss(self, pred, loss_dict):
+        if 'loss_max_atten' in pred and self.loss_atten_w > 0:
+            loss_dict['loss_max_atten'] = pred['loss_max_atten']
+            loss_dict['total'] += loss_dict['loss_max_atten'] * self.loss_atten_w
+
+    def transform_output(self, b, n_f, h, w, n_i, pred, alpha_pred):
+        output = {}
+        n_out_inst = self.num_masks if (self.training and self.num_masks > 0) else n_i
+        if 'alpha_os1' in pred:
+            output['alpha_os1'] = pred['alpha_os1'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
+            output['alpha_os4'] = pred['alpha_os4'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
+        
+        output['alpha_os8'] = pred['alpha_os8'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
+        alpha_pred = alpha_pred[:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
+        output['refined_masks'] = alpha_pred
+
+        if 'detail_mask' in pred:
+            output['detail_mask'] = pred['detail_mask'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
+        return output
+
+    def forward_encoder(self, batch):
         x = batch['image']
         masks = batch['mask']
         alphas = batch.get('alpha', None)
@@ -110,78 +192,7 @@ class MaGGIe(nn.Module):
         # Forward through encoder and ASPP
         embedding, mid_fea = self.encoder(inp, masks=masks.reshape(b, n_f, n_i, h, w))
         embedding = self.aspp(embedding)
-        
-        # Forward through decoder
-        pred = self.decoder(embedding, mid_fea, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0), warmup_iter=self.cfg.warmup_iters, spar_gt=trans_gt
-                            **kwargs)
-        
-        if isinstance(pred, tuple):
-            pred = pred[0]
-
-        # Fusion
-        weight_os1, weight_os4 = None, None
-        if 'refined_masks' in pred:
-            alpha_pred = pred.pop("refined_masks")
-            if 'detail_mask' in pred:
-                weight_os4 = pred["detail_mask"].type(alpha_pred.dtype)
-                weight_os1 = weight_os4
-        else:
-            alpha_pred, weight_os4, weight_os1 = self.fuse(pred)
-        
-        # During training: 75% use the weight os4 and os1 masks, 25% use the detail mask
-        if self.training and 'weight_os4' in pred and np.random.rand() < 0.75:
-            weight_os4 = pred.pop("weight_os4")
-            weight_os1 = pred.pop("weight_os1")
-        
-        # Reshape output back to 5D tensors
-        output = {}
-        n_out_inst = self.num_masks if (self.training and self.num_masks > 0) else n_i
-        if 'alpha_os1' in pred:
-            output['alpha_os1'] = pred['alpha_os1'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
-            output['alpha_os4'] = pred['alpha_os4'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
-        
-        if 'detail_mask' in pred:
-            output['detail_mask'] = pred['detail_mask'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
-        
-        output['alpha_os8'] = pred['alpha_os8'][:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
-        
-        alpha_pred = alpha_pred[:, :n_out_inst].view(b, n_f, n_out_inst, h, w)
-        output['refined_masks'] = alpha_pred
-
-        # Compute loss during training
-        if self.training:
-            alphas = alphas.view(-1, n_i, h, w)
-            trans_gt = trans_gt.view(-1, n_i, h, w)
-            if weights is not None:
-                weights = weights.view(-1, n_i, h, w)
-            
-            iter = batch['iter']
-            
-            # maskout padding masks
-            valid_masks = trans_gt.sum((2, 3), keepdim=True) > 0
-            valid_masks = valid_masks.float()
-            for k, v in pred.items():
-                if 'loss' in k or 'mem_' in k:
-                    continue
-                pred[k] = v * valid_masks
-
-            loss_dict = self.compute_loss(pred, weight_os4, weight_os1, weights, alphas, trans_gt, (b, n_f, self.num_masks, h, w), reweight_os8=self.reweight_os8)
-
-            # Add attention loss from decoder
-            if 'loss_max_atten' in pred and self.loss_atten_w > 0:
-                loss_dict['loss_max_atten'] = pred['loss_max_atten']
-                loss_dict['total'] += loss_dict['loss_max_atten'] * self.loss_atten_w
-
-            # Ignore random padding positions
-            if not chosen_ids is None:
-                for k, v in output.items():
-                    output[k] = v[:, :, chosen_ids, :, :]
-            return output, loss_dict
-
-        # During inference, remove padding instances
-        for k, v in output.items():
-            output[k] = v[:, :, :n_i]
-        return output
+        return masks,alphas,trans_gt,b,n_f,h,w,n_i,chosen_ids,embedding,mid_fea
 
     def prepare_input(self, x, masks, alphas, trans_gt, b, n_f, h, w, n_i):
         chosen_ids = None
