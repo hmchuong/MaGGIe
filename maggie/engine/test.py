@@ -195,13 +195,13 @@ def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postproce
     model.eval()
     torch.cuda.empty_cache()
     with torch.no_grad():
-        video_name = None
 
         all_preds = []
         all_gts = []
         all_trimap = []
         all_image_names = []
         mem_feats = None
+        prev_pred = None
 
         for i, batch in enumerate(val_loader):
 
@@ -214,50 +214,34 @@ def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postproce
             transform_info = batch.pop('transform_info')
             trimap = batch.pop('trimap').numpy()
             alpha_gt = batch.pop('alpha').numpy()
+
+            is_first = batch.pop('is_first')[0]
+            is_last = batch.pop('is_last')[0]
             
-            # Reset if new video
-            if image_names[0][0].split('/')[-2] != video_name:
-
-                if len(all_preds) > 0:
-                    # get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device)
-
-                    # Eval the last frame
-                    if callback is not None:
-                        callback(all_image_names, None, all_preds[None], transform_info, {})
-                    # current_metrics = compute_metrics(all_preds[-2:], all_trimap[-2:], all_gts[-2:], val_error_dict, device)
-                    # log_str = f"{video_name}: "
-                    # for k, v in current_metrics.items():
-                    #     log_str += "{} - {:.4f}, ".format(k, v)
-                    # logging.info(log_str)
-
-                    # For the last chunk, eval the t and t+1, prev_frames: t-1
-                    current_metrics = compute_metrics(all_preds[-2:], all_trimap[-2:], all_gts[-2:], prev_preds[-3:-2], prev_trimaps[-3:-2], prev_gts[-3:-2], val_error_dict, device)
-                    log_str = f"{video_name}: "
-                    for k, v in current_metrics.items():
-                        log_str += "{} - {:.4f}, ".format(k, v)
-                    logging.info(log_str)
-
-
-                    # Free the saving frames
-                    all_preds = []
-                    all_gts = []
-                    all_trimap = []
-                    all_image_names = []
-                    mem_feats = None
-                    torch.cuda.empty_cache()
+            if is_first:
+                # Free the saving frames
+                all_preds = []
+                all_gts = []
+                all_trimap = []
+                all_image_names = []
+                mem_feats = None
+                prev_pred = None
+                torch.cuda.empty_cache()
                 
-                video_name = image_names[0][0].split('/')[-2]
+            video_name = image_names[0][0].split('/')[-2]
 
             batch = {k: v.to(device) for k, v in batch.items()}
 
             end_time = time.time()
             if batch['mask'].sum() == 0:
                 continue
-            output = model(batch, mem_feat=mem_feats, mem_query=None, mem_details=None)
+            output = model(batch, mem_feat=mem_feats, prev_pred=prev_pred)
 
             batch_time.update(time.time() - end_time)
                 
             alpha = output['refined_masks']
+            prev_pred = alpha[:, 1]
+
             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
 
             # Threshold some high-low values
@@ -269,87 +253,49 @@ def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postproce
 
             # Fuse results
             # Store all results (3 frames) for the first batch
-            if len(all_preds) == 0:
+            if is_first:
                 all_preds = alpha[0]
                 all_gts = alpha_gt[0]
                 all_trimap = trimap[0]
                 all_image_names = image_names
             else:
-                # Store the last frame to cumulative GTs and Trimap
+                # Store the t+1 to cumulative GTs and Trimap
                 all_gts = np.concatenate([all_gts, alpha_gt[0, 2:]], axis=0)
                 all_trimap = np.concatenate([all_trimap, trimap[0, 2:]], axis=0)
                 all_image_names += image_names[2:]
                 
-                # Update the previous frame predictions (t, t+1 in previous batch with t-1, t in the current batch)
-                if 'diff_pred_forward' in output:
-                    # In the current batch
+                # Remove t+1 in previous preds, adding t and t+1 in new preds
+                all_preds = np.concatenate([all_preds[0, :-1], alpha[0, 1:]], axis=0)
 
-                    # t-1 (output from previous batch)
-                    prev_pred = all_preds[-2]
-                    # t + 1 (new output)
-                    next_pred = alpha[0, -1]
-                    
-
-                    # Get the difference prediction between t-1 -> t and t+1 -> t
-                    diff_forward = output['diff_pred_forward']
-                    diff_backward = output['diff_pred_backward']
-                    diff_forward = reverse_transform_tensor(diff_forward, transform_info).cpu().numpy()
-                    diff_backward = reverse_transform_tensor(diff_backward, transform_info).cpu().numpy()
-                
-                    # Thresholding
-                    diff_forward = (diff_forward > 0.5).astype('float32')
-                    diff_backward = (diff_backward > 0.5).astype('float32')
-
-                    # Forward propagate from t-1 to t
-                    pred_forward01 = prev_pred * (1 - diff_forward[0, 1]) + alpha[0, 1] * diff_forward[0, 1]
-
-                    # Backward propagate from t+1 to t
-                    pred_backward21 = next_pred * (1 - diff_backward[0, 1]) + alpha[0, 1] * diff_backward[0, 1]
-
-                    # Check the diff --> update the diff forward --> fused pred based on diff forward
-                    diff = np.abs(pred_forward01 - pred_backward21)
-
-                    # Use pred t from the model with pred forward != pred backward
-                    pred_forward01[diff > 0.0] = alpha[0, 1][diff > 0.0]
-
-                    # Final result at t
-                    fused_pred01 = pred_forward01
-                    all_preds[-1] = fused_pred01
-
-                    # For last frame
-                    pred_forward12 = fused_pred01 * (1 - diff_forward[0, 2]) + alpha[0, 2] * diff_forward[0, 2]
-
-                    # if use hard fusion
-                    
-                    all_preds = np.concatenate([all_preds, pred_forward12[None]], axis=0)
-
-                else:
-                    # Add the t+1 frame to all_preds
-                    all_preds = np.concatenate([all_preds, alpha[0, 2:]], axis=0)
-
-            # Add first frame features to mem_feat
+            # Add features t-1 to mem_feat
             if mem_feats is None and 'mem_feat' in output:
                 if isinstance(output['mem_feat'], tuple):
                     mem_feats = tuple(x[:, 0] for x in output['mem_feat'])
             
-            # Save the first frame, delete the previous pred
-            # import pdb; pdb.set_trace()
             if callback is not None:
-                callback(all_image_names[0:1], None, all_preds[None, 0:1], transform_info, {})
+
+                # Save the first frame, overwrite the previous pred
+                end_idx = 1 if not is_last else len(all_preds)
+                callback(all_image_names[:end_idx] , None, all_preds[None, :end_idx], transform_info, {})
 
             # Compute the evaluation metrics
-            prev_preds = all_preds[-4:-3] if len(all_preds) > 3 else None
-            prev_trimaps = all_trimap[-4:-3] if len(all_preds) > 3 else None
-            prev_gts = all_gts[-4:-3] if len(all_preds) > 3 else None
+            # First batch: compute non-temp metrics on  t-1
+            # Other batch: compute non-temp metrics on t-1 and temp metrics on t-1 and t
+            # Last batch: compute non-temp/ temp metrics on t-1 to t+1
+            end_pred_idx = -3 if not is_last else len(prev_preds)
+            prev_preds = all_preds[-4:end_pred_idx] if len(all_preds) > 3 else None
+            prev_trimaps = all_trimap[-4:end_pred_idx] if len(all_preds) > 3 else None
+            prev_gts = all_gts[-4:end_pred_idx] if len(all_preds) > 3 else None
             
-            current_metrics = compute_metrics(all_preds[-3:-2], all_trimap[-3:-2], all_gts[-3:-2], prev_preds, prev_trimaps, prev_gts, val_error_dict, device)
+            end_all_idx = -2 if not is_last else len(all_preds)
+            current_metrics = compute_metrics(all_preds[-3:end_all_idx], all_trimap[-3:end_all_idx], all_gts[-3:end_all_idx], prev_preds, prev_trimaps, prev_gts, val_error_dict, device)
+
             log_str = f"{video_name}: "
             for k, v in current_metrics.items():
                 log_str += "{} - {:.4f}, ".format(k, v)
             logging.info(log_str)
 
-            # For each chunk, eval the t-1 and dtssd t-1 and t-2
-                
+            # Remove the very first stored values
             if len(all_preds) > 3:
                 all_preds = all_preds[-3:]
                 all_gts = all_gts[-3:]

@@ -203,7 +203,10 @@ class VIMDataset(Dataset):
             trimap[trans > 0] = 1.0 # Transition
             out.update({'trimap': trimap, 'image_names': frame_paths, 
                         'transform_info': transform_info, 
-                        "skip": 0 if start_frame_id == 0 else self.overlap})
+                        "skip": 0 if start_frame_id == 0 else self.overlap,
+                        "is_first": start_frame_id == 0,
+                        "is_last": (start_frame_id + self.clip_length) >= len(self.video_infos[video_name])
+                        })
         else:
             out.update({'transition': transition_gt.float()})
         return out
