@@ -162,28 +162,6 @@ def eval_image(model, val_loader, device, log_iter, val_error_dict, do_postproce
 
     return batch_time.avg, data_time.avg
 
-def get_single_video_metrics(callback, all_image_names, all_preds, transform_info, val_error_dict, all_trimap, all_gts, video_name, device):
-    current_metrics = {}
-
-    if callback:
-        callback(all_image_names, None, all_preds[None], transform_info, {})
-    # Compute the metrics
-    for k, v in val_error_dict.items():
-        current_trimap = None
-        if k.endswith("_fg"):
-            current_trimap = (all_trimap[None] == 2).astype('float32')
-        elif k.endswith("_bg"):
-            current_trimap = (all_trimap[None] == 0).astype('float32')
-        elif k.endswith("_unk"):
-            current_trimap = (all_trimap[None] == 1).astype('float32')
-        current_metrics[k] = v.update(all_preds[None], all_gts[None], trimap=current_trimap, device=device)
-    
-    log_str = f"{video_name}: "
-    for k, v in current_metrics.items():
-        log_str += "{} - {:.4f}, ".format(k, v)
-    logging.info(log_str)
-
-
 
 @torch.no_grad()
 def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
