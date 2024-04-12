@@ -1,3 +1,4 @@
+import os
 import logging
 import torch
 import torch.nn as nn
@@ -227,12 +228,19 @@ class ResMaskEmbedShortCut_D(ResShortCut_D):
 
         return super().forward(inp, **kwargs)
 
-# TODO: Update pretrained weights to hub or hugging face
+def load_pretrain_state_dict():
+    path = "pretrain/model_best_resnet34_En_nomixup.pth"
+    if os.path.exists(path):
+        state_dict = torch.load(path, map_location="cpu")["state_dict"]
+        state_dict = {k[7:]: v for k, v in state_dict.items()}
+        return state_dict
+    return None
+
 def res_encoder_29(**kwargs):
     model = ResNet_D(BasicBlock, [3, 4, 4, 2], **kwargs)
-    state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
-    state_dict = {k[7:]: v for k, v in state_dict.items()}
-    model.load_state_dict(state_dict, strict=False)
+    state_dict = load_pretrain_state_dict()
+    if state_dict:
+        model.load_state_dict(state_dict, strict=False)
     return model
 
 def _res_shortcut_D(block, layers, **kwargs):
@@ -247,22 +255,22 @@ def res_shortcut_29(**kwargs):
     """Constructs a resnet_encoder_25 model.
     """
     model = _res_shortcut_D(BasicBlock, [3, 4, 4, 2], **kwargs)
-    state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
-    state_dict = {k[7:]: v for k, v in state_dict.items()}
-    if kwargs['num_mask'] > 0:
-        del state_dict['conv1.module.weight_bar']
-        del state_dict['conv1.module.weight_v']
-    model.load_state_dict(state_dict, strict=False)
+    state_dict = load_pretrain_state_dict()
+    if state_dict:
+        if kwargs['num_mask'] > 0:
+            del state_dict['conv1.module.weight_bar']
+            del state_dict['conv1.module.weight_v']
+        model.load_state_dict(state_dict, strict=False)
     return model
 
 def res_shortcut_embed_29(**kwargs):
     model = _res_shortcut_embed_D(BasicBlock, [3, 4, 4, 2], **kwargs)
-    state_dict = torch.load("pretrain/model_best_resnet34_En_nomixup.pth", map_location="cpu")["state_dict"]
-    state_dict = {k[7:]: v for k, v in state_dict.items()}
-    if kwargs['num_mask'] > 0:
-        del state_dict['conv1.module.weight_bar']
-        del state_dict['conv1.module.weight_v']
-    model.load_state_dict(state_dict, strict=False)
+    state_dict = load_pretrain_state_dict()
+    if state_dict:
+        if kwargs['num_mask'] > 0:
+            del state_dict['conv1.module.weight_bar']
+            del state_dict['conv1.module.weight_v']
+        model.load_state_dict(state_dict, strict=False)
     return model
 
 if __name__ == "__main__":

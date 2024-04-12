@@ -145,7 +145,7 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
     
     # Build model
     logging.info("Building model...")
-    model = build_model(cfg.model)
+    model, is_from_hf = build_model(cfg.model)
     model = model.to(device)
     training_params = sum([p.numel() for p in model.parameters() if p.requires_grad])
     logging.info("Number of trainable parameters: {}".format(training_params))

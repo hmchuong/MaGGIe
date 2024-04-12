@@ -352,7 +352,7 @@ class ResShortCut_InstMattSpconv_Dec(nn.Module):
             queries = queries[:, None].expand(-1, n_f, -1, -1).reshape(b * n_f, *queries.shape[1:])
             
             # Predict details at OS4 and OS1
-            x_os4, x_os1, mem_details = self.predict_details(x, image, unknown_os8, guided_mask_os8, mem_details, queries, [fea1, fea2, fea3])
+            x_os4, x_os1 = self.predict_details(x, image, unknown_os8, guided_mask_os8, queries, [fea1, fea2, fea3])
 
             x_os4 = x_os4.reshape(b * n_f, guided_mask_os8.shape[1], *x_os4.shape[-2:])
             x_os1 = x_os1.reshape(b * n_f, guided_mask_os8.shape[1], *x_os1.shape[-2:])

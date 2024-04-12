@@ -1,31 +1,44 @@
+import os
 import sys
 
-file_log = sys.argv[1] # "/home/chuongh/vm2m/output/HIM/ours_1103_single-stage_strong-aug/test-log_rank0.log"
-results = open("results.txt", "w")
+file_log = sys.argv[1]
+output_dir = sys.argv[2]
+results = open(os.path.join(output_dir, "results.csv"), "w")
 
-metric_keys = ["MAD", "MAD_fg", "MAD_bg", "MAD_unk", "MSE", "SAD", "Grad", "Conn"]
-# metric_keys = ["MAD", "MAD_fg", "MAD_bg", "MAD_unk", "MSE", "SAD"]
-# metric_keys = ["MAD", "MSE", "SAD", "dtSSD", "MAD_fg", "MAD_bg", "MAD_unk", "MESSDdt"]
+metric_keys = ["MAD", "MAD_fg", "MAD_unk", "MSE", "SAD", "Grad", "Conn"]
+results.write("split,masks,")
+results.write("{}\n".format(",".join(metric_keys)))
+
+def write_line(metrics, mask_dir_name, split, f):
+    if len(metrics) > 0:
+        write_line = "{},{},".format(split, mask_dir_name)
+        for key in metric_keys:
+            if key in metrics:
+                write_line +="{},".format(metrics[key])
+            else:
+                write_line +=","
+
+        f.write("{}\n".format(write_line[:-1].strip()))
+
 with open(file_log, "r") as f:
     start_idx = -1
     metrics = {}
     flag = False
+    mask_dir_name = ''
+    split = ''
     for line_idx, line in enumerate(f):
         if line.startswith("  test:"):
-            flag = True
-        if "mask_dir_name" in line and flag:
-            if len(metrics) > 0:
-                write_line = ""
-                for key in metric_keys:
-                    if key in metrics:
-                        write_line +="{}\t".format(metrics[key])
-                results.write("{}\n".format(write_line.strip()))
-            else:
-                print("No metrics")
+            flag = 0
+            write_line(metrics, mask_dir_name, split, results)
+        if "mask_dir_name:" in line and flag < 2:
             metrics = {}
             mask_dir_name = line.split(":")[-1].strip()
-            print(mask_dir_name)
-            flag = False
+            mask_dir_name = mask_dir_name.replace("masks_matched_", "")
+            flag += 1
+        if "split:" in line and flag < 2:
+            split = line.split(":")[-1].strip()
+            flag += 1
+
         if '[INFO ]  Metrics:' in line:
             start_idx = line_idx
         if line_idx < start_idx + 9 and start_idx != -1:
@@ -33,11 +46,5 @@ with open(file_log, "r") as f:
             for key in metric_keys:
                 if key + ":" in line:
                     metrics[key] = float(line.split(":")[-1].strip())
-                    # print(key, metrics[key])
-    if len(metrics) > 0:
-        write_line = ""
-        for key in metric_keys:
-            if key in metrics:
-                write_line +="{}\t".format(metrics[key])
-        results.write("{}\n".format(write_line.strip()))
+    write_line(metrics, mask_dir_name, split, results)
 results.close()

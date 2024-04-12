@@ -54,8 +54,6 @@ def main(cfg, eval_only=False, precision=32, is_sweep=False):
             wandb.config.update(cfg, allow_val_change=True)
     if eval_only:
         test(cfg, local_rank, True)
-    elif cfg.train.self_train.use:
-        train_ss(cfg, local_rank, True, precision, global_rank)
     else:
         train(cfg, local_rank, True, precision, global_rank)
     

@@ -12,3 +12,4 @@ scipy
 yacs
 fvcore
 huggingface_hub
+safetensors
