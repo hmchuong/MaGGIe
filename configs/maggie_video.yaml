@@ -10,7 +10,7 @@ dataset:
     clip_length: 3
     clip_overlap: 2
   train:
-    name: HIM
+    name: VIM
     root_dir: data
     split: V-HIM2K5
     short_size: 576
@@ -35,7 +35,7 @@ model:
   arch: MaGGIe_Temp
   weights: chuonghm/maggie-video-vim2k5-cvpr24
   sync_bn: true
-  having_unused_params: false
+  having_unused_params: true
   warmup_iters: 500
   encoder: res_shortcut_embed_29
   encoder_args:
@@ -86,20 +86,20 @@ test:
   save_dir: output/video/maggie_video_cvpr24/vis
   save_results: false
 train:
-  batch_size: 12
+  batch_size: 4
   log_iter: 10
-  max_iter: 52000
+  max_iter: 10000
   num_workers: 8
   optimizer:
     betas:
     - 0.9
     - 0.999
-    lr: 0.00015
+    lr: 5.0e-5
     momentum: 0.9
     name: adamw
     weight_decay: 0.01
   resume: ''
-  resume_last: true
+  resume_last: false
   scheduler:
     gamma: 0.1
     name: cosine
@@ -108,12 +108,13 @@ train:
     warmup_iters: 1000
   seed: 1234
   val_best_metric: MAD
-  val_dist: true
+  val_dist: false
   val_iter: 500
   val_metrics:
   - MAD
   - MSE
   - SAD
+  - dtSSD
   vis_iter: 50
 wandb:
   entity: research

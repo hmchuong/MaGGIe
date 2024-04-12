@@ -1,6 +1,6 @@
 # DATASET
 
-## Download
+## Download available dataset
 
 The dataset is available on [Hugging Face Datasets](https://huggingface.co/datasets/chuonghm/MaGGIe-HIM). Please download the set you need:
 
@@ -30,3 +30,5 @@ Checking those scripts:
 List of FG/BG for train/test synthesizing: `tools/video_files`
 
 - `tools/gen_mask`: for generate M-HIM2K with detectron2.
+
+## How to use your own dataset?

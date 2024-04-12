@@ -110,14 +110,21 @@ torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
                     --config configs/maggie_image.yaml \
                     --precision 16 name $NAME model.weights ''
 ```
-
-If you want to resume training from the last checkpoint, you can turn on `train.resume_last` or set `train.resume` to the checkpoint folder you want to resume from.
+If you want to resume training from the last checkpoint, you can turn on `train.resume_last` or set `train.resume` to the checkpoint folder you want to resume from. You can also set `wandb.id` to continue logging to the same experiment id.
 
 
 4. Training the video instance matting
 
-It is recommend to use 8 A100-80GB GPUs for this step.
-Please check the [config]()
+It is recommend to use 8 A100-80GB GPUs for this step. Please check the [config](configs/maggie_video.yaml) and set `wandb to your project.
+```bash
+NAME=<name of the experiment>
+PRETRAINED=<best weight from previous step>
+NGPUS=8
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
+                    --config configs/maggie_video.yaml \
+                    --precision 16 name $NAME model.weights $PRETRAINED
+```
+If you want to resume training from the last checkpoint, you can turn on `train.resume_last` or set `train.resume` to the checkpoint folder you want to resume from. You can also set `wandb.id` to continue logging to the same experiment id.
 
 ## Citation
 If you find MaGGIE useful for your research and applications, please cite using this BibTeX:
