@@ -46,6 +46,7 @@ Please check our [Model Zoo](docs/MODEL_ZOO.md) for all public MaGGIe checkpoint
 
 ## Evaluation
 
+Please check the [Model Zoo](docs/MODEL_ZOO.md) for all model weight information.
 ### M-HIM2K and HIM2K
 The script [scripts/test_maggie_image.sh](scripts/test_maggie_image.sh) contains the full evaluation on the whole M-HIM2K. The `results.csv` in the log directory contains all the results needed. To get the number in the paper, you can run this command on 4 GPUs:
 ```bash
