@@ -22,3 +22,11 @@ unzip I-HIM50K_all.zip
 
 ## How to synthesize dataset?
 Coming soon...
+
+Checking those scripts:
+- image: `tools/synthesize_him_data.py`
+- video: `tools/syn_vhm_0918.py`
+
+List of FG/BG for train/test synthesizing: `tools/video_files`
+
+- `tools/gen_mask`: for generate M-HIM2K with detectron2.

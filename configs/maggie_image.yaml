@@ -26,12 +26,12 @@ dataset:
     binarized_kernel: 30
     downscale_mask_p: 0.5
     mask_dir_name: ''
-    alpha_dir_name: pha
+    alpha_dir_name: alphas
 model:
   arch: MaGGIe
   weights: chuonghm/maggie-image-him50k-cvpr24
   sync_bn: true
-  having_unused_params: false
+  having_unused_params: true
   warmup_iters: 3000
   encoder: res_shortcut_embed_29
   encoder_args:
@@ -93,7 +93,7 @@ train:
     name: adamw
     weight_decay: 0.01
   resume: ''
-  resume_last: true
+  resume_last: false
   scheduler:
     gamma: 0.1
     name: cosine

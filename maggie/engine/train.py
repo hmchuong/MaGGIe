@@ -97,6 +97,8 @@ def load_state_dict(model, state_dict):
 
 def load_resume_model(model, optimizer, lr_scheduler, resume_path, device):
     logging.info("Resuming model from {}".format(resume_path))
+    if not os.path.exists(os.path.join(resume_path, 'last_model.pth')) or not os.path.exists(os.path.join(resume_path, 'last_opt.pth')):
+        raise ValueError("Cannot resume model from {}".format(resume_path))
     state_dict = torch.load(os.path.join(resume_path, 'last_model.pth'), map_location=device)
     opt_dict = torch.load(os.path.join(resume_path, 'last_opt.pth'), map_location=device)
     model.load_state_dict(state_dict, strict=True)
@@ -294,8 +296,7 @@ def train(cfg, rank, is_dist=False, precision=32, global_rank=None):
                 model.eval()
                 val_model = model.module if is_dist else model
                 _ = [v.reset() for v in val_error_dict.values()]
-                use_temp = cfg.test.temp_aggre and ((not cfg.train.val_dist) or not is_dist)
-                _ = eval_fn(val_model, val_loader, device, cfg.test.log_iter, val_error_dict, do_postprocessing=False, use_trimap=False, callback=None, use_temp=use_temp)
+                _ = eval_fn(val_model, val_loader, device, cfg.test.log_iter, val_error_dict, do_postprocessing=False, callback=None)
 
                 if is_dist and cfg.train.val_dist:
                     logging.info("Gathering metrics...")

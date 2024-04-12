@@ -17,7 +17,13 @@ Work is a part of Summer Internship 2023 at [Adobe Research](https://research.ad
 - [2024/04/04] Webpage is up!
 
 
-## Table of Content
+## Contents
+- [Install](#install)
+- [MaGGIe Weights](#maggie-weights)
+- [Demo](#demo)
+- [Evaluation](#evaluation)
+- [Training](#training)
+- [Citation](#citation)
 
 ## Install
 
@@ -42,7 +48,7 @@ pip install -r requirements.txt
 Please check our [Model Zoo](docs/MODEL_ZOO.md) for all public MaGGIe checkpoints, and instructions for how to use weights.
 
 ## Demo
-
+Coming soon...
 
 ## Evaluation
 
@@ -88,113 +94,50 @@ torchrun --standalone --nproc_per_node=1 tools/main.py --config $CONFIG --eval-o
 ```
 If you want to save the alpha mattes, please set `test.save_results True` and change the `test.save_dir`.
 
-## Train
-### 1. Please firstly follow [datasets](docs/DATASET.md) to prepare training data.
-### 2. Download [pretrained weights](https://drive.google.com/file/d/1kNj33D7x7tR-5hXOvxO53QeCEC8ih3-A/view) of encoder from [GCA-Matting](https://github.com/Yaoyi-Li/GCA-Matting?tab=readme-ov-file#models)
-### 3. Training the image instance matting. 
+## Training
+1. Please firstly follow [DATASET](docs/DATASET.md) to prepare the training data.
 
-It is recommended to use 4 A100-40GB GPUs for this step. 
+2. Download [pretrained weights](https://drive.google.com/file/d/1kNj33D7x7tR-5hXOvxO53QeCEC8ih3-A/view) of the encoder from [GCA-Matting](https://github.com/Yaoyi-Li/GCA-Matting?tab=readme-ov-file#models)
+
+3. Training the image instance matting. 
+
+It is recommended to use 4 A100-40GB GPUs or (any GPUs with VRAM>=24GB) for this step. 
 Please check the [config](configs/maggie_image.yaml) and set `wandb` settings to your project.
 ```bash
 NAME=<name of the experiment>
-torchrun --standalone --nproc_per_node=4 tools/main.py \
-                    --config configs/maggie_image.yaml --precision 16 name $NAME
+NGPUS=4
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
+                    --config configs/maggie_image.yaml \
+                    --precision 16 name $NAME model.weights ''
 ```
-### 4. Training the video instance matting
+
+If you want to resume training from the last checkpoint, you can turn on `train.resume_last` or set `train.resume` to the checkpoint folder you want to resume from.
+
+
+4. Training the video instance matting
 
 It is recommend to use 8 A100-80GB GPUs for this step.
 Please check the [config]()
 
-
-
-
-## Model checkpoints
-### Pretrained checkpoint
-Download the pretrained resnet (`s3://a-chuonghm/checkpoints/pretrain/model_best_resnet34_En_nomixup.pth`) and place in `pretrain` directory
-### Image checkpoint
-Config and the best checkpoint can be downloaded at `s3://a-chuonghm/checkpoints/image`. This is the checkpoint for the paper.
-
-### Video checkpoint
-Config and the best checkpoint can be downloaded at `s3://a-chuonghm/checkpoints/video`. This is the checkpoint for the paper.
-
-
-## Training
-The model contains two stages: training on image matting I-HIM and training on video matting V-HIM. Assuming you use RunAI with distributed training.
-
-We recommend using 4 GPUs A100 40GB to train image and 8 GPUs A100 80GB to train video
-```bash
-CONFIG=<config file>
-NAME=<name of the experiment>
-if [ -n "$WORLD_SIZE" ] && [ "$WORLD_SIZE" -gt 1 ]; then
-    PYCMD="--nproc_per_node=$RUNAI_NUM_OF_GPUS --nnodes=$WORLD_SIZE --node_rank=$RANK --master_addr=$MASTER_ADDR --master_port=$MASTER_PORT"
-else
-    PYCMD="--standalone --nproc_per_node=$RUNAI_NUM_OF_GPUS"
-fi
-
-torchrun $PYCMD tools/main_ddp.py \
-                    --config $CONFIG --precision 16 name $NAME
+## Citation
+If you find MaGGIE useful for your research and applications, please cite using this BibTeX:
+```bibtex
+@inproceedings{huynh2024maggie,
+  title={MaGGIe: Masked Guided Gradual Human Instance Matting},
+  author={Huynh, Chuong and Oh, Seoung Wug and and Shrivastava, Abhinav and Lee, Joon-Young},
+  booktitle={Proceedings of the {IEEE} Conference on Computer Vision and Pattern Recognition (CVPR)},
+  year={2024}
+}
 ```
 
-## Misc
-### Synthesize data
-Checking those scripts:
-- image: `tools/synthesize_him_data.py`
-- video: `tools/syn_vhm_0918.py`
+## Baselines
+We also provide baselines' training and evaluation scripts at [BASELINES](docs/BASELINES.md)
 
-List of FG/BG for train/test synthesizing: `tools/video_files`
+## Terms of Use
+TBD
 
-### Visualize results
-Those files would be helpful:
-- `tools/visualize_him2k_images.py` for image visualization between methods.
-- `tools/notebooks/vis_video_results.ipynb` for visualize video results.
-- `tools/notebooks/process_video_website.ipynb` for processing the website videos. 
-- `tools/gen_mask`: for generate M-HIM2K with detectron2.
-
-### Other baselines
-#### 1. InstMatt:
-Source code: https://github.com/nowsyn/InstMatt
-
-Updated scripts: `tools/InstMatt`
-
-Weights: 
-- Image: `s3://a-chuonghm/checkpoints/baselines/image/instmatt/`
-- Video: `s3://a-chuonghm/checkpoints/baselines/video/instmatt/`
-
-Inference script:
-
-#### 2. SparseMat
-You can use this repo
-
-Weights and config:
-- Image: `s3://a-chuonghm/checkpoints/baselines/image/sparsemat/`
-- Video: `s3://a-chuonghm/checkpoints/baselines/video/sparsemat/`
-
-#### 3. MGM
-You can use this repo
-
-Weights and config:
-- Converted from MGM-In-The-Wild: `s3://a-chuonghm/checkpoints/baselines/image/mgm_wild/`
-- Image: `s3://a-chuonghm/checkpoints/baselines/image/mgm/`
-- Video (+TCVOM): `s3://a-chuonghm/checkpoints/baselines/video/mgm_tcvom/`
-
-#### 4. MGM Stacked masks
-You can use this repo
-
-Weights and config:
-- Image: `s3://a-chuonghm/checkpoints/baselines/image/mgm_stacked/`
-- Video (+TCVOM): `s3://a-chuonghm/checkpoints/baselines/video/mgm_stacked_tcvom/`
-
-#### 5. FTP-VM
-Source code: https://github.com/csvt32745/FTP-VM
-
-Updated scripts: `tools/FTP-VM`
-
-Finetuned weights on V-HIM2K5: `s3://a-chuonghm/checkpoints/baselines/video/ftp-vm/`
-
-
-#### 6. OTVM
-Source code: https://github.com/Hongje/OTVM
-
-Update scripts: `tools/OTVM`
-
-Finetuned weights on V-HIM2K5: `s3://a-chuonghm/checkpoints/baselines/video/otvm/`
+## Acknowledgement
+We thank Markus Woodson for his early project discussion. Our code is based on the [OTVM](https://github.com/Hongje/OTVM) and [MGM](https://github.com/yucornetto/MGMatting).
+ 
+## Contact
+If you have any question, please drop an email to chuonghm@umd.edu or create an issue on this repository.
