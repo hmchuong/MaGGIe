@@ -1,5 +1,5 @@
 # <img src="figs/maggie.png" alt="maggie" width="28"/> MaGGIe: Mask Guided Gradual Human Instance Matting
-[[Project Page]()] [[Demo]()] [[Paper]()] [[Model Zoo](docs/MODEL_ZOO.md)] [[Datasets](docs/DATASET.md)]
+[[Project Page](https://maggie-matt.github.io/)] [[Hugging Face Demo]()] [[Paper]()] [[Model Zoo](docs/MODEL_ZOO.md)] [[Datasets](docs/DATASET.md)]
 
 *Instance-awareness alpha human matting with binary mask guidance for images and video*
 
@@ -15,6 +15,9 @@ Work is a part of Summer Internship 2023 at [Adobe Research](https://research.ad
 - [2024/04/10] Demo on Huggingface is ready!
 - [2024/04/07] Code, dataset and paper are released!
 - [2024/04/04] Webpage is up!
+
+
+## Table of Content
 
 ## Install
 
@@ -42,30 +45,49 @@ Please check our [Model Zoo](docs/MODEL_ZOO.md) for all public MaGGIe checkpoint
 
 ## Train
 ### 1. Please firstly follow [datasets](docs/DATASET.md) to prepare training data.
-### 2. Training the image instance matting. 
+### 2. Download [pretrained weights](https://drive.google.com/file/d/1kNj33D7x7tR-5hXOvxO53QeCEC8ih3-A/view) of encoder from [GCA-Matting](https://github.com/Yaoyi-Li/GCA-Matting?tab=readme-ov-file#models)
+### 3. Training the image instance matting. 
 
 It is recommended to use 4 A100-40GB GPUs for this step. 
 Please check the [config](configs/maggie_image.yaml) and set `wandb` settings to your project.
 ```bash
 NAME=<name of the experiment>
-torchrun --standalone --nproc_per_node=4 tools/main_ddp.py \
+torchrun --standalone --nproc_per_node=4 tools/main.py \
                     --config configs/maggie_image.yaml --precision 16 name $NAME
 ```
-### 3. Training the video instance matting
+### 4. Training the video instance matting
 
 It is recommend to use 8 A100-80GB GPUs for this step.
 Please check the [config]()
 
-## Evaluate
+## Evaluation
 
-## Dataset
+### M-HIM2K and HIM2K
+The script [scripts/test_maggie_image.sh](scripts/test_maggie_image.sh) contains the full evaluation on the whole M-HIM2K. The `results.csv` in the log directory contains all the results needed. To get the number in the paper, you can run this command:
+```bash
+sh scripts/test_maggie_image.sh configs/maggie_image.yaml 4
+```
 
-### Image matting
-- Train and test data available at: `s3://a-chuonghm/I-HIM/`
 
-### Video matting
-- Synthesized data: `s3://a-chuonghm/V-HIM`
-- Pexels data without alpha mattes: `s3://a-chuonghm/pexels-human-matting`
+You can also run one subset (e.g, `natural`) with one model mask (e.g, `r50_c4_3x`) by:
+```bash
+NGPUS=4
+CONFIG=configs/maggie_image.yaml
+SUBSET=natural
+MODEL=r50_c4_3x
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py --config $CONFIG --eval-only \
+                                                name eval_full \
+                                                dataset.test.split $SUBSET \
+                                                dataset.test.downscale_mask False \
+                                                dataset.test.mask_dir_name masks_matched_${MODEL} \
+                                                test.save_results False \
+                                                test.postprocessing False \
+                                                test.log_iter 10
+```
+
+### V-HIM60
+
+
 
 ## Model checkpoints
 ### Pretrained checkpoint
@@ -76,65 +98,6 @@ Config and the best checkpoint can be downloaded at `s3://a-chuonghm/checkpoints
 ### Video checkpoint
 Config and the best checkpoint can be downloaded at `s3://a-chuonghm/checkpoints/video`. This is the checkpoint for the paper.
 
-
-## Important configs
-Please look at the config files to understand the settings. Here are some important configs for the training, testing that you likely change.
-
-- `name`: name of the experiment
-- `output_dir`: directory of the logs. The final folder will be `<output_dir>/<name>`
-### Dataset
-- `dataset.test`: for validation/test dataset
-- `dataset.train`: for train dataset
-- `dataset.*.name`: `HIM` for image dataset and `MultiInstVideo` for video dataset
-- `dataset.test.alpha_dir_name`: alpha groundtruth directory name.
-- `dataset.test.mask_dir_name`: input mask directory name.
-- `dataset.*.root_dir`: root directory of the data.
-- `dataset.*.split`: split/name of the data
-
-### Model
-- `model.arch`: architecture in `vm2m/network/arch/__init__.py`
-- `model.backbone`: encoder in `vm2m/network/backbone/__init__.py`
-- `model.backbone_args`: additional arguments for the encoder.
-- `model.decoder`: decoder in `vm2m/network/decoder/__init__.py`
-- `model.decoder_args`: additional arguments for the decoder.
-- `model.mgm.warmup_iter`: warm-up iterations in MGM architecture.
-- `model.weights`: weights to initilize.
-- `model.loss_alpha_grad_w`: weight for gradient loss.
-- `model.loss_alpha_lap_w`: weight for laplacian loss.
-- `model.loss_alpha_w`: weight for reconstruction loss.
-- `model.loss_alpha_type`: type of reconstruction loss: l1, l2 or smooth_l1_{beta}.
-- `model.loss_atten_w`: weight for attention loss.
-- `model.loss_dtSSD_w`: weight for dtSSD loss.
-- `model.loss_multi_inst_type`: type of multi-instance loss: l1, l2 or smooth_l1_{beta}.
-- `model.loss_multi_inst_w`: weight for multi-instance loss.
-- `model.loss_multi_inst_warmup`: apply multi-instance after n iterations.
-- `model.reweight_os8`: using reweighting at OS8.
-
-### Train
-- `train.batch_size`: batch size.
-- `train.max_iter`: maximum iterations.
-- `train.num_workers`: number of cpu workers for dataloader/
-- `train.optimizer`: optimizer, check `vm2m/engine/optim.py`.
-- `train.resume`: resume path (directory) to the experiment.
-- `train.resume_last`: `true` or `false`, resume last saved checkpoint.
-- `train.scheduler`: lr scheduler, check `vm2m/engine/optim.py`.
-- `train.seed`: training seed, -1 for random.
-- `train.val_best_metric`: `name` of the metric to save the best checkpoint.
-- `train.val_iter`: no. iterations for each validation.
-- `train.val_metrics`: list of metrics for the validation, check available metrics at `vm2m/utils/metric.py`
-- `train.vis_iter`: no. iterations for visualization.
-
-### WanDB
-- `wandb.entity`: entity name.
-- `wandb.id`: exp id to resume, left it blank for the new exp.
-- `wandb.project`: project name.
-- `wandb.use`: true or false
-
-### Test
-- `test.metrics`: list of metrics for the validation, check available metrics at `vm2m/utils/metric.py`.
-- `test.num_workers`: workers for both test and validation dataloaders.
-- `test.save_results`: save the predictions or not.
-- `test.save_dir`: directory to save the predictions
 
 ## Training
 The model contains two stages: training on image matting I-HIM and training on video matting V-HIM. Assuming you use RunAI with distributed training.

@@ -157,7 +157,7 @@ class VIMDataset(Dataset):
             return self.__getitem__(self.random.randint(0, len(self)))
         
         # Padding instances
-        add_padding = self.padding_inst - len(alphas)
+        add_padding = self.max_inst - len(alphas)
         if add_padding > 0 and self.is_train:
             new_alpha = torch.zeros(alphas.shape[0], self.max_inst, *alphas.shape[2:], dtype=alphas.dtype)
             new_mask = torch.zeros(alphas.shape[0], self.max_inst, *masks.shape[2:], dtype=masks.dtype)

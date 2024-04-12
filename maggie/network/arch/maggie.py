@@ -1,27 +1,31 @@
 from functools import partial
 import logging
 import numpy as np
-import cv2
 import copy
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from huggingface_hub import PyTorchModelHubMixin
+from yacs.config import CfgNode
 
 from ..module import ASPP
+from ..encoder import *
+from ..decoder import *
 from ..loss import LapLoss, loss_dtSSD, GradientLoss
 from ...utils.utils import compute_unknown
 
-class MaGGIe(nn.Module):
-    def __init__(self, encoder, decoder, cfg):
+class MaGGIe(nn.Module, PyTorchModelHubMixin):
+    def __init__(self, cfg):
         super(MaGGIe, self).__init__()
+        if isinstance(cfg, dict):
+            cfg = CfgNode(init_dict=cfg)
         self.cfg = cfg
-        self.num_masks = cfg.backbone_args.num_mask
+        self.num_masks = cfg.encoder_args.num_mask
 
-        self.encoder = encoder
-        
+        self.encoder = eval(cfg.encoder)(**cfg.encoder_args)
         self.aspp = ASPP(in_channel=cfg.aspp.in_channels, out_channel=cfg.aspp.out_channels)
-        self.decoder = decoder
+        self.decoder = eval(cfg.decoder)(**cfg.decoder_args)
 
         # Some weights for loss
         self.loss_alpha_w = cfg.loss_alpha_w

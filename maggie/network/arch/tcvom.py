@@ -1,14 +1,13 @@
 import copy
 from collections import defaultdict
 import torch
-import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
 from .maggie import MaGGIe
 
 class TCVOM(MaGGIe):
-    def __init__(self, encoder, decoder, cfg):
-        super(TCVOM, self).__init__(encoder, decoder, cfg)
+    def __init__(self, cfg):
+        super(TCVOM, self).__init__(cfg)
         self.dilate_op = nn.MaxPool2d(15, stride=1, padding=15//2)
 
     def dilate(self, alpha, stride=15):

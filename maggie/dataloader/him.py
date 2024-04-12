@@ -94,8 +94,8 @@ class HIMDataset(Dataset):
     def __getitem__(self, index):
         image_path, alphas = self.data[index]
 
-        if len(alphas) > self.padding_inst:
-            alphas = self.random.choice(alphas, self.padding_inst, replace=False)
+        if len(alphas) > self.max_inst:
+            alphas = self.random.choice(alphas, self.max_inst, replace=False)
 
         # Load mask path and random replace the mask by alpha
         masks = None
@@ -156,18 +156,18 @@ class HIMDataset(Dataset):
 
         alpha = alpha * 1.0 / 255
         mask = mask * 1.0 / 255
-        add_padding = self.padding_inst - alpha.shape[1]
+        add_padding = self.max_inst - alpha.shape[1]
         if add_padding > 0 and self.is_train:
-            new_alpha = torch.zeros(1, self.padding_inst, *alpha.shape[2:])
-            new_mask = torch.zeros(1, self.padding_inst, *mask.shape[2:])
-            chosen_ids = self.random.choice(range(self.padding_inst), alpha.shape[1], replace=False)
+            new_alpha = torch.zeros(1, self.max_inst, *alpha.shape[2:])
+            new_mask = torch.zeros(1, self.max_inst, *mask.shape[2:])
+            chosen_ids = self.random.choice(range(self.max_inst), alpha.shape[1], replace=False)
             new_alpha[:, chosen_ids] = alpha
             new_mask[:, chosen_ids] = mask
             mask = new_mask
             alpha = new_alpha
 
-            new_fg = torch.zeros(1, self.padding_inst, *fg.shape[2:])
-            new_bg = torch.zeros(1, self.padding_inst, *bg.shape[2:])
+            new_fg = torch.zeros(1, self.max_inst, *fg.shape[2:])
+            new_bg = torch.zeros(1, self.max_inst, *bg.shape[2:])
             new_fg[:, chosen_ids] = fg
             new_bg[:, chosen_ids] = bg
             fg = new_fg

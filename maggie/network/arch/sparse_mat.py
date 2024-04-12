@@ -3,6 +3,10 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from huggingface_hub import PyTorchModelHubMixin
+
+from ..encoder import *
+from ..decoder import *
 from ..loss import LapLoss, loss_comp
 
 
@@ -36,12 +40,12 @@ def batch_slice(tensor, pos, size, mode='bilinear'):
         patchs.append(patch)
     return torch.cat(patchs, dim=0)
 
-class SparseMat(nn.Module):
-    def __init__(self, backbone, decoder, cfg):
+class SparseMat(nn.Module, PyTorchModelHubMixin):
+    def __init__(self, cfg):
         super(SparseMat, self).__init__()
         self.cfg = cfg
-        self.lpn = backbone #MGM(backbone, decoder, cfg)
-        self.shm = decoder #SHM(inc=4)
+        self.lpn = eval(cfg.encoder)(**cfg.encoder_args) #MGM(backbone, decoder, cfg)
+        self.shm = eval(cfg.decoder)(**cfg.deocer_args) #SHM(inc=4)
         self.lr_scale = cfg.shm.lr_scale
         self.stride = cfg.shm.dilation_kernel
         self.dilate_op = nn.MaxPool2d(self.stride, stride=1, padding=self.stride//2)

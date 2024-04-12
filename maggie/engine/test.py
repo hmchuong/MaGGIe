@@ -164,7 +164,7 @@ def eval_image(model, val_loader, device, log_iter, val_error_dict, do_postproce
 
 
 @torch.no_grad()
-def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, use_trimap=True, callback=None, use_temp=False):
+def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postprocessing=False, callback=None, **kwargs):
     
     batch_time = AverageMeter('batch_time')
     data_time = AverageMeter('data_time')
@@ -307,19 +307,23 @@ def test(cfg, rank=0, is_dist=False):
 
     # Build model
     logging.info("Building model...")
-    model = build_model(cfg.model)
+    model, is_from_hf = build_model(cfg.model)
     model = model.to(device)
 
     # Load pretrained model
-    assert os.path.isfile(cfg.model.weights), "Cannot find pretrained model at {}".format(cfg.model.weights)
+    assert os.path.isfile(cfg.model.weights) or is_from_hf, "Cannot find pretrained model at {}".format(cfg.model.weights)
     
-    logging.info("Loading pretrained model from {}".format(cfg.model.weights))
-    state_dict = torch.load(cfg.model.weights, map_location=device)
-    missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
-    if len(missing_keys) > 0 or len(unexpected_keys) > 0:
-        logging.warn("Missing keys: {}".format(missing_keys))
-        logging.warn("Unexpected keys: {}".format(unexpected_keys))
+    if not is_from_hf:
+        logging.info("Loading pretrained model from {}".format(cfg.model.weights))
+        state_dict = torch.load(cfg.model.weights, map_location=device)
+        missing_keys, unexpected_keys = model.load_state_dict(state_dict, strict=False)
+        if len(missing_keys) > 0 or len(unexpected_keys) > 0:
+            logging.warn("Missing keys: {}".format(missing_keys))
+            logging.warn("Unexpected keys: {}".format(unexpected_keys))
     
+    # import pdb; pdb.set_trace()
+    # model.push_to_hub("maggie-image-him50k-cvpr24")
+
     num_parameters = sum([p.numel() for p in model.parameters()])
 
     logging.info("Number of parameters: {}".format(num_parameters))
@@ -340,8 +344,7 @@ def test(cfg, rank=0, is_dist=False):
     val_fn = eval_video if cfg.dataset.test.name == 'VIM' else eval_image
     batch_time, data_time = val_fn(model, val_loader, device, cfg.test.log_iter, \
                                 val_error_dict, do_postprocessing=cfg.test.postprocessing, \
-                                    callback=partial(save_visualization, save_dir=cfg.test.save_dir) if cfg.test.save_results else None, 
-                                    use_trimap=cfg.test.use_trimap, use_temp=cfg.test.temp_aggre)
+                                    callback=partial(save_visualization, save_dir=cfg.test.save_dir) if cfg.test.save_results else None)
     
     logging.info("Testing done!")
 
@@ -361,5 +364,7 @@ def test(cfg, rank=0, is_dist=False):
         logging.info(metric_str)
         logging.info(plain_str)
         logging.info('batch_time: {:.4f}, data_time: {:.4f}'.format(batch_time, data_time))
+
+
 
 

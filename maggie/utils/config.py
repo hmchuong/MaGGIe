@@ -52,8 +52,6 @@ CONFIG.test.save_dir = 'logs'
 CONFIG.test.postprocessing = True
 CONFIG.test.metrics = ['MAD', 'MSE', 'SAD', 'Conn', 'Grad', 'dtSSD', 'MESSDdt']
 CONFIG.test.log_iter = 50
-CONFIG.test.use_trimap = True
-CONFIG.test.temp_aggre = False
 
 # ------------------------ Model ------------------------
 CONFIG.model = CN({})
@@ -94,16 +92,11 @@ CONFIG.model.shm.dilation_kernel = 15
 CONFIG.model.shm.max_n_pixel = 4000000
 CONFIG.model.shm.mgm_weights = ''
 
-refinement = CN({})
-refinement.n_train_points = 2048 # number of training points for each instance
-refinement.n_test_points = 16000 # maximum number of testing points for each instance
-CONFIG.model.refinement = refinement
-
 # ------------------------ Dataset ------------------------
 dataset = CN({})
 
 dataset.train = CN({})
-dataset.train.name = 'VideoMatte240K'
+dataset.train.name = 'VIM'
 dataset.train.root_dir = ''
 dataset.train.split = 'train'
 dataset.train.clip_length = 8
@@ -123,18 +116,17 @@ dataset.train.affine_p = 0.1
 dataset.train.binarized_kernel = 30
 dataset.train.downscale_mask_p = 0.5
 dataset.train.mask_dir_name = "masks_matched"
-dataset.train.pha_dir = 'pha'
+dataset.train.alpha_dir_name = 'pha'
 
 # For video augmentation
 dataset.train.max_step_size = 2
 dataset.train.motion_p = 0.3
 
 dataset.test = CN({})
-dataset.test.name = 'VideoMatte240K'
+dataset.test.name = 'VIM'
 dataset.test.root_dir = ''
 dataset.test.split = 'valid'
 dataset.test.short_size = 768
-dataset.test.use_thresh_mask = False
 dataset.test.downscale_mask = True
 dataset.test.alpha_dir_name = "alphas"
 dataset.test.mask_dir_name = "masks_matched"

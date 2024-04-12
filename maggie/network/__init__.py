@@ -1,14 +1,17 @@
+import os
+import logging
 from .arch import *
-from .encoder import *
-from .decoder import *
 
 def build_model(cfg):
-    backbone = eval(cfg.backbone)(**cfg.backbone_args)
-    
-    if cfg.decoder == '':
-        decoder = None
+    is_from_hf = False
+    if cfg.weights != '' and not os.path.exists(cfg.weights):
+        try:
+            model = eval(cfg.arch).from_pretrained(cfg.weights)
+            logging.info(f"Load pretrained model {cfg.weights} from Hugging Face")
+            is_from_hf = True
+        except:
+            import pdb; pdb.set_trace()
+            pass
     else:
-        decoder = eval(cfg.decoder)(**cfg.decoder_args)
-    
-    model = eval(cfg.arch)(backbone, decoder, cfg)
-    return model
+        model = eval(cfg.arch)(cfg)
+    return model, is_from_hf
