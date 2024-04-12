@@ -1,4 +1,4 @@
-import numpy as np
+import torch
 
 from .maggie import MaGGIe
 
@@ -40,7 +40,10 @@ class MaGGIe_Temp(MaGGIe):
             alphas = output["refined_masks"] # (1, 3, n_i, H, W)
 
             # t-1 output from previous prediction if available
-            prev_pred = kwargs.get('prev_pred', alphas[:, 0]) # (1, n_i, H, W)
+            prev_pred = kwargs.get('prev_pred', None)
+            if prev_pred is None:
+                prev_pred = alphas[:, 0] # (1, n_i, H, W)
+            prev_pred = prev_pred.to(alphas.device) # (1, n_i, H, W)
 
             # t + 1 output of current predictions
             next_pred = alphas[:, -1] # (1, n_i, H, W)
@@ -49,8 +52,8 @@ class MaGGIe_Temp(MaGGIe):
             diff_backward = output['diff_pred_backward']
 
             # Thresholding
-            diff_forward = (diff_forward > 0.5).astype('float32')
-            diff_backward = (diff_backward > 0.5).astype('float32')
+            diff_forward = (diff_forward > 0.5).float()
+            diff_backward = (diff_backward > 0.5).float()
 
             # Forward propagate from t-1 to t
             pred_forward01 = prev_pred * (1 - diff_forward[:, 1]) + alphas[:, 1] * diff_forward[:, 1] # (1, n_i, H, W)
@@ -59,7 +62,7 @@ class MaGGIe_Temp(MaGGIe):
             pred_backward21 = next_pred * (1 - diff_backward[:, 1]) + alphas[:, 1] * diff_backward[:, 1] # (1, n_i, H, W)
 
             # Check the diff --> update the diff forward --> fused pred based on diff forward
-            diff = np.abs(pred_forward01 - pred_backward21)
+            diff = torch.abs(pred_forward01 - pred_backward21)
 
             # Use pred t from the model with pred forward != pred backward
             pred_forward01[diff > 0.0] = alphas[:, 1][diff > 0.0]

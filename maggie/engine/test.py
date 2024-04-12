@@ -3,6 +3,7 @@ import os
 import logging
 import copy
 import time
+import gc
 from functools import partial
 
 import torch
@@ -80,6 +81,7 @@ def compute_metrics(all_preds, all_trimap, all_gts, val_error_dict, device, prev
                 cur_preds = np.concatenate([prev_preds, all_preds], axis=0)
                 cur_gts = np.concatenate([prev_gts, all_gts], axis=0)
                 cur_trimap = np.concatenate([prev_trimap, all_trimap], axis=0)
+                # import pdb; pdb.set_trace()
 
         if k.endswith("_fg"):
             cur_trimap = (all_trimap == 2).astype('float32')
@@ -205,6 +207,7 @@ def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postproce
                 mem_feats = None
                 prev_pred = None
                 torch.cuda.empty_cache()
+                gc.collect()
                 
             video_name = image_names[0][0].split('/')[-2]
 
@@ -218,7 +221,7 @@ def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postproce
             batch_time.update(time.time() - end_time)
                 
             alpha = output['refined_masks']
-            prev_pred = alpha[:, 1]
+            prev_pred = alpha[:, 1].cpu()
 
             alpha = reverse_transform_tensor(alpha, transform_info).cpu().numpy()
 
@@ -243,7 +246,7 @@ def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postproce
                 all_image_names += image_names[2:]
                 
                 # Remove t+1 in previous preds, adding t and t+1 in new preds
-                all_preds = np.concatenate([all_preds[0, :-1], alpha[0, 1:]], axis=0)
+                all_preds = np.concatenate([all_preds[:-1], alpha[0, 1:]], axis=0)
 
             # Add features t-1 to mem_feat
             if mem_feats is None and 'mem_feat' in output:
@@ -266,7 +269,9 @@ def eval_video(model, val_loader, device, log_iter, val_error_dict, do_postproce
             prev_gts = all_gts[-4:end_pred_idx] if len(all_preds) > 3 else None
             
             end_all_idx = -2 if not is_last else len(all_preds)
-            current_metrics = compute_metrics(all_preds[-3:end_all_idx], all_trimap[-3:end_all_idx], all_gts[-3:end_all_idx], prev_preds, prev_trimaps, prev_gts, val_error_dict, device)
+            # import pdb; pdb.set_trace()
+            current_metrics = compute_metrics(all_preds[-3:end_all_idx], all_trimap[-3:end_all_idx], all_gts[-3:end_all_idx], 
+                                              val_error_dict, device, prev_preds, prev_trimaps, prev_gts)
 
             log_str = f"{video_name}: "
             for k, v in current_metrics.items():
@@ -322,7 +327,7 @@ def test(cfg, rank=0, is_dist=False):
             logging.warn("Unexpected keys: {}".format(unexpected_keys))
     
     # import pdb; pdb.set_trace()
-    # model.push_to_hub("maggie-image-him50k-cvpr24")
+    # model.push_to_hub("maggie-video-vim2k5-cvpr24")
 
     num_parameters = sum([p.numel() for p in model.parameters()])
 

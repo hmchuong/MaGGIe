@@ -87,7 +87,7 @@ class ResShortCut_InstMattSpconv_BiTempSpar_Dec(ResShortCut_InstMattSpconv_Dec):
         
         # Predict OS8
         temp_propagate_fn = partial(self.os8_temp_module.propagate_features, n_f=n_f, prev_h_state=mem_feat, temp_method=self.temp_method)
-        x_os8, x, hidden_state, queries, loss_max_atten, hidden_state = self.refine_OS8(x, masks, use_mask_atten=False, gt_mask=gt_masks, 
+        x_os8, x, queries, loss_max_atten, hidden_state = self.refine_OS8(x, masks, use_mask_atten=False, gt_mask=gt_masks, 
                                                                             aggregate_mem_fn=temp_propagate_fn)
         
         mem_feat = hidden_state

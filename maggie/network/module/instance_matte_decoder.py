@@ -280,7 +280,7 @@ class InstanceMatteDecoder(nn.Module):
         if aggregate_mem_fn is not None:
             no_temp_feat = feat
             feat = feat.reshape(b, n_f, -1, h, w) # (b, n_f, c, h, w)
-            feat, hidden_state = self.aggregate_mem_fn(feat)
+            feat, hidden_state = aggregate_mem_fn(feat)
             # b, n_f, c, h, w --> h, w, n_f, b, c
             feat = feat.flatten(0, 1)
 

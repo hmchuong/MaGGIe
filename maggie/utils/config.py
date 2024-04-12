@@ -99,7 +99,7 @@ dataset.train = CN({})
 dataset.train.name = 'VIM'
 dataset.train.root_dir = ''
 dataset.train.split = 'train'
-dataset.train.clip_length = 8
+
 dataset.train.short_size = 768
 
 # For augmentation
@@ -119,6 +119,7 @@ dataset.train.mask_dir_name = "masks_matched"
 dataset.train.alpha_dir_name = 'pha'
 
 # For video augmentation
+dataset.train.clip_length = 8
 dataset.train.max_step_size = 2
 dataset.train.motion_p = 0.3
 

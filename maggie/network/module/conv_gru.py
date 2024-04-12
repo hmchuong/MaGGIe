@@ -47,7 +47,7 @@ class ConvGRU(nn.Module):
         else:
             return self.forward_single_frame(x, h)
         
-    def propagate_features(self, feat, n_f, prev_hidden_state=None, temp_method='none'):
+    def propagate_features(self, feat, n_f, prev_h_state=None, temp_method='none'):
         hidden_state = None
         if temp_method == 'none':
             all_x = []
@@ -56,7 +56,7 @@ class ConvGRU(nn.Module):
                 all_x.append(o)
             feat = torch.stack(all_x, dim=1)
         else:
-            feat_forward, hidden_state = self.forward(x=feat, h=prev_hidden_state)
+            feat_forward, hidden_state = self.forward(x=feat, h=prev_h_state)
 
             if temp_method == 'bi':
                 # Backward

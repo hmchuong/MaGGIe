@@ -1,70 +1,51 @@
 dataset:
   test:
-    alpha_dir_name: alphas
-    clip_length: 8
-    clip_overlap: 2
-    downscale_mask: false
-    mask_dir_name: ''
-    name: HIM
-    random_seed: 2023
-    root_dir: data/I-HIM/HIM2K_M-HIM2K
+    name: VIM
+    root_dir: data/V-HIM60
+    split: comp_medium
     short_size: 576
-    split: comp
-    use_thresh_mask: false
+    downscale_mask: false
+    alpha_dir_name: pha
+    mask_dir_name: xmem
+    clip_length: 3
+    clip_overlap: 2
   train:
-    bg_dir: ''
-    bin_alpha_max_k: 30
-    blur_kernel_size:
-    - 5
-    - 15
-    - 25
-    blur_prob: 0.5
-    blur_sigma:
-    - 1.0
-    - 1.5
-    - 3.0
-    - 5.0
-    clip_length: 8
+    name: HIM
+    root_dir: data
+    split: V-HIM2K5
+    short_size: 576
+    random_state: 2023
+    max_inst: 10
     crop:
     - 512
     - 512
-    downscale_mask: false
+    padding_crop_p: 0.1
+    flip_p: 0.5
+    gamma_p: 0.5
+    add_noise_p: 0.3
+    jpeg_p: 0.1
+    affine_p: 0.1
+    binarized_kernel: 30
     downscale_mask_p: 0.5
-    flip_prob: 0.5
-    mask_dir_name: masks_matched
-    max_inst: 3
-    max_step_size: 2
-    modify_mask_p: 0.1
-    name: HIM
-    padding_inst: 10
-    pha_dir: pha
-    random_state: 2023
-    root_dir: data/I-HIM
-    short_size: 576
-    split: I-HIM50K
-    ss_split: pexels-train
-    use_maskrcnn_p: 0.2
-    use_single_instance_only: true
-    weight_mask_dir: ''
+    mask_dir_name: ''
+    alpha_dir_name: pha
+    clip_length: 8
+    max_step_size: 5
 model:
-  arch: MGM
-  aspp:
-    in_channels: 512
-    out_channels: 512
-  backbone: res_embed_shortcut_encoder_29
-  backbone_args:
+  arch: MaGGIe_Temp
+  weights: chuonghm/maggie-video-vim2k5-cvpr24
+  sync_bn: true
+  having_unused_params: false
+  warmup_iters: 500
+  encoder: res_shortcut_embed_29
+  encoder_args:
     num_embed: 3
     num_mask: 10
     pretrained: true
-  breakdown:
-    in_channels:
-    - 32
-    - 32
-    - 32
-    in_features:
-    - os4
-    - os1
-  decoder: res_shortcut_attention_spconv_decoder_22_new
+  aspp:
+    in_channels: 512
+    out_channels: 512
+  decoder: res_shortcut_inst_matt_spconv_temp_22
   decoder_args:
     atten_block: 2
     atten_dim: 128
@@ -78,53 +59,17 @@ model:
     use_id_pe: true
     warmup_detail_iter: 3000
     warmup_mask_atten_iter: 0
-  dynamic_kernel:
-    dec_layers: 5
-    dim_feedforward: 256
-    enforce_input_project: true
-    hidden_dim: 256
-    in_channels: 256
-    in_features:
-    - os32
-    - os16
-    - os8
-    nheads: 4
-    out_incoherence: 157
-    out_pixeldecoder: 864
-    pre_norm: false
-  freeze_coarse: false
-  having_unused_params: false
+    temp_method: 'bi_fusion'
+  loss_alpha_w: 1.0
+  loss_alpha_type: l1
   loss_alpha_grad_w: 0.05
   loss_alpha_lap_w: 0.05
-  loss_alpha_type: l1
-  loss_alpha_w: 1.0
   loss_atten_w: 5.0
-  loss_comp_w: 0.0
-  loss_dtSSD_w: 0.0
-  loss_multi_inst_type: smooth_l1_0.5
-  loss_multi_inst_w: 1.0
-  loss_multi_inst_warmup: 4000
-  mgm:
-    warmup_iter: 3000
-  refinement:
-    n_test_points: 16000
-    n_train_points: 2048
-  reweight_os8: true
-  shm:
-    dilation_kernel: 15
-    lr_scale: 0.5
-    max_n_pixel: 4000000
-    mgm_weights: ''
-  shortcut_dims:
-  - 32
-  - 32
-  - 64
-  - 128
-  - 256
-  sync_bn: true
-  weights: ''
-name: image
-output_dir: output
+  loss_reweight_os8: true
+  loss_dtSSD_w: 1.0
+  
+name: maggie_video_cvpr24
+output_dir: output/
 test:
   batch_size: 1
   log_iter: 100
@@ -132,16 +77,16 @@ test:
   - MAD
   - MSE
   - SAD
-  # - Grad
-  # - Conn
+  - Grad
+  - Conn
+  - dtSSD
+  - MESSDdt
   num_workers: 4
   postprocessing: false
-  save_dir: logs
-  save_results: true
-  temp_aggre: false
-  use_trimap: true
+  save_dir: output/video/maggie_video_cvpr24/vis
+  save_results: false
 train:
-  batch_size: 24
+  batch_size: 12
   log_iter: 10
   max_iter: 52000
   num_workers: 8
@@ -162,13 +107,6 @@ train:
     step_size: 10000
     warmup_iters: 1000
   seed: 1234
-  self_train:
-    end_ratio: 1.0
-    epoch_per_cycle: 10
-    iter_per_epoch: 500
-    max_cycles: 10
-    start_ratio: 0.05
-    use: false
   val_best_metric: MAD
   val_dist: true
   val_iter: 500
@@ -178,7 +116,7 @@ train:
   - SAD
   vis_iter: 50
 wandb:
-  entity: research-dmo
-  id: rzbrim7m
-  project: video-maskg-matting
+  entity: research
+  id: ''
+  project: maggie
   use: true

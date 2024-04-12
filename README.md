@@ -43,27 +43,11 @@ Please check our [Model Zoo](docs/MODEL_ZOO.md) for all public MaGGIe checkpoint
 
 ## Demo
 
-## Train
-### 1. Please firstly follow [datasets](docs/DATASET.md) to prepare training data.
-### 2. Download [pretrained weights](https://drive.google.com/file/d/1kNj33D7x7tR-5hXOvxO53QeCEC8ih3-A/view) of encoder from [GCA-Matting](https://github.com/Yaoyi-Li/GCA-Matting?tab=readme-ov-file#models)
-### 3. Training the image instance matting. 
-
-It is recommended to use 4 A100-40GB GPUs for this step. 
-Please check the [config](configs/maggie_image.yaml) and set `wandb` settings to your project.
-```bash
-NAME=<name of the experiment>
-torchrun --standalone --nproc_per_node=4 tools/main.py \
-                    --config configs/maggie_image.yaml --precision 16 name $NAME
-```
-### 4. Training the video instance matting
-
-It is recommend to use 8 A100-80GB GPUs for this step.
-Please check the [config]()
 
 ## Evaluation
 
 ### M-HIM2K and HIM2K
-The script [scripts/test_maggie_image.sh](scripts/test_maggie_image.sh) contains the full evaluation on the whole M-HIM2K. The `results.csv` in the log directory contains all the results needed. To get the number in the paper, you can run this command:
+The script [scripts/test_maggie_image.sh](scripts/test_maggie_image.sh) contains the full evaluation on the whole M-HIM2K. The `results.csv` in the log directory contains all the results needed. To get the number in the paper, you can run this command on 4 GPUs:
 ```bash
 sh scripts/test_maggie_image.sh configs/maggie_image.yaml 4
 ```
@@ -84,8 +68,42 @@ torchrun --standalone --nproc_per_node=$NGPUS tools/main.py --config $CONFIG --e
                                                 test.postprocessing False \
                                                 test.log_iter 10
 ```
-
+If you want to save the alpha mattes, please set `test.save_results True` and change the `test.save_dir`
 ### V-HIM60
+The script [scripts/test_maggie_video.sh](scripts/test_maggie_vvideo.sh) contains the full evaluation on the V-HIM60. This evaluation is only compatible with a single GPU. To get the number in the paper, you can run this command:
+```bash
+sh scripts/test_maggie_video.sh configs/maggie_video.yaml
+```
+
+If you want to evaluate on a subset (e.g, `easy`), you can run:
+```bash
+CONFIG=configs/maggie_video.yaml
+SUBSET=easy
+torchrun --standalone --nproc_per_node=1 tools/main.py --config $CONFIG --eval-only \
+                    name eval_full \
+                    dataset.test.split comp_$SUBSET \
+                    test.save_results False \
+                    test.log_iter 10
+```
+If you want to save the alpha mattes, please set `test.save_results True` and change the `test.save_dir`.
+
+## Train
+### 1. Please firstly follow [datasets](docs/DATASET.md) to prepare training data.
+### 2. Download [pretrained weights](https://drive.google.com/file/d/1kNj33D7x7tR-5hXOvxO53QeCEC8ih3-A/view) of encoder from [GCA-Matting](https://github.com/Yaoyi-Li/GCA-Matting?tab=readme-ov-file#models)
+### 3. Training the image instance matting. 
+
+It is recommended to use 4 A100-40GB GPUs for this step. 
+Please check the [config](configs/maggie_image.yaml) and set `wandb` settings to your project.
+```bash
+NAME=<name of the experiment>
+torchrun --standalone --nproc_per_node=4 tools/main.py \
+                    --config configs/maggie_image.yaml --precision 16 name $NAME
+```
+### 4. Training the video instance matting
+
+It is recommend to use 8 A100-80GB GPUs for this step.
+Please check the [config]()
+
 
 
 
@@ -115,19 +133,6 @@ fi
 torchrun $PYCMD tools/main_ddp.py \
                     --config $CONFIG --precision 16 name $NAME
 ```
-
-## Test
-To test the image model on the whole M-HIM2K:
-```bash
-sh scripts/test_ours_image.sh <config file> <model file>
-```
-the script will evaluate the model 20 times, one for each subset (natural/comp and mask input)
-
-To test the video model on V-HIM60
-```bash
-sh scripts/test_ours_video.sh <config file> <model file> <split>
-```
-where split is `comp_easy`, `comp_medium`, or `comp_hard`. The mask `xmem` will be used.
 
 ## Misc
 ### Synthesize data

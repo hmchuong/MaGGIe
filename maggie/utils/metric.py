@@ -428,6 +428,10 @@ class dtSSD(Metric):
         else:
             mask = np.ones_like(gt).astype('float32')
 
+        if pred.ndim == 4:
+            pred = pred[None]
+            gt = gt[None]
+            mask = mask[None]
         dadt = pred[:, 1:] - pred[:, :-1]
         dgdt = gt[:, 1:] - gt[:, :-1]
         mask_0 = mask[:, :-1]

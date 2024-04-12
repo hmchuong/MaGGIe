@@ -121,8 +121,8 @@ class VIMDataset(Dataset):
             alpha_dir = frame_name.replace(".jpg", "")
             alpha_path = list(glob.glob(os.path.join(self.root_dir, self.alpha_dir_name, video_name, alpha_dir, "*.png")))
             alpha_path = sorted(alpha_path)
-            if len(alpha_path) > self.padding_inst:
-                alpha_path = alpha_path[:self.padding_inst]
+            if len(alpha_path) > self.max_inst:
+                alpha_path = alpha_path[:self.max_inst]
             alpha_paths.extend(alpha_path)
 
         # In training, drop randomly an instance:
