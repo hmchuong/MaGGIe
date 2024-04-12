@@ -4,7 +4,7 @@
 
 The dataset is available on [Hugging Face Datasets](https://huggingface.co/datasets/chuonghm/MaGGIe-HIM). Please download the set you need:
 
-| **Dataset**     | Image/video | Train/val | **Filenames**         |
+| **Dataset**     | **Image/video** | **Train/val** | **Filenames**         |
 |-----------------|-------------|-----------|-----------------------|
 | I-HIM50K        | Image       | Train     | I-HIM50K.z* (6 files) |
 | M-HIM2K + HIM2K | Image       | Val       | HIM2K_M-HIM2K.zip     |

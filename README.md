@@ -70,7 +70,7 @@ torchrun --standalone --nproc_per_node=$NGPUS tools/main.py --config $CONFIG --e
 ```
 If you want to save the alpha mattes, please set `test.save_results True` and change the `test.save_dir`
 ### V-HIM60
-The script [scripts/test_maggie_video.sh](scripts/test_maggie_vvideo.sh) contains the full evaluation on the V-HIM60. This evaluation is only compatible with a single GPU. To get the number in the paper, you can run this command:
+The script [scripts/test_maggie_video.sh](scripts/test_maggie_video.sh) contains the full evaluation on the V-HIM60. This evaluation is only compatible with a single GPU. To get the number in the paper, you can run this command:
 ```bash
 sh scripts/test_maggie_video.sh configs/maggie_video.yaml
 ```
