@@ -32,3 +32,67 @@ List of FG/BG for train/test synthesizing: `tools/video_files`
 - `tools/gen_mask`: for generate M-HIM2K with detectron2.
 
 ## How to use your own dataset?
+
+You should prepare your data following these structures
+
+### For image matting training dataset
+```
+<root_dir>
+└── <split>
+    ├── images
+    │   ├── image1.jpg
+    │   └── image2.jpg
+    ├── <alpha_dir_name>
+    │   ├── image1
+    │   │   ├── 00.png # instance matte 1
+    │   │   └── 01.png # instance matte 2
+    │   └── image2
+    └──<mask_dir_name (optional)>
+        ├── image1
+        │   ├── 00.png # instance mask 1
+        │   └── 01.png # instance mask 2
+        └── image2
+  
+```
+### For image matting validation/testing dataset
+```
+<root_dir>
+├── images
+|   └── <split>
+│       ├── image1.jpg
+│       └── image2.jpg
+├── <alpha_dir_name>
+|   └── <split>
+│       ├── image1
+│       │   ├── 00.png # instance matte 1
+│       │   └── 01.png # instance matte 2
+│       └── image2
+└──<mask_dir_name>
+    └── <split>
+        ├── image1
+        │   ├── 00.png # instance mask 1
+        │   └── 01.png # instance mask 2
+        └── image2
+  
+```
+### For video matting dataset
+```
+<root_dir>
+└── <split>
+    ├── fgr
+    │   └── video1
+    │       ├── image1.jpg
+    │       └── image2.jpg
+    ├── <alpha_dir_name>
+    │   └── video1
+    │       ├── image1
+    │       │   ├── 00.png # instance matte 1
+    │       │   └── 01.png # instance matte 2
+    │       └── image2
+    └──<mask_dir_name (optional in training)>
+        └── video1
+            ├── image1
+            │   ├── 00.png # instance mask 1
+            │   └── 01.png # instance mask 2
+            └── image2
+```
