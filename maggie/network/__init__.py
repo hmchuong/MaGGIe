@@ -10,7 +10,6 @@ def build_model(cfg):
             logging.info(f"Load pretrained model {cfg.weights} from Hugging Face")
             is_from_hf = True
         except:
-            import pdb; pdb.set_trace()
             pass
     else:
         model = eval(cfg.arch)(cfg)
