@@ -1,3 +1,0 @@
-export CUDA_VISIBLE_DEVICES=2
-python count_people_newbaselines.py --config-file ../configs/new_baselines/mask_rcnn_R_101_FPN_400ep_LSJ.py --input "/mnt/localssd/matting/unsplash/festival_people/*" --output unsplash_festival_people.txt --opts MODEL.WEIGHTS ../pretrained/model_r101_fpn_400e.pkl
-python count_people_newbaselines.py --config-file ../configs/new_baselines/mask_rcnn_R_101_FPN_400ep_LSJ.py --input "/mnt/localssd/matting/unsplash/travel_people/*" --output unsplash_travel_people.txt --opts MODEL.WEIGHTS ../pretrained/model_r101_fpn_400e.pkl

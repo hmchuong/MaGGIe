@@ -1,6 +1,6 @@
 # DATASET
 
-## Download available dataset
+## Download available datasets
 
 The dataset is available on [Hugging Face Datasets](https://huggingface.co/datasets/chuonghm/MaGGIe-HIM). Please download the set you need:
 
@@ -21,15 +21,45 @@ unzip I-HIM50K_all.zip
 ```
 
 ## How to synthesize dataset?
-Coming soon...
+### I-HIM50K
+You need to download the [HHM dataset](https://github.com/nowsyn/sparsemat), [BG-20K dataset](https://github.com/JizhiziLi/GFM) and [invalid_him.txt](https://huggingface.co/datasets/chuonghm/MaGGIe-HIM/blob/main/invalid_him.txt) before running this script:
+```bash
+python tools/synthesize_image_him.py --image-root HHM/train/images \
+                                     --invalid-names invalid_him.txt \
+                                     --bg-root BG-20K/train \
+                                     --output-dir data/I-HIM50K \
+                                     --n-workers 80
+```
+Here, we run the process in 80 threads, please adjust it based on your machine.
 
-Checking those scripts:
-- image: `tools/synthesize_him_data.py`
-- video: `tools/syn_vhm_0918.py`
+### M-HIM2K
+To gen all binary masks for [HIM2K](https://github.com/nowsyn/InstMatt), we use [detectron2](https://github.com/facebookresearch/detectron2). We provide scripts to process masks in [tools/gen_mask](../tools/gen_mask). The process of generate masks are:
+1. Clone the detectron2 repository.
+2. Copy all files in `tools/gen_mask` to `demo` directory.
+3. Download all pretrained models from [Model Zoo](https://github.com/facebookresearch/detectron2/blob/main/MODEL_ZOO.md#coco-instance-segmentation-baselines-with-mask-r-cnn) to `detectron2/pretrained`
+4. Update data paths in `get_mask_single.sh`
+5. Generate masks with `gen_mask_all.sh`
 
-List of FG/BG for train/test synthesizing: `tools/video_files`
+### V-HIM
+You need to download those datasets
+1. [VideoMatte240K](https://grail.cs.washington.edu/projects/background-matting-v2/#/datasets)
+2. [VM108](https://github.com/yunkezhang/TCVOM#videomatting108-dataset)
+3. [CRGNN](https://github.com/TiantianWang/VideoMatting-CRGNN)
 
-- `tools/gen_mask`: for generate M-HIM2K with detectron2.
+and foreground/background list:
+1. [fg_train.txt](https://huggingface.co/datasets/chuonghm/MaGGIe-HIM/blob/main/fg_train.txt)
+2. [fg_test.txt](https://huggingface.co/datasets/chuonghm/MaGGIe-HIM/blob/main/fg_test.txt)
+3. [bg_train.txt](https://huggingface.co/datasets/chuonghm/MaGGIe-HIM/blob/main/bg_train.txt)
+4. [bg_test.txt](https://huggingface.co/datasets/chuonghm/MaGGIe-HIM/blob/main/bg_test.txt)
+
+After organizing the data following paths in `*.txt` files, you can generate the V-HIM2K5 by running this command:
+```bash
+python tools/synthesize_video_him.py --split train --data-dir /path/to/video --out-dir data/V-HIM2K5 --n-workers 80
+# or
+python tools/synthesize_video_him.py --split test --data-dir /path/to/video --out-dir data/V-HIM60 --n-workers 16
+```
+
+To generate masks, we combine the ouput of [GenVIS](https://github.com/miranheo/GenVIS) and [XMem](https://github.com/hkchengrex/XMem). The complete code will be released in the future!
 
 ## How to use your own dataset?
 
