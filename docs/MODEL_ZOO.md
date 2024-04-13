@@ -10,4 +10,5 @@ The model weights used in our paper are available at Hugging Face Model.
 
 
 ## Other baselines
-Coming soon...
+
+

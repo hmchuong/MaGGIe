@@ -1,51 +1,65 @@
 # Baselines
 
-We provide a list of python scripts of baselines
+We provide a list of python scripts to train and evaluate the baselines. Please also check [Model Zoo](MODEL_ZOO.md) for available checkpoints.
 
-#### 1. InstMatt:
-Source code: https://github.com/nowsyn/InstMatt
+## InstMatt
+Please use [InstMatt](https://github.com/nowsyn/InstMatt) to train and evaluate.
 
-Updated scripts: `tools/InstMatt`
+## SparseMat
+### Image matting
+To train:
+```bash
 
-Weights: 
-- Image: `s3://a-chuonghm/checkpoints/baselines/image/instmatt/`
-- Video: `s3://a-chuonghm/checkpoints/baselines/video/instmatt/`
+```
+To evaluate:
+```bash
+```
 
-Inference script:
+### Video matting
+To train:
+```bash
+```
+To evaluate:
+```bash
+```
 
-#### 2. SparseMat
-You can use this repo
+## MGM
+### Image matting
+We finetuned the model from the weights of [MGM in the wild](https://openaccess.thecvf.com/content/CVPR2023/papers/Park_Mask-Guided_Matting_in_the_Wild_CVPR_2023_paper.pdf), you can also initialize the model with [MGM](https://github.com/yucornetto/MGMatting/tree/main/code-base) if the pretrained weights are not available:
 
-Weights and config:
-- Image: `s3://a-chuonghm/checkpoints/baselines/image/sparsemat/`
-- Video: `s3://a-chuonghm/checkpoints/baselines/video/sparsemat/`
+To train:
+```bash
+```
+To evaluate:
+```bash
+```
+### Video matting
+To train:
+```bash
+```
+To evaluate:
+```bash
+```
 
-#### 3. MGM
-You can use this repo
+## MGM with stacked masks
+### Image matting
 
-Weights and config:
-- Converted from MGM-In-The-Wild: `s3://a-chuonghm/checkpoints/baselines/image/mgm_wild/`
-- Image: `s3://a-chuonghm/checkpoints/baselines/image/mgm/`
-- Video (+TCVOM): `s3://a-chuonghm/checkpoints/baselines/video/mgm_tcvom/`
+To train:
+```bash
+```
+To evaluate:
+```bash
+```
+### Video matting
+To train:
+```bash
+```
+To evaluate:
+```bash
+```
 
-#### 4. MGM Stacked masks
-You can use this repo
+## FTP-VM
+Please use [FTP-VM](https://github.com/csvt32745/FTP-VM) to train and evaluate.
 
-Weights and config:
-- Image: `s3://a-chuonghm/checkpoints/baselines/image/mgm_stacked/`
-- Video (+TCVOM): `s3://a-chuonghm/checkpoints/baselines/video/mgm_stacked_tcvom/`
-
-#### 5. FTP-VM
-Source code: https://github.com/csvt32745/FTP-VM
-
-Updated scripts: `tools/FTP-VM`
-
-Finetuned weights on V-HIM2K5: `s3://a-chuonghm/checkpoints/baselines/video/ftp-vm/`
-
-
-#### 6. OTVM
-Source code: https://github.com/Hongje/OTVM
-
-Update scripts: `tools/OTVM`
-
-Finetuned weights on V-HIM2K5: `s3://a-chuonghm/checkpoints/baselines/video/otvm/`
+## OTVM
+Please use [OTVM](https://github.com/Hongje/OTVM) to train and evaluate.
