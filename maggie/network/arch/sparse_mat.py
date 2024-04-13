@@ -45,14 +45,13 @@ class SparseMat(nn.Module, PyTorchModelHubMixin):
         super(SparseMat, self).__init__()
         self.cfg = cfg
         self.lpn = eval(cfg.encoder)(**cfg.encoder_args) #MGM(backbone, decoder, cfg)
-        self.shm = eval(cfg.decoder)(**cfg.deocer_args) #SHM(inc=4)
+        self.shm = eval(cfg.decoder)(**cfg.decoder_args) #SHM(inc=4)
         self.lr_scale = cfg.shm.lr_scale
         self.stride = cfg.shm.dilation_kernel
         self.dilate_op = nn.MaxPool2d(self.stride, stride=1, padding=self.stride//2)
         self.max_n_pixel = cfg.shm.max_n_pixel
 
         self.loss_alpha_w = cfg.loss_alpha_w
-        self.loss_comp_w = cfg.loss_comp_w
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
         self.lap_loss = LapLoss()
 
@@ -213,16 +212,6 @@ class SparseMat(nn.Module, PyTorchModelHubMixin):
                 weight = weight / 2.0
             loss_dict['loss_rec'] = loss_rec
             total_loss += loss_dict['loss_rec'] * self.loss_alpha_w
-
-        # Comp loss
-        if self.loss_comp_w > 0 and fg is not None and bg is not None:
-            loss = 0
-            weight = 2.0
-            for pred in pred_list[::-1]:
-                loss += weight * loss_comp(pred, alphas, fg, bg, None)
-                weight = weight / 2.0
-            loss_dict['loss_comp'] = loss
-            total_loss += loss_dict['loss_comp'] * self.loss_comp_w
 
         # Lap loss
         if self.loss_alpha_lap_w > 0:

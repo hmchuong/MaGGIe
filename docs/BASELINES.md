@@ -13,7 +13,7 @@ To train:
 ```
 To evaluate:
 ```bash
-
+sh scripts/eval_image.sh configs/sparsemat_image.yaml 4 sparsemat
 ```
 
 ### Video matting
@@ -22,6 +22,7 @@ To train:
 ```
 To evaluate:
 ```bash
+sh scripts/eval_video.sh configs/sparsemat_video.yaml sparsemat
 ```
 
 ## MGM
@@ -42,7 +43,7 @@ To evaluate:
 ```bash
 ```
 
-## MGM with stacked masks
+## MGM* (with stacked masks)
 ### Image matting
 
 To train:

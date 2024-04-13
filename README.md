@@ -56,7 +56,7 @@ Please check the [Model Zoo](docs/MODEL_ZOO.md) for all model weight information
 ### M-HIM2K and HIM2K
 The script [scripts/test_maggie_image.sh](scripts/test_maggie_image.sh) contains the full evaluation on the whole M-HIM2K. The `results.csv` in the log directory contains all the results needed. To get the number in the paper, you can run this command on 4 GPUs:
 ```bash
-sh scripts/test_maggie_image.sh configs/maggie_image.yaml 4
+sh scripts/eval_image.sh configs/maggie_image.yaml 4  maggie
 ```
 
 
@@ -79,7 +79,7 @@ If you want to save the alpha mattes, please set `test.save_results True` and ch
 ### V-HIM60
 The script [scripts/test_maggie_video.sh](scripts/test_maggie_video.sh) contains the full evaluation on the V-HIM60. This evaluation is only compatible with a single GPU. To get the number in the paper, you can run this command:
 ```bash
-sh scripts/test_maggie_video.sh configs/maggie_video.yaml
+sh scripts/eval_video.sh configs/maggie_video.yaml maggie
 ```
 
 If you want to evaluate on a subset (e.g, `easy`), you can run:
