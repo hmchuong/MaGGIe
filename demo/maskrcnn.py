@@ -82,7 +82,6 @@ def display_human_segmentation(image, boxes, labels, scores, masks, score_thresh
     
     pred = Image.fromarray(all_masks)
     pred.putpalette(get_palette(instance_id + 1))
-    print(instance_id)
     # blend the image with the mask
     image = Image.fromarray(image)
     pred = pred.convert("RGB")

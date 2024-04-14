@@ -1,5 +1,6 @@
 from skimage.measure import label
 import numpy as np
+import torch
 import cv2
 import torch.nn.functional as F
 
@@ -41,16 +42,18 @@ def reverse_transform_tensor(img, transform_info):
     img = reshape2D(img)
     for transform in transform_info[::-1]:
         
-        name = transform['name'][0]
+        name = transform['name'][0] if isinstance(transform['name'], list) else transform['name']
         if name == 'padding':
             pad_h, pad_w  = transform['pad_size']
-            pad_h, pad_w = pad_h.item(), pad_w.item()
+            if isinstance(pad_h, torch.Tensor):
+                pad_h, pad_w = pad_h.item(), pad_w.item()
             h, w = img.shape[-2:]
             img = img[:, :h-pad_h, :w-pad_w]
 
         elif name == 'resize':
             h, w = transform['ori_size']
-            h, w = h.item(), w.item()
+            if isinstance(h, torch.Tensor):
+                h, w = h.item(), w.item()
             # img = [cv2.resize(img, (w, h), interpolation=cv2.INTER_LINEAR) for img in img]
             # img = np.stack(img, axis=0)
             img = F.interpolate(img.unsqueeze(1), size=(h, w), mode='bilinear', align_corners=True).squeeze(1)
