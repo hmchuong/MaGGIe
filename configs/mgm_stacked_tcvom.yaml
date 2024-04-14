@@ -15,7 +15,7 @@ dataset:
     split: V-HIM2K5
     short_size: 576
     random_state: 2023
-    max_inst: 1
+    max_inst: 10
     crop:
     - 512
     - 512
@@ -32,22 +32,22 @@ dataset:
     clip_length: 3
     max_step_size: 5
 model:
-  arch: TCVOM_SingInst
-  weights: checkpoints/mgm_tcvom.pth
+  arch: TCVOM
+  weights: checkpoints/mgm_stacked_tcvom.pth
   sync_bn: true
   having_unused_params: false
   warmup_iters: 0
   encoder: res_shortcut_29
   encoder_args:
     num_embed: 3
-    num_mask: 1
+    num_mask: 10
     pretrained: true
   aspp:
     in_channels: 512
     out_channels: 512
   decoder: res_shortcut_fam_22
   decoder_args:
-    max_inst: 1
+    max_inst: 10
   loss_alpha_w: 1.0
   loss_alpha_type: l1
   loss_alpha_grad_w: 0.05
@@ -56,7 +56,7 @@ model:
   loss_reweight_os8: false
   loss_dtSSD_w: 1.0
   
-name: mgm_tcvom_cvpr24
+name: mgm_stacked_tcvom_cvpr24
 output_dir: output/video
 test:
   batch_size: 1
@@ -71,7 +71,7 @@ test:
   - MESSDdt
   num_workers: 4
   postprocessing: false
-  save_dir: output/video/mgm_tcvom_cvpr24/vis
+  save_dir: output/video/mgm_stacked_tcvom_cvpr24/vis
   save_results: false
 train:
   batch_size: 6

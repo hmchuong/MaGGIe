@@ -194,7 +194,7 @@ class ResShortCut_D_Dec(ResNet_D_Dec):
         ret['alpha_os1'] = x_os1
         ret['alpha_os4'] = x_os4
         ret['alpha_os8'] = x_os8
-        ret['feature'] = x
+        # ret['feature'] = x
 
         return ret
 

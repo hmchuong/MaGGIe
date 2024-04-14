@@ -1,21 +1,19 @@
 dataset:
   test:
-    name: VIM
-    root_dir: data/V-HIM60
-    split: comp_medium
+    name: HIM
+    root_dir: data/HIM2K_M-HIM2K
+    split: comp
     short_size: 576
     downscale_mask: false
-    alpha_dir_name: pha
-    mask_dir_name: xmem
-    clip_length: 3
-    clip_overlap: 2
+    alpha_dir_name: alphas
+    mask_dir_name: masks_matched_r50_fpn_3x
   train:
-    name: VIM
+    name: HIM
     root_dir: data
-    split: V-HIM2K5
+    split: I-HIM50K
     short_size: 576
     random_state: 2023
-    max_inst: 1
+    max_inst: 10
     crop:
     - 512
     - 512
@@ -28,36 +26,35 @@ dataset:
     binarized_kernel: 30
     downscale_mask_p: 0.5
     mask_dir_name: ''
-    alpha_dir_name: pha
-    clip_length: 3
-    max_step_size: 5
+    alpha_dir_name: alphas
 model:
-  arch: TCVOM_SingInst
-  weights: checkpoints/mgm_tcvom.pth
+  arch: MaGGIe
+  weights: checkponts/mgm_stacked.pth
   sync_bn: true
   having_unused_params: false
-  warmup_iters: 0
+  warmup_iters: 1125
   encoder: res_shortcut_29
   encoder_args:
     num_embed: 3
-    num_mask: 1
+    num_mask: 10
     pretrained: true
   aspp:
     in_channels: 512
     out_channels: 512
-  decoder: res_shortcut_fam_22
+  decoder: res_shortcut_22
   decoder_args:
-    max_inst: 1
+    max_inst: 10
+  
   loss_alpha_w: 1.0
   loss_alpha_type: l1
   loss_alpha_grad_w: 0.05
   loss_alpha_lap_w: 0.05
-  loss_atten_w: 1.0
+  loss_atten_w: 0.0
   loss_reweight_os8: false
-  loss_dtSSD_w: 1.0
+  loss_dtSSD_w: 0.0
   
-name: mgm_tcvom_cvpr24
-output_dir: output/video
+name: mgm_stacked_cvpr24
+output_dir: output/image
 test:
   batch_size: 1
   log_iter: 100
@@ -67,22 +64,20 @@ test:
   - SAD
   - Grad
   - Conn
-  - dtSSD
-  - MESSDdt
   num_workers: 4
   postprocessing: false
-  save_dir: output/video/mgm_tcvom_cvpr24/vis
+  save_dir: output/image/mgm_stacked_cvpr24/vis
   save_results: false
 train:
-  batch_size: 6
+  batch_size: 12
   log_iter: 10
-  max_iter: 17500
+  max_iter: 52000
   num_workers: 8
   optimizer:
     betas:
     - 0.9
     - 0.999
-    lr: 5.0e-5
+    lr: 0.00015
     momentum: 0.9
     name: adamw
     weight_decay: 0.01
@@ -96,13 +91,12 @@ train:
     warmup_iters: 1000
   seed: 1234
   val_best_metric: MAD
-  val_dist: false
+  val_dist: true
   val_iter: 500
   val_metrics:
   - MAD
   - MSE
   - SAD
-  - dtSSD
   vis_iter: 50
 wandb:
   entity: research

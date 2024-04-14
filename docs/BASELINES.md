@@ -71,16 +71,29 @@ sh scripts/eval_video.sh configs/mgm_tcvom.yaml mgm_tcvom
 
 To train:
 ```bash
+NAME=<name of the experiment>
+NGPUS=4
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
+                    --config configs/mgm_stacked.yaml \
+                    --precision 16 name $NAME model.weights ''
 ```
 To evaluate:
 ```bash
+sh scripts/eval_image.sh configs/mgm_stacked.yaml 4 mgm_stacked
 ```
 ### Video matting
 To train:
 ```bash
+NAME=<name of the experiment>
+PRETRAINED=<best weight from image matting>
+NGPUS=8
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
+                    --config configs/mgm_stacked_tcvom.yaml \
+                    --precision 16 name $NAME model.weights $PRETRAINED
 ```
 To evaluate:
 ```bash
+sh scripts/eval_video.sh configs/mgm_stacked_tcvom.yaml mgm_stacked_tcvom
 ```
 
 ## FTP-VM
