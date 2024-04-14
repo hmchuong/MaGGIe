@@ -9,7 +9,11 @@ Please use [InstMatt](https://github.com/nowsyn/InstMatt) to train and evaluate.
 ### Image matting
 To train:
 ```bash
-
+NAME=<name of the experiment>
+NGPUS=4
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
+                    --config configs/sparsemat_image.yaml \
+                    --precision 16 name $NAME model.weights ''
 ```
 To evaluate:
 ```bash
@@ -19,6 +23,12 @@ sh scripts/eval_image.sh configs/sparsemat_image.yaml 4 sparsemat
 ### Video matting
 To train:
 ```bash
+NAME=<name of the experiment>
+PRETRAINED=<best weight from image matting>
+NGPUS=8
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
+                    --config configs/sparsemat_video.yaml \
+                    --precision 16 name $NAME model.weights $PRETRAINED
 ```
 To evaluate:
 ```bash
@@ -31,16 +41,29 @@ We finetuned the model from the weights of [MGM in the wild](https://openaccess.
 
 To train:
 ```bash
+NAME=<name of the experiment>
+NGPUS=4
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
+                    --config configs/mgm.yaml \
+                    --precision 16 name $NAME model.weights ''
 ```
 To evaluate:
 ```bash
+sh scripts/eval_image.sh configs/mgm.yaml 4 mgm
 ```
 ### Video matting
 To train:
 ```bash
+NAME=<name of the experiment>
+PRETRAINED=<best weight from image matting>
+NGPUS=8
+torchrun --standalone --nproc_per_node=$NGPUS tools/main.py \
+                    --config configs/mgm_tcvom.yaml \
+                    --precision 16 name $NAME model.weights $PRETRAINED
 ```
 To evaluate:
 ```bash
+sh scripts/eval_video.sh configs/mgm_tcvom.yaml mgm_tcvom
 ```
 
 ## MGM* (with stacked masks)

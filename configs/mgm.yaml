@@ -3,7 +3,7 @@ dataset:
     name: HIM
     root_dir: data/HIM2K_M-HIM2K
     split: comp
-    short_size: 1152
+    short_size: 576
     downscale_mask: false
     alpha_dir_name: alphas
     mask_dir_name: masks_matched_r50_fpn_3x
@@ -11,7 +11,7 @@ dataset:
     name: HIM
     root_dir: data
     split: I-HIM50K
-    short_size: 1152
+    short_size: 576
     random_state: 2023
     max_inst: 1
     crop:
@@ -28,31 +28,32 @@ dataset:
     mask_dir_name: ''
     alpha_dir_name: alphas
 model:
-  arch: SparseMat_SingInst
-  weights: checkpoints/sparsemat_image.pth
+  arch: MGM_SingInst
+  weights: checkpoints/mgm.pth
   sync_bn: true
   having_unused_params: false
-  warmup_iters: 3000
-  encoder: lpn
+  warmup_iters: 1125
+  encoder: res_shortcut_29
   encoder_args:
-    mid_chn: 32
+    num_embed: 3
     num_mask: 1
     pretrained: true
   aspp:
     in_channels: 512
     out_channels: 512
-  decoder: shm
+  decoder: res_shortcut_22
   decoder_args:
-    inc: 4
+    max_inst: 1
+  
   loss_alpha_w: 1.0
   loss_alpha_type: l1
   loss_alpha_grad_w: 0.05
   loss_alpha_lap_w: 0.05
-  loss_atten_w: 5.0
-  loss_reweight_os8: true
+  loss_atten_w: 0.0
+  loss_reweight_os8: false
   loss_dtSSD_w: 0.0
   
-name: sparsemat_image_cvpr24
+name: mgm_cvpr24
 output_dir: output/image
 test:
   batch_size: 1
@@ -65,7 +66,7 @@ test:
   - Conn
   num_workers: 4
   postprocessing: false
-  save_dir: output/image/sparsemat_image_cvpr24/vis
+  save_dir: output/image/mgm_cvpr24/vis
   save_results: false
 train:
   batch_size: 32

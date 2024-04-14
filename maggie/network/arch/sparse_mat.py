@@ -7,7 +7,7 @@ from huggingface_hub import PyTorchModelHubMixin
 
 from ..encoder import *
 from ..decoder import *
-from ..loss import LapLoss, loss_comp
+from ..loss import LapLoss, GradientLoss
 
 
 def _upsample_like(src,tar,mode='bilinear'):
@@ -53,7 +53,9 @@ class SparseMat(nn.Module, PyTorchModelHubMixin):
 
         self.loss_alpha_w = cfg.loss_alpha_w
         self.loss_alpha_lap_w = cfg.loss_alpha_lap_w
+        self.loss_alpha_grad_w = cfg.loss_alpha_grad_w
         self.lap_loss = LapLoss()
+        self.grad_loss = GradientLoss()
 
     @torch.no_grad()
     def generate_sparse_inputs(self, img, lr_pred, mask):
@@ -196,7 +198,6 @@ class SparseMat(nn.Module, PyTorchModelHubMixin):
             mask = mask.view(-1, 1, *mask.shape[-2:])
 
         pred_list = [upas(pred, alphas) for pred in pred_list]
-        # import pdb; pdb.set_trace()
         mask = mask.view_as(alphas)
         lr_pred = lr_pred.view_as(alphas)
         for i in range(len(pred_list)):
@@ -222,6 +223,16 @@ class SparseMat(nn.Module, PyTorchModelHubMixin):
                 weight = weight / 2.0
             loss_dict['loss_lap'] = loss
             total_loss += loss_dict['loss_lap'] * self.loss_alpha_lap_w
+
+        # Gradient loss
+        if self.loss_alpha_grad_w > 0:
+            loss = 0
+            weight = 2.0
+            for pred in pred_list[::-1]:
+                loss += weight * self.grad_loss(pred, alphas)
+                weight = weight / 2.0
+            loss_dict['loss_grad'] = loss
+            total_loss += loss_dict['loss_grad'] * self.loss_alpha_grad_w
 
         loss_dict['total'] = total_loss
         return loss_dict

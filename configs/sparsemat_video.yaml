@@ -13,9 +13,9 @@ dataset:
     name: VIM
     root_dir: data
     split: V-HIM2K5
-    short_size: 576
+    short_size: 1152
     random_state: 2023
-    max_inst: 10
+    max_inst: 1
     crop:
     - 512
     - 512
@@ -33,8 +33,7 @@ dataset:
     max_step_size: 5
 model:
   arch: SparseMat_SingInst
-  # weights: checkpoints/sparsemat_video.pth
-  weights: checkpoints/baselines/video/sparsemat/best_model.pth
+  weights: checkpoints/sparsemat_video.pth
   sync_bn: true
   having_unused_params: true
   warmup_iters: 500
@@ -64,18 +63,18 @@ test:
   log_iter: 100
   metrics:
   - MAD
-  # - MSE
-  # - SAD
-  # - Grad
-  # - Conn
-  # - dtSSD
-  # - MESSDdt
+  - MSE
+  - SAD
+  - Grad
+  - Conn
+  - dtSSD
+  - MESSDdt
   num_workers: 4
   postprocessing: false
   save_dir: output/video/sparsemat_video_cvpr24/vis
   save_results: false
 train:
-  batch_size: 4
+  batch_size: 6
   log_iter: 10
   max_iter: 10000
   num_workers: 8
@@ -94,7 +93,7 @@ train:
     name: cosine
     power: 0.9
     step_size: 10000
-    warmup_iters: 1000
+    warmup_iters: 500
   seed: 1234
   val_best_metric: MAD
   val_dist: false

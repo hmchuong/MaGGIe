@@ -16,7 +16,7 @@ class TCVOM(MaGGIe):
         return mask
     
     def forward(self, batch, **kwargs):
-        
+
         # Forward encoder
         masks, alphas, trans_gt, b, n_f, h, w, n_i, chosen_ids, embedding, mid_fea = self.forward_encoder(batch)
 
@@ -58,11 +58,10 @@ class TCVOM(MaGGIe):
             # Concatenate all frames
             preds[k] = torch.cat(preds[k], dim=1).view(-1, self.num_masks, h, w)
 
-
         # Fuse all predictions
         alpha_pred, weight_os4, weight_os1 = self.fuse(preds)
 
-        output = self.transform_output(b, n_f, h, w, n_i, pred, alpha_pred)
+        output = self.transform_output(b, n_f, h, w, n_i, preds, alpha_pred)
 
         if self.training:
             reshaped_alphas = alphas.view(-1, n_i, h, w)
@@ -71,10 +70,11 @@ class TCVOM(MaGGIe):
             weight_os4 = weight_os4.view(-1, n_i, h, w)
 
             # Compute image loss
-            loss_dict = self.compute_loss(preds, weight_os4, weight_os1, reshaped_alphas, reshaped_trans_gt, alphas.shape, reweight_os8=False)
+            loss_dict = self.compute_loss(preds, weight_os4, weight_os1, reshaped_alphas, reshaped_trans_gt, (b, n_f, n_i, h, w), reweight_os8=False)
 
             # Compute attention loss
             if self.loss_atten_w > 0:
+                alphas = alphas.view(b, n_f, -1, h, w)
                 alphas = alphas.max(dim=2, keepdims=True)[0]
                 attn_loss = self.compute_atten_loss(alphas, attb, attf, small_mask)
                 loss_dict['loss_atten'] = attn_loss
@@ -140,7 +140,7 @@ class TCVOM_SingInst(TCVOM):
         batch = copy.deepcopy(batch)
         for i in range(n_i):
             batch['mask'] = masks[:, :, i:i+1]
-            outputs.append(super().forward(batch, **kwargs))
+            outputs.append(super(TCVOM_SingInst, self).forward(batch, **kwargs))
         for k in outputs[0].keys():
             outputs[0][k] = torch.cat([o[k] for o in outputs], 2)
         return outputs[0]

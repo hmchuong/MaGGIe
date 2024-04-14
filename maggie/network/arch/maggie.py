@@ -53,9 +53,9 @@ class MaGGIe(nn.Module, PyTorchModelHubMixin):
 
         ### Progressive Refinement Module in MGMatting Paper
         alpha_pred = alpha_pred_os8.clone()
-        weight_os4 = compute_unknown(alpha_pred, k_size=30, train_mode=self.training)
+        weight_os4 = compute_unknown(alpha_pred, k_size=30, is_train=self.training)
         alpha_pred[weight_os4>0] = alpha_pred_os4[weight_os4> 0]
-        weight_os1 = compute_unknown(alpha_pred, k_size=15, train_mode=self.training)
+        weight_os1 = compute_unknown(alpha_pred, k_size=15, is_train=self.training)
         alpha_pred[weight_os1>0] = alpha_pred_os1[weight_os1 > 0]
 
         return alpha_pred, weight_os4, weight_os1
@@ -82,7 +82,6 @@ class MaGGIe(nn.Module, PyTorchModelHubMixin):
         
         # Forward through decoder
         pred = self.decoder(embedding, mid_fea, b=b, n_f=n_f, n_i=n_i, masks=masks, iter=batch.get('iter', 0), gt_alphas=alphas, spar_gt=trans_gt, **kwargs)
-        
         if isinstance(pred, tuple):
             pred = pred[0]
 

@@ -6,6 +6,6 @@ do
                         name $NAME \
                         output_dir $OUTPUT_DIR \
                         dataset.test.split comp_$SUBSET \
-                        test.save_results True \
+                        test.save_results False \
                         test.log_iter 10
 done
