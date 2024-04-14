@@ -136,3 +136,5 @@ core.*
 *.pkl
 data/*
 checkpoints/*
+demo/flagged/*
+demo/*.onnx

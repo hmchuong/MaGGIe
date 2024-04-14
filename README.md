@@ -48,7 +48,7 @@ pip install -r requirements.txt
 Please check our [Model Zoo](docs/MODEL_ZOO.md) for all public MaGGIe checkpoints, and instructions for how to use weights.
 
 ## Demo
-Coming soon...
+Please check [Demo](demo/README.md) for more information.
 
 ## Evaluation
 
