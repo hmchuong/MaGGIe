@@ -1,0 +1,11 @@
+dataset:
+  test:
+    name: VIM
+    root_dir: .
+    split: video_results
+    short_size: 576
+    downscale_mask: false
+    alpha_dir_name: mask
+    mask_dir_name: mask
+    clip_length: 3
+    clip_overlap: 2

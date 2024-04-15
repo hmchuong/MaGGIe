@@ -8,7 +8,6 @@ from yacs.config import _assert_with_logging, _check_and_coerce_cfg_value_type
 
 import wandb
 import torch.distributed as dist
-import torch.multiprocessing as mp
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
