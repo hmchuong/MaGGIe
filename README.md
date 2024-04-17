@@ -9,7 +9,7 @@
 
 Work is a part of Summer Internship 2023 at [Adobe Research](https://research.adobe.com/)
 
-<img src="figs/teaser.gif" alt="maggie" width="800"/>
+<img src="figs/teaser_hd.gif" alt="maggie" width="800"/>
 
 ## Release
 - [2024/04/10] Demo on Huggingface is ready!
