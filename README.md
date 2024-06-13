@@ -1,5 +1,5 @@
 # <img src="figs/maggie.png" alt="maggie" width="28"/> MaGGIe: Mask Guided Gradual Human Instance Matting
-[[Project Page](https://maggie-matt.github.io/)] [[Hugging Face Demo]()] [[Paper]()] [[Model Zoo](docs/MODEL_ZOO.md)] [[Datasets](docs/DATASET.md)]
+[[Project Page](https://maggie-matt.github.io/)] [[Hugging Face](https://huggingface.co/collections/chuonghm/maggie-cvpr24-662b9cac66c46de6b38b28e6)] [[Paper](https://arxiv.org/abs/2404.16035)] [[Model Zoo](docs/MODEL_ZOO.md)] [[Datasets](docs/DATASET.md)]
 
 *Instance-awareness alpha human matting with binary mask guidance for images and video*
 
