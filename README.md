@@ -141,7 +141,7 @@ If you find MaGGIE useful for your research and applications, please cite using 
 We also provide baselines' training and evaluation scripts at [BASELINES](docs/BASELINES.md)
 
 ## Terms of Use
-TBD
+The project is under the [CC BY-NC 4.0](LICENSE.md) License for non-commercial purpose only.
 
 ## Acknowledgement
 We thank Markus Woodson for his early project discussion. Our code is based on the [OTVM](https://github.com/Hongje/OTVM) and [MGM](https://github.com/yucornetto/MGMatting).
