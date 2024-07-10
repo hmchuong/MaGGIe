@@ -4,7 +4,7 @@ from .arch import *
 
 def build_model(cfg):
     is_from_hf = False
-    if cfg.weights != '' and not os.path.exists(cfg.weights):
+    if cfg.weights != '' and not os.path.isfile(cfg.weights):
         try:
             model = eval(cfg.arch).from_pretrained(cfg.weights)
             logging.info(f"Load pretrained model {cfg.weights} from Hugging Face")
