@@ -12,7 +12,8 @@ Work is a part of Summer Internship 2023 at [Adobe Research](https://research.ad
 <img src="figs/teaser_hd.gif" alt="maggie" width="800"/>
 
 ## Release
-- [2024/04/10] Demo on Huggingface is ready!
+- [2024/12/26] Update the demo with [Samurai](https://github.com/educelab/samurai) - SOTA Video Object Segmentation method!
+- [2024/04/10] Demo with Gradio is ready!
 - [2024/04/07] Code, dataset and paper are released!
 - [2024/04/04] Webpage is up!
 
