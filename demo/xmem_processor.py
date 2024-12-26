@@ -13,6 +13,7 @@ from maskrcnn import predict_human_mask
 MAX_FRAMES = 100
 MAX_FPS = 12
 MAX_SIZE = 640
+DEFAULT_FRAME_PATH = "video_results/fgr/video0/"
 
 if os.path.exists("XMem.pth") == False:
     os.system("wget https://github.com/hkchengrex/XMem/releases/download/v1.0/XMem.pth")
@@ -55,15 +56,29 @@ def process_video(video):
             frame_path = os.path.join("video_results/fgr/video0", frame_name)
             os.remove(frame_path)
         frame_names = frame_names[:MAX_FRAMES]
-        
-    # Predict human masks for each frame using Mask-RCNN
-    frame_path = os.path.join("video_results/fgr/video0", frame_names[0])
-    image = Image.open(frame_path)
-    _, masks = predict_human_mask(image)
+    
+    # Find human masks in the first 10 frame using Mask-RCNN
+    masks = None
+    mask_index = 0
 
-    # Save masks as png images
+    for i in range(min(10, len(frame_names)// fps)):
+        frame_path = os.path.join(DEFAULT_FRAME_PATH, frame_names[i * fps])
+        image = Image.open(frame_path)
+        _, masks = predict_human_mask(image)
+
+        # Save masks as png images
+        if masks.max() > 0:
+            mask_index = i
+            break
+    
     if masks.max() == 0:
         return
+        
+    for frame_name in frame_names[:mask_index]:
+        frame_path = os.path.join(DEFAULT_FRAME_PATH, frame_name)
+        os.remove(frame_path)
+    
+    frame_names = frame_names[mask_index:]
 
     # Process video with XMem
     torch.cuda.empty_cache()

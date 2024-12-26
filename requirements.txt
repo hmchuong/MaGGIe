@@ -1,4 +1,4 @@
-numpy
+numpy<2.0
 Pillow
 opencv-python
 spconv-cu120 
@@ -13,3 +13,4 @@ yacs
 fvcore
 huggingface_hub
 safetensors
+joblib

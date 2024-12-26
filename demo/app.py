@@ -7,6 +7,8 @@ import gradio as gr
 from maskrcnn import predict_human_mask
 from maggie_predictor import predict_image_alpha_matte, predict_video_alpha_matte
 
+RUN_XMEM = os.environ.get("RUN_XMEM", 0)
+
 def inference_image(input_image, progress=gr.Progress()):
     progress(0, "Running MaskRCNN...")
     vis, masks = predict_human_mask(input_image)
@@ -29,10 +31,16 @@ demo_image = gr.Interface(inference_image, inputs=gr.Image(type="pil", label="In
 
 def inference_video(input_video, progress=gr.Progress()):
     
-    progress(0, "Running XMem...")
+    if RUN_XMEM:
+        progress(0, "Running XMem...")
 
-    # Extract binary masks with XMem
-    os.system("python xmem_processor.py " + input_video)
+        # Extract binary masks with XMem
+        os.system("python xmem_processor.py " + input_video)
+    else:
+        progress(0, "Running Samurai...")
+
+        # Extract binary masks with XMem
+        os.system("python samurai_processor.py --video_path " + input_video)
 
     # Check if the masks are extracted correctly
     if not os.path.exists("video_results/mask/video0"):
@@ -63,7 +71,7 @@ def inference_video(input_video, progress=gr.Progress()):
         blended.save(out_path)
 
     # Combine the mask results to video
-    os.system(f"ffmpeg -framerate {fps} -pattern_type glob -i 'video_results/visualize_mask/*.jpg' -c:v libx264 -r {fps} -pix_fmt yuv420p -y video_results/xmem.mp4")
+    os.system(f"ffmpeg -framerate {fps} -pattern_type glob -i 'video_results/visualize_mask/*.jpg' -c:v libx264 -r {fps} -pix_fmt yuv420p -y video_results/mask.mp4")
 
     # Combine the matte results to video
     progress(0.95, "Visualizing mattes...")
@@ -71,7 +79,7 @@ def inference_video(input_video, progress=gr.Progress()):
     
     progress(1.0)
 
-    return "video_results/xmem.mp4", "video_results/matte.mp4"
+    return "video_results/mask.mp4", "video_results/matte.mp4"
 
 
 description="The video human matting model that can handle multiple people in the video. The model runs [Mask-RCNN R50-FPN-3X](https://huggingface.co/spaces/onnx/mask-rcnn) on the first frame and [XMem](https://github.com/hkchengrex/XMem) to propagate the masks to the rest of the video. The model uses [MaGGIe](https://huggingface.co/chuonghm/maggie-video-vim2k5-cvpr24) to predict alpha mattes."
@@ -84,4 +92,4 @@ demo_video = gr.Interface(inference_video, inputs=gr.Video(format="mp4", label="
 
 title="MaGGIe: Mask Guided Gradual Human Instance Matting"
 demo = gr.TabbedInterface([demo_image, demo_video], tab_names=["image", "video"], title=title)
-demo.launch(debug=True, share=True)
+demo.launch(debug=False, share=True)
